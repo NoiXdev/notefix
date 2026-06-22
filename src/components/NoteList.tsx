@@ -49,7 +49,7 @@ export default function NoteList({
     <button
       key={note.id}
       onClick={() => onSelect(note.id)}
-      onContextMenu={e => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, note }); }}
+      onContextMenu={onTogglePin ? e => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, note }); } : undefined}
       className={`w-full text-left px-4 py-3 border-b border-gray-900 group relative transition-colors ${
         selectedId === note.id ? 'bg-gray-800' : 'hover:bg-gray-900'
       }`}

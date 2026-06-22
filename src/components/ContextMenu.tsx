@@ -28,7 +28,7 @@ export default function ContextMenu({ x, y, items, onClose }: Props) {
   return (
     <div
       className="fixed z-50 min-w-32 py-1 rounded-md bg-gray-900 border border-gray-700 shadow-lg"
-      style={{ left: x, top: y }}
+      style={{ left: Math.min(x, window.innerWidth - 150), top: Math.min(y, window.innerHeight - 60) }}
       onClick={e => e.stopPropagation()}
       onContextMenu={e => { e.preventDefault(); e.stopPropagation(); }}
     >
