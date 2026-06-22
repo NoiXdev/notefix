@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    notefix_scaffold_lib::run()
+    notefix_lib::run()
 }
