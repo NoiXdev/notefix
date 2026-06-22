@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import NoteList from './NoteList';
 import type { Note } from '../types';
 
-const note = (id: string, content: string, updatedAt = Date.now()): Note => ({ id, content, updatedAt });
+const note = (id: string, content: string, updatedAt = Date.now(), pinned = false): Note => ({ id, content, updatedAt, pinned });
 
 const defaultProps = {
   notes: [],
@@ -11,6 +11,9 @@ const defaultProps = {
   onSelect: vi.fn(),
   onCreate: vi.fn(),
   onDelete: vi.fn(),
+  onOpenSettings: vi.fn(),
+  displayMode: 'flat' as const,
+  onTogglePin: vi.fn(),
 };
 
 beforeEach(() => vi.clearAllMocks());
@@ -85,5 +88,34 @@ describe('NoteList — interactions', () => {
     render(<NoteList {...defaultProps} notes={[note('7', '<p>Note</p>')]} />);
     fireEvent.click(screen.getByTitle('Delete note'));
     expect(defaultProps.onSelect).not.toHaveBeenCalled();
+  });
+});
+
+describe("NoteList — pinning", () => {
+  it("flat mode shows a divider between pinned and unpinned", () => {
+    const notes = [note('p', '<p>Pinned</p>', 2000, true), note('u', '<p>Unpinned</p>', 1000, false)];
+    render(<NoteList {...defaultProps} notes={notes} />);
+    expect(screen.getByTestId('pin-divider')).toBeInTheDocument();
+  });
+
+  it("sections mode shows group headers", () => {
+    const notes = [note('p', '<p>Pinned</p>', 2000, true), note('u', '<p>Unpinned</p>', 1000, false)];
+    render(<NoteList {...defaultProps} notes={notes} displayMode="sections" />);
+    expect(screen.getByText('Angepinnt')).toBeInTheDocument();
+    expect(screen.getByText('Weitere')).toBeInTheDocument();
+  });
+
+  it("right-click opens the menu and Anpinnen calls onTogglePin", () => {
+    const onTogglePin = vi.fn();
+    render(<NoteList {...defaultProps} notes={[note('a', '<p>Note</p>', 1000, false)]} onTogglePin={onTogglePin} />);
+    fireEvent.contextMenu(screen.getByText('Note'));
+    fireEvent.click(screen.getByText('Anpinnen'));
+    expect(onTogglePin).toHaveBeenCalledWith('a', true);
+  });
+
+  it("right-click on a pinned note offers Lösen", () => {
+    render(<NoteList {...defaultProps} notes={[note('a', '<p>Note</p>', 1000, true)]} />);
+    fireEvent.contextMenu(screen.getByText('Note'));
+    expect(screen.getByText('Lösen')).toBeInTheDocument();
   });
 });
