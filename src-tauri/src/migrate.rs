@@ -34,3 +34,94 @@ pub fn set_meta(conn: &Connection, key: &str, value: &str) -> rusqlite::Result<(
     )?;
     Ok(())
 }
+
+use std::path::Path;
+
+use crate::storage::{Note, Store};
+
+/// One-time import of legacy dginx-notes JSON files (one `<id>.json` per note,
+/// shape `{ id, content, updatedAt }`). Idempotent via the `legacy_imported`
+/// meta flag. Missing dir is a clean no-op. Returns the number imported.
+pub fn import_legacy_if_needed(store: &Store, legacy_dir: &Path) -> rusqlite::Result<usize> {
+    if get_meta(&store.conn, "legacy_imported")?.is_some() {
+        return Ok(0);
+    }
+    let mut imported = 0usize;
+    if legacy_dir.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(legacy_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) == Some("json") {
+                    if let Ok(raw) = std::fs::read_to_string(&path) {
+                        if let Ok(note) = serde_json::from_str::<Note>(&raw) {
+                            store.save_note(&note)?;
+                            imported += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    set_meta(&store.conn, "legacy_imported", "1")?;
+    Ok(imported)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::Store;
+
+    fn store() -> Store {
+        let s = Store::open_in_memory().unwrap();
+        run_migrations(&s.conn).unwrap();
+        s
+    }
+
+    #[test]
+    fn migration_sets_schema_version() {
+        let s = store();
+        assert_eq!(get_meta(&s.conn, "schema_version").unwrap().as_deref(), Some("1"));
+    }
+
+    #[test]
+    fn migration_is_idempotent() {
+        let s = store();
+        run_migrations(&s.conn).unwrap();
+        assert_eq!(get_meta(&s.conn, "schema_version").unwrap().as_deref(), Some("1"));
+    }
+
+    #[test]
+    fn import_reads_legacy_json_files() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("n1.json"),
+            r#"{"id":"n1","content":"<p>legacy</p>","updatedAt":1234}"#,
+        ).unwrap();
+        let s = store();
+        let count = import_legacy_if_needed(&s, dir.path()).unwrap();
+        assert_eq!(count, 1);
+        let notes = s.load_notes().unwrap();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].id, "n1");
+        assert_eq!(notes[0].updated_at, 1234);
+    }
+
+    #[test]
+    fn import_is_skipped_on_second_run() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("n1.json"),
+            r#"{"id":"n1","content":"<p>x</p>","updatedAt":1}"#,
+        ).unwrap();
+        let s = store();
+        assert_eq!(import_legacy_if_needed(&s, dir.path()).unwrap(), 1);
+        assert_eq!(import_legacy_if_needed(&s, dir.path()).unwrap(), 0);
+    }
+
+    #[test]
+    fn import_missing_dir_is_noop() {
+        let s = store();
+        let count = import_legacy_if_needed(&s, Path::new("/nonexistent/path/xyz")).unwrap();
+        assert_eq!(count, 0);
+    }
+}
