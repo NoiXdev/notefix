@@ -186,7 +186,7 @@ export default function NoteEditor({ note, onChange, isWindow = false }: Props) 
             className="w-5 h-5 flex items-center justify-center rounded-full text-white transition-colors"
             style={{ background: '#f87171' }}
             onMouseDown={e => e.preventDefault()}
-            onClick={() => window.close()}
+            onClick={() => api.closeWindow()}
             title="Close"
             onMouseEnter={e => (e.currentTarget.style.background = '#ef4444')}
             onMouseLeave={e => (e.currentTarget.style.background = '#f87171')}

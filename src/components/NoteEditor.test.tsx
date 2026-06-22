@@ -29,8 +29,9 @@ vi.mock("./ResizableImage", () => ({
   ResizableImage: { configure: () => ({}) },
 }));
 
-const { mockToggleAlwaysOnTop } = vi.hoisted(() => ({
+const { mockToggleAlwaysOnTop, mockCloseWindow } = vi.hoisted(() => ({
   mockToggleAlwaysOnTop: vi.fn<(current: boolean) => Promise<boolean>>(),
+  mockCloseWindow: vi.fn<() => Promise<void>>(),
 }));
 
 vi.mock("../api", () => ({
@@ -40,6 +41,7 @@ vi.mock("../api", () => ({
     openNoteWindow: vi.fn(),
     setWindowTitle: vi.fn(),
     toggleAlwaysOnTop: mockToggleAlwaysOnTop,
+    closeWindow: mockCloseWindow,
     getAppInfo: vi.fn(),
     openExternal: vi.fn(),
   },
@@ -96,5 +98,11 @@ describe("NoteEditor — standalone window mode (isWindow=true)", () => {
     fireEvent.click(pinBtn);
     await screen.findByTitle("Unpin window");
     expect(mockToggleAlwaysOnTop).toHaveBeenCalledWith(false);
+  });
+
+  it("closes the window via the Tauri API (not DOM window.close)", () => {
+    render(<NoteEditor note={mockNote} onChange={onChange} isWindow />);
+    fireEvent.click(screen.getByTitle("Close"));
+    expect(mockCloseWindow).toHaveBeenCalledOnce();
   });
 });

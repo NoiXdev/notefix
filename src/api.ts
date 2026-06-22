@@ -38,6 +38,9 @@ export const api = {
       .setAlwaysOnTop(!current)
       .then(() => !current),
 
+  /** Close the current window. DOM `window.close()` is a no-op in the webview, so route through Tauri. */
+  closeWindow: (): Promise<void> => getCurrentWindow().close(),
+
   getAppInfo: async (): Promise<AppInfo> => ({
     name: "Notefix",
     version: await getVersion(),
