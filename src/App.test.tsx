@@ -18,19 +18,22 @@ vi.mock("./components/ResizableImage", () => ({
   ResizableImage: { configure: () => ({}) },
 }));
 
-const { mockLoad, mockSave, mockDeleteFn } = vi.hoisted(() => ({
+const { mockLoad, mockSave, mockDeleteFn, mockSetPinned } = vi.hoisted(() => ({
   mockLoad: vi.fn(() => Promise.resolve([] as unknown[])),
   mockSave: vi.fn(() => Promise.resolve(undefined)),
   mockDeleteFn: vi.fn(() => Promise.resolve(undefined)),
+  mockSetPinned: vi.fn(() => Promise.resolve(undefined)),
 }));
 
 vi.mock("./api", () => ({
   api: {
-    notes: { load: mockLoad, save: mockSave, delete: mockDeleteFn },
+    notes: { load: mockLoad, save: mockSave, delete: mockDeleteFn, setPinned: mockSetPinned },
+    settings: { load: () => Promise.resolve({}), set: vi.fn() },
     onNotesChanged: () => () => {},
     openNoteWindow: vi.fn(),
     setWindowTitle: vi.fn(),
     toggleAlwaysOnTop: vi.fn(),
+    closeWindow: vi.fn(),
     getAppInfo: vi.fn(),
     openExternal: vi.fn(),
   },

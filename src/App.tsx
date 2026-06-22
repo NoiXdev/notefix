@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNotes } from './hooks/useNotes';
+import { useSettings } from './hooks/useSettings';
 import NoteList from './components/NoteList';
 import NoteEditor from './components/NoteEditor';
 import Settings from './components/Settings';
@@ -7,7 +8,8 @@ import Settings from './components/Settings';
 const windowNoteId = new URLSearchParams(window.location.search).get('windowNoteId');
 
 export default function App() {
-  const { notes, loading, createNote, updateNote, deleteNote } = useNotes();
+  const { notes, loading, createNote, updateNote, deleteNote, setPinned } = useNotes();
+  const { settings, setSetting } = useSettings();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
 
@@ -46,7 +48,7 @@ export default function App() {
   };
 
   if (showSettings) {
-    return <Settings onClose={() => setShowSettings(false)} />;
+    return <Settings onClose={() => setShowSettings(false)} settings={settings} onSetSetting={setSetting} />;
   }
 
   return (
@@ -58,6 +60,8 @@ export default function App() {
         onCreate={handleCreate}
         onDelete={handleDelete}
         onOpenSettings={() => setShowSettings(true)}
+        displayMode={settings.pinnedDisplayMode}
+        onTogglePin={setPinned}
       />
       <main className="flex-1 overflow-hidden">
         {selectedNote ? (

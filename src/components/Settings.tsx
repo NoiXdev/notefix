@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { api, type AppInfo } from "../api";
+import type { AppSettings, PinnedDisplayMode } from "../hooks/useSettings";
 
-type Page = "about";
+type Page = "about" | "appearance";
 
 interface NavItemProps {
   label: string;
@@ -14,9 +15,7 @@ function NavItem({ label, active, onClick }: NavItemProps) {
     <button
       onClick={onClick}
       className={`w-full text-left px-4 py-2 text-sm transition-colors ${
-        active
-          ? "bg-gray-800 text-white"
-          : "text-gray-400 hover:bg-gray-900 hover:text-gray-200"
+        active ? "bg-gray-800 text-white" : "text-gray-400 hover:bg-gray-900 hover:text-gray-200"
       }`}
     >
       {label}
@@ -26,9 +25,16 @@ function NavItem({ label, active, onClick }: NavItemProps) {
 
 interface Props {
   onClose: () => void;
+  settings: AppSettings;
+  onSetSetting: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void;
 }
 
-export default function Settings({ onClose }: Props) {
+const MODES: { value: PinnedDisplayMode; label: string }[] = [
+  { value: "flat", label: "Flach (Pin-Icon + Trennlinie)" },
+  { value: "sections", label: "Sektionen (Überschriften)" },
+];
+
+export default function Settings({ onClose, settings, onSetSetting }: Props) {
   const [page, setPage] = useState<Page>("about");
   const [info, setInfo] = useState<AppInfo | null>(null);
 
@@ -40,22 +46,20 @@ export default function Settings({ onClose }: Props) {
     <div className="flex h-screen overflow-hidden">
       <aside className="w-52 shrink-0 bg-gray-950 flex flex-col h-full select-none">
         <div className="px-4 py-3 flex items-center justify-between border-b border-gray-800">
-          <span className="text-gray-400 text-xs font-semibold uppercase tracking-widest">
-            Settings
-          </span>
+          <span className="text-gray-400 text-xs font-semibold uppercase tracking-widest">Settings</span>
           <button
             onClick={onClose}
             className="w-6 h-6 flex items-center justify-center text-gray-500 hover:text-white hover:bg-gray-700 rounded transition-colors"
             title="Back to notes"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
+              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
             </svg>
           </button>
         </div>
         <nav className="flex-1 py-2">
           <NavItem label="About" active={page === "about"} onClick={() => setPage("about")} />
+          <NavItem label="Darstellung" active={page === "appearance"} onClick={() => setPage("appearance")} />
         </nav>
       </aside>
 
@@ -65,6 +69,32 @@ export default function Settings({ onClose }: Props) {
             <h1 className="text-2xl font-bold text-gray-900 mb-1">{info.name}</h1>
             <p className="text-sm text-gray-500 mb-8">Version {info.version}</p>
             <p className="text-sm text-gray-600">{info.description}</p>
+          </div>
+        )}
+
+        {page === "appearance" && (
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900 mb-1">Darstellung</h1>
+            <p className="text-sm text-gray-500 mb-6">Wie angepinnte Notizen in der Liste erscheinen.</p>
+            <div className="flex flex-col gap-2 max-w-sm">
+              {MODES.map(mode => {
+                const active = settings.pinnedDisplayMode === mode.value;
+                return (
+                  <button
+                    key={mode.value}
+                    onClick={() => onSetSetting("pinnedDisplayMode", mode.value)}
+                    className="text-left px-4 py-2.5 rounded text-sm transition-colors border"
+                    style={{
+                      background: active ? "#fde047" : "transparent",
+                      borderColor: active ? "#eab308" : "#e7d27a",
+                      color: "#1c1917",
+                    }}
+                  >
+                    {mode.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         )}
       </main>
