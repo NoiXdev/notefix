@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { api } from './api';
 import { useNotes } from './hooks/useNotes';
 import { useSettings } from './hooks/useSettings';
 import NoteList from './components/NoteList';
@@ -19,6 +20,20 @@ export default function App() {
       setSelectedId(notes[0].id);
     }
   }, [notes, selectedId]);
+
+  useEffect(() => {
+    return api.onTrayEvent({
+      newNote: async () => {
+        const id = await createNote();
+        setSelectedId(id);
+      },
+      openNote: (id: string) => {
+        setShowSettings(false);
+        setSelectedId(id);
+      },
+      openSettings: () => setShowSettings(true),
+    });
+  }, [createNote]);
 
   if (windowNoteId) {
     if (loading) {

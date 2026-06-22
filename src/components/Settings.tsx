@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type AppInfo } from "../api";
 import type { AppSettings, PinnedDisplayMode } from "../hooks/useSettings";
 
-type Page = "about" | "appearance";
+type Page = "about" | "appearance" | "system";
 
 interface NavItemProps {
   label: string;
@@ -42,6 +42,18 @@ export default function Settings({ onClose, settings, onSetSetting }: Props) {
     api.getAppInfo().then(setInfo);
   }, []);
 
+  const [bootEnabled, setBootEnabled] = useState(false);
+  useEffect(() => {
+    api.autostart.isEnabled().then(setBootEnabled);
+  }, []);
+
+  const toggleBoot = async () => {
+    const next = !bootEnabled;
+    setBootEnabled(next);
+    if (next) await api.autostart.enable();
+    else await api.autostart.disable();
+  };
+
   return (
     <div className="flex h-screen overflow-hidden">
       <aside className="w-52 shrink-0 bg-gray-950 flex flex-col h-full select-none">
@@ -60,6 +72,7 @@ export default function Settings({ onClose, settings, onSetSetting }: Props) {
         <nav className="flex-1 py-2">
           <NavItem label="About" active={page === "about"} onClick={() => setPage("about")} />
           <NavItem label="Darstellung" active={page === "appearance"} onClick={() => setPage("appearance")} />
+          <NavItem label="System" active={page === "system"} onClick={() => setPage("system")} />
         </nav>
       </aside>
 
@@ -94,6 +107,27 @@ export default function Settings({ onClose, settings, onSetSetting }: Props) {
                   </button>
                 );
               })}
+            </div>
+          </div>
+        )}
+
+        {page === "system" && (
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900 mb-1">System</h1>
+            <p className="text-sm text-gray-500 mb-6">Start- und Hintergrund-Verhalten.</p>
+            <div className="flex flex-col gap-3 max-w-md">
+              <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
+                <span>Bei Anmeldung starten</span>
+                <input type="checkbox" checked={bootEnabled} onChange={toggleBoot} />
+              </label>
+              <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
+                <span>Minimiert starten (nur Menüleiste)</span>
+                <input
+                  type="checkbox"
+                  checked={settings.startMinimized}
+                  onChange={() => onSetSetting("startMinimized", !settings.startMinimized)}
+                />
+              </label>
             </div>
           </div>
         )}

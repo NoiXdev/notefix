@@ -29,6 +29,8 @@ vi.mock("./api", () => ({
   api: {
     notes: { load: mockLoad, save: mockSave, delete: mockDeleteFn, setPinned: mockSetPinned },
     settings: { load: () => Promise.resolve({}), set: vi.fn() },
+    autostart: { isEnabled: () => Promise.resolve(false), enable: vi.fn(), disable: vi.fn() },
+    onTrayEvent: () => () => {},
     onNotesChanged: () => () => {},
     openNoteWindow: vi.fn(),
     setWindowTitle: vi.fn(),
