@@ -16,6 +16,15 @@ export const api = {
     load: (): Promise<Note[]> => invoke("notes_load"),
     save: (note: Note): Promise<void> => invoke("notes_save", { note }),
     delete: (id: string): Promise<void> => invoke("notes_delete", { id }),
+    setPinned: (id: string, pinned: boolean): Promise<void> =>
+      invoke("notes_set_pinned", { id, pinned }),
+  },
+
+  settings: {
+    load: async (): Promise<Record<string, string>> =>
+      Object.fromEntries(await invoke<[string, string][]>("settings_load")),
+    set: (key: string, value: string): Promise<void> =>
+      invoke("settings_set", { key, value }),
   },
 
   /** Subscribe to cross-window note changes. Returns an unsubscribe fn. */

@@ -2,19 +2,20 @@ import { renderHook, act, waitFor } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { Note } from "../types";
 
-const { mockLoad, mockSave, mockDeleteFn, setOnChanged } = vi.hoisted(() => {
+const { mockLoad, mockSave, mockDeleteFn, mockSetPinned, setOnChanged } = vi.hoisted(() => {
   let cb: (() => void) | null = null;
   return {
     mockLoad: vi.fn<() => Promise<Note[]>>(),
     mockSave: vi.fn<(note: Note) => Promise<void>>(),
     mockDeleteFn: vi.fn<(id: string) => Promise<void>>(),
+    mockSetPinned: vi.fn<(id: string, pinned: boolean) => Promise<void>>(),
     setOnChanged: { get: () => cb, set: (f: (() => void) | null) => (cb = f) },
   };
 });
 
 vi.mock("../api", () => ({
   api: {
-    notes: { load: mockLoad, save: mockSave, delete: mockDeleteFn },
+    notes: { load: mockLoad, save: mockSave, delete: mockDeleteFn, setPinned: mockSetPinned },
     onNotesChanged: (cb: () => void) => {
       setOnChanged.set(cb);
       return () => {};
@@ -30,6 +31,7 @@ beforeEach(() => {
   mockLoad.mockResolvedValue([]);
   mockSave.mockResolvedValue(undefined);
   mockDeleteFn.mockResolvedValue(undefined);
+  mockSetPinned.mockResolvedValue(undefined);
 });
 
 async function rendered(initial: Note[] = []) {
@@ -52,7 +54,7 @@ describe("useNotes — initial state", () => {
   });
 
   it("loads existing notes on mount", async () => {
-    const stored: Note[] = [{ id: "abc", content: "<p>hello</p>", updatedAt: 1000 }];
+    const stored: Note[] = [{ id: "abc", content: "<p>hello</p>", updatedAt: 1000, pinned: false }];
     const { result } = await rendered(stored);
     expect(result.current.notes).toHaveLength(1);
     expect(result.current.notes[0].id).toBe("abc");
@@ -123,9 +125,31 @@ describe("useNotes — deleteNote", () => {
 describe("useNotes — cross-window sync", () => {
   it("reloads notes when onNotesChanged fires", async () => {
     const { result } = await rendered();
-    const external: Note[] = [{ id: "ext", content: "<p>from other window</p>", updatedAt: 9999 }];
+    const external: Note[] = [{ id: "ext", content: "<p>from other window</p>", updatedAt: 9999, pinned: false }];
     mockLoad.mockResolvedValue(external);
     await act(async () => { setOnChanged.get()?.(); });
     await waitFor(() => expect(result.current.notes[0]?.id).toBe("ext"));
+  });
+});
+
+describe("useNotes — pinning", () => {
+  it("setPinned floats the note to the top", async () => {
+    const stored: Note[] = [
+      { id: "a", content: "<p>a</p>", updatedAt: 2000, pinned: false },
+      { id: "b", content: "<p>b</p>", updatedAt: 1000, pinned: false },
+    ];
+    const { result } = await rendered(stored);
+    await act(async () => { await result.current.setPinned("b", true); });
+    expect(result.current.notes[0].id).toBe("b");
+    expect(result.current.notes[0].pinned).toBe(true);
+    expect(mockSetPinned).toHaveBeenCalledWith("b", true);
+  });
+
+  it("updateNote preserves the pinned flag", async () => {
+    const stored: Note[] = [{ id: "a", content: "<p>a</p>", updatedAt: 1000, pinned: true }];
+    const { result } = await rendered(stored);
+    await act(async () => { await result.current.updateNote("a", "<p>edited</p>"); });
+    expect(result.current.notes[0].pinned).toBe(true);
+    expect(result.current.notes[0].content).toBe("<p>edited</p>");
   });
 });
