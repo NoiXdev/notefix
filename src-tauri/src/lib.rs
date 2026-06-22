@@ -1,5 +1,6 @@
 mod commands;
 mod migrate;
+mod settings;
 mod storage;
 
 use std::sync::Mutex;
