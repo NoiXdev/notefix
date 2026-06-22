@@ -2,6 +2,7 @@ mod commands;
 mod migrate;
 mod settings;
 mod storage;
+mod tray;
 
 use std::sync::Mutex;
 
