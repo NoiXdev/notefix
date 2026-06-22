@@ -1,0 +1,131 @@
+import { renderHook, act, waitFor } from "@testing-library/react";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import type { Note } from "../types";
+
+const { mockLoad, mockSave, mockDeleteFn, setOnChanged } = vi.hoisted(() => {
+  let cb: (() => void) | null = null;
+  return {
+    mockLoad: vi.fn<() => Promise<Note[]>>(),
+    mockSave: vi.fn<(note: Note) => Promise<void>>(),
+    mockDeleteFn: vi.fn<(id: string) => Promise<void>>(),
+    setOnChanged: { get: () => cb, set: (f: (() => void) | null) => (cb = f) },
+  };
+});
+
+vi.mock("../api", () => ({
+  api: {
+    notes: { load: mockLoad, save: mockSave, delete: mockDeleteFn },
+    onNotesChanged: (cb: () => void) => {
+      setOnChanged.set(cb);
+      return () => {};
+    },
+  },
+}));
+
+import { useNotes } from "./useNotes";
+
+beforeEach(() => {
+  setOnChanged.set(null);
+  vi.clearAllMocks();
+  mockLoad.mockResolvedValue([]);
+  mockSave.mockResolvedValue(undefined);
+  mockDeleteFn.mockResolvedValue(undefined);
+});
+
+async function rendered(initial: Note[] = []) {
+  mockLoad.mockResolvedValue([...initial]);
+  const hook = renderHook(() => useNotes());
+  await waitFor(() => expect(hook.result.current.loading).toBe(false));
+  return hook;
+}
+
+describe("useNotes — initial state", () => {
+  it("starts with loading true then resolves to false", async () => {
+    const { result } = renderHook(() => useNotes());
+    expect(result.current.loading).toBe(true);
+    await waitFor(() => expect(result.current.loading).toBe(false));
+  });
+
+  it("starts empty when no notes exist", async () => {
+    const { result } = await rendered();
+    expect(result.current.notes).toEqual([]);
+  });
+
+  it("loads existing notes on mount", async () => {
+    const stored: Note[] = [{ id: "abc", content: "<p>hello</p>", updatedAt: 1000 }];
+    const { result } = await rendered(stored);
+    expect(result.current.notes).toHaveLength(1);
+    expect(result.current.notes[0].id).toBe("abc");
+  });
+});
+
+describe("useNotes — createNote", () => {
+  it("adds a note and returns its id", async () => {
+    const { result } = await rendered();
+    let id!: string;
+    await act(async () => { id = await result.current.createNote(); });
+    expect(result.current.notes).toHaveLength(1);
+    expect(result.current.notes[0].id).toBe(id);
+  });
+
+  it("creates a note with empty content", async () => {
+    const { result } = await rendered();
+    await act(async () => { await result.current.createNote(); });
+    expect(result.current.notes[0].content).toBe("");
+  });
+
+  it("calls notes.save with the new note", async () => {
+    const { result } = await rendered();
+    await act(async () => { await result.current.createNote(); });
+    expect(mockSave).toHaveBeenCalledOnce();
+    expect(mockSave.mock.calls[0][0]).toMatchObject({ content: "" });
+  });
+});
+
+describe("useNotes — updateNote", () => {
+  it("updates the content of the matching note", async () => {
+    const { result } = await rendered();
+    let id!: string;
+    await act(async () => { id = await result.current.createNote(); });
+    await act(async () => { await result.current.updateNote(id, "<p>updated</p>"); });
+    expect(result.current.notes[0].content).toBe("<p>updated</p>");
+  });
+
+  it("calls notes.save with the updated note", async () => {
+    const { result } = await rendered();
+    let id!: string;
+    await act(async () => { id = await result.current.createNote(); });
+    mockSave.mockClear();
+    await act(async () => { await result.current.updateNote(id, "<p>saved</p>"); });
+    expect(mockSave).toHaveBeenCalledOnce();
+    expect(mockSave.mock.calls[0][0]).toMatchObject({ id, content: "<p>saved</p>" });
+  });
+});
+
+describe("useNotes — deleteNote", () => {
+  it("removes the note with the given id", async () => {
+    const { result } = await rendered();
+    let id!: string;
+    await act(async () => { id = await result.current.createNote(); });
+    await act(async () => { await result.current.deleteNote(id); });
+    expect(result.current.notes).toHaveLength(0);
+  });
+
+  it("calls notes.delete with the correct id", async () => {
+    const { result } = await rendered();
+    let id!: string;
+    await act(async () => { id = await result.current.createNote(); });
+    await act(async () => { await result.current.deleteNote(id); });
+    expect(mockDeleteFn).toHaveBeenCalledWith(id);
+  });
+});
+
+describe("useNotes — cross-window sync", () => {
+  it("reloads notes when onNotesChanged fires", async () => {
+    const { result } = await rendered();
+    const external: Note[] = [{ id: "ext", content: "<p>from other window</p>", updatedAt: 9999 }];
+    mockLoad.mockResolvedValue(external);
+    await act(async () => { setOnChanged.get()?.(); });
+    await waitFor(() => expect(result.current.notes[0]?.id).toBe("ext"));
+  });
+});
