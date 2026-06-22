@@ -33,7 +33,10 @@ pub fn run() {
             commands::notes_load,
             commands::notes_save,
             commands::notes_delete,
+            commands::notes_set_pinned,
             commands::open_note_window,
+            commands::settings_load,
+            commands::settings_set,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

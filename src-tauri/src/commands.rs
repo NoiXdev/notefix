@@ -69,3 +69,35 @@ pub async fn open_note_window(app: AppHandle, note_id: String) -> Result<(), Str
         .map_err(|e| e.to_string())?;
     Ok(())
 }
+
+#[tauri::command]
+pub fn notes_set_pinned(
+    app: AppHandle,
+    webview: WebviewWindow,
+    store: State<'_, Mutex<Store>>,
+    id: String,
+    pinned: bool,
+) -> Result<(), String> {
+    {
+        let store = store.lock().map_err(|e| e.to_string())?;
+        store.set_pinned(&id, pinned).map_err(|e| e.to_string())?;
+    }
+    broadcast_changed(&app, webview.label());
+    Ok(())
+}
+
+#[tauri::command]
+pub fn settings_load(store: State<'_, Mutex<Store>>) -> Result<Vec<(String, String)>, String> {
+    let store = store.lock().map_err(|e| e.to_string())?;
+    crate::settings::load_settings(&store.conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn settings_set(
+    store: State<'_, Mutex<Store>>,
+    key: String,
+    value: String,
+) -> Result<(), String> {
+    let store = store.lock().map_err(|e| e.to_string())?;
+    crate::settings::set_setting(&store.conn, &key, &value).map_err(|e| e.to_string())
+}
