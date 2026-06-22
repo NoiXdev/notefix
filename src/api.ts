@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { isEnabled as autostartIsEnabled, enable as autostartEnable, disable as autostartDisable } from "@tauri-apps/plugin-autostart";
 import type { Note } from "./types";
 
 export interface AppInfo {
@@ -27,11 +28,33 @@ export const api = {
       invoke("settings_set", { key, value }),
   },
 
+  autostart: {
+    isEnabled: (): Promise<boolean> => autostartIsEnabled(),
+    enable: (): Promise<void> => autostartEnable(),
+    disable: (): Promise<void> => autostartDisable(),
+  },
+
   /** Subscribe to cross-window note changes. Returns an unsubscribe fn. */
   onNotesChanged(callback: () => void): () => void {
     const unlisten = listen("notes-changed", () => callback());
     return () => {
       void unlisten.then((un) => un());
+    };
+  },
+
+  /** Subscribe to tray-menu actions. Returns an unsubscribe fn. */
+  onTrayEvent(handlers: {
+    newNote: () => void;
+    openNote: (id: string) => void;
+    openSettings: () => void;
+  }): () => void {
+    const subs = [
+      listen("tray://new-note", () => handlers.newNote()),
+      listen<string>("tray://open-note", (e) => handlers.openNote(e.payload)),
+      listen("tray://open-settings", () => handlers.openSettings()),
+    ];
+    return () => {
+      subs.forEach((p) => void p.then((un) => un()));
     };
   },
 

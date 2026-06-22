@@ -5,9 +5,10 @@ export type PinnedDisplayMode = 'flat' | 'sections';
 
 export interface AppSettings {
   pinnedDisplayMode: PinnedDisplayMode;
+  startMinimized: boolean;
 }
 
-const DEFAULTS: AppSettings = { pinnedDisplayMode: 'flat' };
+const DEFAULTS: AppSettings = { pinnedDisplayMode: 'flat', startMinimized: false };
 
 export function useSettings() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULTS);
@@ -16,6 +17,7 @@ export function useSettings() {
     api.settings.load().then(raw => {
       setSettings({
         pinnedDisplayMode: raw.pinnedDisplayMode === 'sections' ? 'sections' : 'flat',
+        startMinimized: raw.startMinimized === 'true',
       });
     });
   }, []);

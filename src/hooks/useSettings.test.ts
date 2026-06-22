@@ -38,3 +38,19 @@ describe("useSettings", () => {
     expect(mockSet).toHaveBeenCalledWith("pinnedDisplayMode", "sections");
   });
 });
+
+describe("useSettings — startMinimized", () => {
+  it("defaults to false and loads stored true", async () => {
+    mockLoad.mockResolvedValue({ startMinimized: "true" });
+    const { result } = renderHook(() => useSettings());
+    await waitFor(() => expect(result.current.settings.startMinimized).toBe(true));
+  });
+
+  it("setSetting persists startMinimized as a string", async () => {
+    const { result } = renderHook(() => useSettings());
+    await waitFor(() => expect(result.current.settings.startMinimized).toBe(false));
+    await act(async () => { await result.current.setSetting("startMinimized", true); });
+    expect(result.current.settings.startMinimized).toBe(true);
+    expect(mockSet).toHaveBeenCalledWith("startMinimized", "true");
+  });
+});
