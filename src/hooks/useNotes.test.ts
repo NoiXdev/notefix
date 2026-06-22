@@ -2,20 +2,22 @@ import { renderHook, act, waitFor } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { Note } from "../types";
 
-const { mockLoad, mockSave, mockDeleteFn, mockSetPinned, setOnChanged } = vi.hoisted(() => {
+const { mockLoad, mockSave, mockDeleteFn, mockSetPinned, mockSetArchived, mockSetColor, setOnChanged } = vi.hoisted(() => {
   let cb: (() => void) | null = null;
   return {
     mockLoad: vi.fn<() => Promise<Note[]>>(),
     mockSave: vi.fn<(note: Note) => Promise<void>>(),
     mockDeleteFn: vi.fn<(id: string) => Promise<void>>(),
     mockSetPinned: vi.fn<(id: string, pinned: boolean) => Promise<void>>(),
+    mockSetArchived: vi.fn<(id: string, archived: boolean) => Promise<void>>(),
+    mockSetColor: vi.fn<(id: string, color: string) => Promise<void>>(),
     setOnChanged: { get: () => cb, set: (f: (() => void) | null) => (cb = f) },
   };
 });
 
 vi.mock("../api", () => ({
   api: {
-    notes: { load: mockLoad, save: mockSave, delete: mockDeleteFn, setPinned: mockSetPinned },
+    notes: { load: mockLoad, save: mockSave, delete: mockDeleteFn, setPinned: mockSetPinned, setArchived: mockSetArchived, setColor: mockSetColor },
     onNotesChanged: (cb: () => void) => {
       setOnChanged.set(cb);
       return () => {};
@@ -32,6 +34,8 @@ beforeEach(() => {
   mockSave.mockResolvedValue(undefined);
   mockDeleteFn.mockResolvedValue(undefined);
   mockSetPinned.mockResolvedValue(undefined);
+  mockSetArchived.mockResolvedValue(undefined);
+  mockSetColor.mockResolvedValue(undefined);
 });
 
 async function rendered(initial: Note[] = []) {
@@ -54,7 +58,7 @@ describe("useNotes — initial state", () => {
   });
 
   it("loads existing notes on mount", async () => {
-    const stored: Note[] = [{ id: "abc", content: "<p>hello</p>", updatedAt: 1000, pinned: false }];
+    const stored: Note[] = [{ id: "abc", content: "<p>hello</p>", updatedAt: 1000, pinned: false, archived: false, color: '' }];
     const { result } = await rendered(stored);
     expect(result.current.notes).toHaveLength(1);
     expect(result.current.notes[0].id).toBe("abc");
@@ -125,7 +129,7 @@ describe("useNotes — deleteNote", () => {
 describe("useNotes — cross-window sync", () => {
   it("reloads notes when onNotesChanged fires", async () => {
     const { result } = await rendered();
-    const external: Note[] = [{ id: "ext", content: "<p>from other window</p>", updatedAt: 9999, pinned: false }];
+    const external: Note[] = [{ id: "ext", content: "<p>from other window</p>", updatedAt: 9999, pinned: false, archived: false, color: '' }];
     mockLoad.mockResolvedValue(external);
     await act(async () => { setOnChanged.get()?.(); });
     await waitFor(() => expect(result.current.notes[0]?.id).toBe("ext"));
@@ -135,8 +139,8 @@ describe("useNotes — cross-window sync", () => {
 describe("useNotes — pinning", () => {
   it("setPinned floats the note to the top", async () => {
     const stored: Note[] = [
-      { id: "a", content: "<p>a</p>", updatedAt: 2000, pinned: false },
-      { id: "b", content: "<p>b</p>", updatedAt: 1000, pinned: false },
+      { id: "a", content: "<p>a</p>", updatedAt: 2000, pinned: false, archived: false, color: '' },
+      { id: "b", content: "<p>b</p>", updatedAt: 1000, pinned: false, archived: false, color: '' },
     ];
     const { result } = await rendered(stored);
     await act(async () => { await result.current.setPinned("b", true); });
@@ -146,10 +150,26 @@ describe("useNotes — pinning", () => {
   });
 
   it("updateNote preserves the pinned flag", async () => {
-    const stored: Note[] = [{ id: "a", content: "<p>a</p>", updatedAt: 1000, pinned: true }];
+    const stored: Note[] = [{ id: "a", content: "<p>a</p>", updatedAt: 1000, pinned: true, archived: false, color: '' }];
     const { result } = await rendered(stored);
     await act(async () => { await result.current.updateNote("a", "<p>edited</p>"); });
     expect(result.current.notes[0].pinned).toBe(true);
     expect(result.current.notes[0].content).toBe("<p>edited</p>");
+  });
+});
+
+describe("useNotes — archive & color", () => {
+  it("setArchived flips the flag and calls the bridge", async () => {
+    const { result } = await rendered([{ id: "a", content: "<p>a</p>", updatedAt: 1, pinned: false, archived: false, color: "" }]);
+    await act(async () => { await result.current.setArchived("a", true); });
+    expect(result.current.notes[0].archived).toBe(true);
+    expect(mockSetArchived).toHaveBeenCalledWith("a", true);
+  });
+
+  it("setColor sets the color and calls the bridge", async () => {
+    const { result } = await rendered([{ id: "a", content: "<p>a</p>", updatedAt: 1, pinned: false, archived: false, color: "" }]);
+    await act(async () => { await result.current.setColor("a", "#ef4444"); });
+    expect(result.current.notes[0].color).toBe("#ef4444");
+    expect(mockSetColor).toHaveBeenCalledWith("a", "#ef4444");
   });
 });

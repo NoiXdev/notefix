@@ -3,4 +3,6 @@ export interface Note {
   content: string; // Tiptap HTML
   updatedAt: number;
   pinned: boolean;
+  archived: boolean;
+  color: string;
 }

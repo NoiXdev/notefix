@@ -10,18 +10,19 @@ export function useNotes() {
   const [loading, setLoading] = useState(true);
 
   const reload = useCallback(async () => {
-    const loaded = await api.notes.load();
-    setNotes(loaded);
+    setNotes(await api.notes.load());
   }, []);
 
   useEffect(() => {
     reload().finally(() => setLoading(false));
-    const unsubscribe = api.onNotesChanged(reload);
-    return unsubscribe;
+    return api.onNotesChanged(reload);
   }, [reload]);
 
   const createNote = useCallback(async (): Promise<string> => {
-    const note: Note = { id: crypto.randomUUID(), content: '', updatedAt: Date.now(), pinned: false };
+    const note: Note = {
+      id: crypto.randomUUID(), content: '', updatedAt: Date.now(),
+      pinned: false, archived: false, color: '',
+    };
     await api.notes.save(note);
     setNotes(prev => [note, ...prev]);
     return note.id;
@@ -29,12 +30,11 @@ export function useNotes() {
 
   const updateNote = useCallback(async (id: string, content: string) => {
     const updatedAt = Date.now();
-    // Local state keeps `pinned` via {...n}; backend's save_note preserves pinned on conflict,
-    // so the value sent here is irrelevant.
     setNotes(prev =>
       prev.map(n => (n.id === id ? { ...n, content, updatedAt } : n)).sort(sortNotes),
     );
-    await api.notes.save({ id, content, updatedAt, pinned: false });
+    // backend's save_note preserves pinned/archived/color on conflict.
+    await api.notes.save({ id, content, updatedAt, pinned: false, archived: false, color: '' });
   }, []);
 
   const deleteNote = useCallback(async (id: string) => {
@@ -47,5 +47,15 @@ export function useNotes() {
     await api.notes.setPinned(id, pinned);
   }, []);
 
-  return { notes, loading, createNote, updateNote, deleteNote, setPinned };
+  const setArchived = useCallback(async (id: string, archived: boolean) => {
+    setNotes(prev => prev.map(n => (n.id === id ? { ...n, archived } : n)));
+    await api.notes.setArchived(id, archived);
+  }, []);
+
+  const setColor = useCallback(async (id: string, color: string) => {
+    setNotes(prev => prev.map(n => (n.id === id ? { ...n, color } : n)));
+    await api.notes.setColor(id, color);
+  }, []);
+
+  return { notes, loading, createNote, updateNote, deleteNote, setPinned, setArchived, setColor };
 }

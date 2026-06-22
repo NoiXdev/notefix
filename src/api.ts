@@ -19,6 +19,10 @@ export const api = {
     delete: (id: string): Promise<void> => invoke("notes_delete", { id }),
     setPinned: (id: string, pinned: boolean): Promise<void> =>
       invoke("notes_set_pinned", { id, pinned }),
+    setArchived: (id: string, archived: boolean): Promise<void> =>
+      invoke("notes_set_archived", { id, archived }),
+    setColor: (id: string, color: string): Promise<void> =>
+      invoke("notes_set_color", { id, color }),
   },
 
   settings: {
@@ -27,6 +31,9 @@ export const api = {
     set: (key: string, value: string): Promise<void> =>
       invoke("settings_set", { key, value }),
   },
+
+  exportNotes: (path: string, ids: string[]): Promise<void> =>
+    invoke("export_notes", { path, ids }),
 
   autostart: {
     isEnabled: (): Promise<boolean> => autostartIsEnabled(),
