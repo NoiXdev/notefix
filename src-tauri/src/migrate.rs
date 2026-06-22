@@ -27,6 +27,14 @@ pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
         set_meta(conn, "schema_version", "2")?;
     }
 
+    if version < 3 {
+        conn.execute_batch(
+            "ALTER TABLE notes ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;
+             ALTER TABLE notes ADD COLUMN color TEXT NOT NULL DEFAULT '';",
+        )?;
+        set_meta(conn, "schema_version", "3")?;
+    }
+
     Ok(())
 }
 
@@ -90,14 +98,14 @@ mod tests {
     #[test]
     fn migration_sets_schema_version() {
         let s = store();
-        assert_eq!(get_meta(&s.conn, "schema_version").unwrap().as_deref(), Some("2"));
+        assert_eq!(get_meta(&s.conn, "schema_version").unwrap().as_deref(), Some("3"));
     }
 
     #[test]
     fn migration_is_idempotent() {
         let s = store();
         run_migrations(&s.conn).unwrap();
-        assert_eq!(get_meta(&s.conn, "schema_version").unwrap().as_deref(), Some("2"));
+        assert_eq!(get_meta(&s.conn, "schema_version").unwrap().as_deref(), Some("3"));
     }
 
     #[test]
