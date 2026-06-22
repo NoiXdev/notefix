@@ -1,51 +1,79 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
-import "./App.css";
+import { useState, useEffect } from 'react';
+import { useNotes } from './hooks/useNotes';
+import NoteList from './components/NoteList';
+import NoteEditor from './components/NoteEditor';
+import Settings from './components/Settings';
 
-function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+const windowNoteId = new URLSearchParams(window.location.search).get('windowNoteId');
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
+export default function App() {
+  const { notes, loading, createNote, updateNote, deleteNote } = useNotes();
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
+
+  // Auto-select the first note on load
+  useEffect(() => {
+    if (!selectedId && notes.length > 0) {
+      setSelectedId(notes[0].id);
+    }
+  }, [notes, selectedId]);
+
+  if (windowNoteId) {
+    if (loading) {
+      return (
+        <div className="flex h-screen items-center justify-center" style={{ background: '#fef9c3' }} />
+      );
+    }
+    const note = notes.find(n => n.id === windowNoteId);
+    return note
+      ? <div className="h-screen"><NoteEditor note={note} onChange={updateNote} isWindow /></div>
+      : <div className="flex h-screen items-center justify-center text-gray-400 text-sm">Note not found.</div>;
+  }
+
+  const selectedNote = notes.find(n => n.id === selectedId) ?? null;
+
+  const handleCreate = async () => {
+    const id = await createNote();
+    setSelectedId(id);
+  };
+
+  const handleDelete = (id: string) => {
+    if (selectedId === id) {
+      const remaining = notes.filter(n => n.id !== id);
+      setSelectedId(remaining[0]?.id ?? null);
+    }
+    deleteNote(id);
+  };
+
+  if (showSettings) {
+    return <Settings onClose={() => setShowSettings(false)} />;
   }
 
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
+    <div className="flex h-screen overflow-hidden">
+      <NoteList
+        notes={notes}
+        selectedId={selectedId}
+        onSelect={setSelectedId}
+        onCreate={handleCreate}
+        onDelete={handleDelete}
+        onOpenSettings={() => setShowSettings(true)}
+      />
+      <main className="flex-1 overflow-hidden">
+        {selectedNote ? (
+          <NoteEditor note={selectedNote} onChange={updateNote} />
+        ) : (
+          <div className="flex h-full items-center justify-center" style={{ background: '#fef9c3' }}>
+            <div className="text-center" style={{ color: '#b59f3b' }}>
+              <svg className="mx-auto mb-3 opacity-40" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+              </svg>
+              <p className="text-sm">Select a note or create a new one</p>
+            </div>
+          </div>
+        )}
+      </main>
+    </div>
   );
 }
-
-export default App;
