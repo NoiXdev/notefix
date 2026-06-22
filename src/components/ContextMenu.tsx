@@ -15,12 +15,13 @@ interface Props {
 export default function ContextMenu({ x, y, items, onClose }: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    // A left-click outside closes it. NO `contextmenu` close listener: it would
+    // catch the very right-click that opened the menu and close it instantly
+    // (a right-click never fires a `click`, so this listener is safe to attach now).
     window.addEventListener('click', onClose);
-    window.addEventListener('contextmenu', onClose);
     window.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('click', onClose);
-      window.removeEventListener('contextmenu', onClose);
       window.removeEventListener('keydown', onKey);
     };
   }, [onClose]);
