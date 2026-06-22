@@ -169,7 +169,7 @@ export default function NoteEditor({ note, onChange, isWindow = false }: Props) 
         >
           {/* Pin / always-on-top */}
           <button
-            className="app-no-drag w-7 h-7 flex items-center justify-center rounded transition-colors"
+            className="w-7 h-7 flex items-center justify-center rounded transition-colors"
             style={{ color: pinned ? '#92400e' : '#78716c', background: pinned ? '#fcd34d' : 'transparent' }}
             onMouseDown={e => e.preventDefault()}
             onClick={togglePin}
@@ -183,7 +183,7 @@ export default function NoteEditor({ note, onChange, isWindow = false }: Props) 
 
           {/* Close */}
           <button
-            className="app-no-drag w-5 h-5 flex items-center justify-center rounded-full text-white transition-colors"
+            className="w-5 h-5 flex items-center justify-center rounded-full text-white transition-colors"
             style={{ background: '#f87171' }}
             onMouseDown={e => e.preventDefault()}
             onClick={() => window.close()}
