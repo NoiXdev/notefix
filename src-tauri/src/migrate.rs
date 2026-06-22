@@ -7,6 +7,7 @@ pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
     let version: i64 = get_meta(conn, "schema_version")?
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
+
     if version < 1 {
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS notes (
@@ -17,6 +18,15 @@ pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
         )?;
         set_meta(conn, "schema_version", "1")?;
     }
+
+    if version < 2 {
+        conn.execute_batch(
+            "ALTER TABLE notes ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;
+             CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+        )?;
+        set_meta(conn, "schema_version", "2")?;
+    }
+
     Ok(())
 }
 
@@ -80,14 +90,14 @@ mod tests {
     #[test]
     fn migration_sets_schema_version() {
         let s = store();
-        assert_eq!(get_meta(&s.conn, "schema_version").unwrap().as_deref(), Some("1"));
+        assert_eq!(get_meta(&s.conn, "schema_version").unwrap().as_deref(), Some("2"));
     }
 
     #[test]
     fn migration_is_idempotent() {
         let s = store();
         run_migrations(&s.conn).unwrap();
-        assert_eq!(get_meta(&s.conn, "schema_version").unwrap().as_deref(), Some("1"));
+        assert_eq!(get_meta(&s.conn, "schema_version").unwrap().as_deref(), Some("2"));
     }
 
     #[test]
