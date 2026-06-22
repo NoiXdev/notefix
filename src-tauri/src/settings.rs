@@ -16,6 +16,14 @@ pub fn set_setting(conn: &Connection, key: &str, value: &str) -> rusqlite::Resul
     Ok(())
 }
 
+/// Read a setting as a bool ("true" => true, anything else / missing => false).
+pub fn get_bool(conn: &Connection, key: &str) -> bool {
+    load_settings(conn)
+        .ok()
+        .and_then(|all| all.into_iter().find(|(k, _)| k == key).map(|(_, v)| v == "true"))
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -48,5 +56,15 @@ mod tests {
         set_setting(&s.conn, "k", "b").unwrap();
         let all = load_settings(&s.conn).unwrap();
         assert_eq!(all, vec![("k".to_string(), "b".to_string())]);
+    }
+
+    #[test]
+    fn get_bool_reads_true_false_and_missing() {
+        let s = conn();
+        assert!(!get_bool(&s.conn, "startMinimized")); // missing => false
+        set_setting(&s.conn, "startMinimized", "true").unwrap();
+        assert!(get_bool(&s.conn, "startMinimized"));
+        set_setting(&s.conn, "startMinimized", "false").unwrap();
+        assert!(!get_bool(&s.conn, "startMinimized"));
     }
 }

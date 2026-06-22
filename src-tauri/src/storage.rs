@@ -65,6 +65,17 @@ impl Store {
         self.conn.execute("UPDATE notes SET pinned = ?2 WHERE id = ?1", (id, pinned))?;
         Ok(())
     }
+
+    /// The `limit` most-recently-updated notes (newest first), ignoring pin order.
+    pub fn recent_notes(&self, limit: i64) -> rusqlite::Result<Vec<Note>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, content, updated_at, pinned FROM notes ORDER BY updated_at DESC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map([limit], |r| {
+            Ok(Note { id: r.get(0)?, content: r.get(1)?, updated_at: r.get(2)?, pinned: r.get(3)? })
+        })?;
+        rows.collect()
+    }
 }
 
 #[cfg(test)]
@@ -137,5 +148,16 @@ mod tests {
         s.set_pinned("old", true).unwrap();
         let ids: Vec<String> = s.load_notes().unwrap().into_iter().map(|n| n.id).collect();
         assert_eq!(ids, vec!["old", "new"]);
+    }
+
+    #[test]
+    fn recent_notes_orders_by_updated_at_ignoring_pin() {
+        let s = store();
+        s.save_note(&note("a", "<p>a</p>", 1000)).unwrap();
+        s.save_note(&note("b", "<p>b</p>", 3000)).unwrap();
+        s.save_note(&note("c", "<p>c</p>", 2000)).unwrap();
+        s.set_pinned("a", true).unwrap(); // pin oldest — must NOT jump the queue here
+        let ids: Vec<String> = s.recent_notes(2).unwrap().into_iter().map(|n| n.id).collect();
+        assert_eq!(ids, vec!["b", "c"]);
     }
 }
