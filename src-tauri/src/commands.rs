@@ -33,6 +33,7 @@ pub fn notes_save(
         store.save_note(&note).map_err(|e| e.to_string())?;
     }
     broadcast_changed(&app, webview.label());
+    crate::tray::rebuild_menu(&app);
     Ok(())
 }
 
@@ -48,6 +49,7 @@ pub fn notes_delete(
         store.delete_note(&id).map_err(|e| e.to_string())?;
     }
     broadcast_changed(&app, webview.label());
+    crate::tray::rebuild_menu(&app);
     Ok(())
 }
 
@@ -83,6 +85,7 @@ pub fn notes_set_pinned(
         store.set_pinned(&id, pinned).map_err(|e| e.to_string())?;
     }
     broadcast_changed(&app, webview.label());
+    crate::tray::rebuild_menu(&app);
     Ok(())
 }
 

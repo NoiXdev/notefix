@@ -11,7 +11,7 @@
   },
   "app": {
     "windows": [
-      { "label": "main", "title": "Notefix", "width": 1100, "height": 760 }
+      { "label": "main", "title": "Notefix", "width": 1100, "height": 760, "visible": false }
     ],
     "security": {
       "csp": null
