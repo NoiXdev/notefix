@@ -26,6 +26,7 @@ impl Store {
         })
     }
 
+    #[cfg(test)]
     pub fn open_in_memory() -> rusqlite::Result<Self> {
         Ok(Self {
             conn: Connection::open_in_memory()?,
