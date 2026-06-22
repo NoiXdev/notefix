@@ -104,3 +104,51 @@ pub fn settings_set(
     let store = store.lock().map_err(|e| e.to_string())?;
     crate::settings::set_setting(&store.conn, &key, &value).map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub fn notes_set_archived(
+    app: AppHandle,
+    webview: WebviewWindow,
+    store: State<'_, Mutex<Store>>,
+    id: String,
+    archived: bool,
+) -> Result<(), String> {
+    {
+        let store = store.lock().map_err(|e| e.to_string())?;
+        store.set_archived(&id, archived).map_err(|e| e.to_string())?;
+    }
+    broadcast_changed(&app, webview.label());
+    crate::tray::rebuild_menu(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn notes_set_color(
+    app: AppHandle,
+    webview: WebviewWindow,
+    store: State<'_, Mutex<Store>>,
+    id: String,
+    color: String,
+) -> Result<(), String> {
+    {
+        let store = store.lock().map_err(|e| e.to_string())?;
+        store.set_color(&id, &color).map_err(|e| e.to_string())?;
+    }
+    broadcast_changed(&app, webview.label());
+    crate::tray::rebuild_menu(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn export_notes(
+    store: State<'_, Mutex<Store>>,
+    path: String,
+    ids: Vec<String>,
+) -> Result<(), String> {
+    let notes = {
+        let store = store.lock().map_err(|e| e.to_string())?;
+        store.load_notes().map_err(|e| e.to_string())?
+    };
+    let json = crate::export::notes_to_json(&notes, &ids).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| e.to_string())
+}

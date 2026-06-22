@@ -1,4 +1,5 @@
 mod commands;
+mod export;
 mod migrate;
 mod settings;
 mod storage;
@@ -26,6 +27,7 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
@@ -60,6 +62,9 @@ pub fn run() {
             commands::notes_save,
             commands::notes_delete,
             commands::notes_set_pinned,
+            commands::notes_set_archived,
+            commands::notes_set_color,
+            commands::export_notes,
             commands::open_note_window,
             commands::settings_load,
             commands::settings_set,
