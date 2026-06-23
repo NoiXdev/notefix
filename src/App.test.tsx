@@ -1,19 +1,23 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-vi.mock("@tiptap/react", () => ({
-  useEditor: () => ({
+vi.mock("@tiptap/react", () => {
+  // Return a STABLE editor object so NoteEditor's `[note.id, editor]` effect
+  // doesn't re-run every render (an unstable mock + setProgress => infinite loop).
+  const editor = {
     isActive: () => false,
     chain: () => ({ focus: () => ({ toggleBold: () => ({ run: vi.fn() }) }) }),
     commands: { setContent: vi.fn(), focus: vi.fn() },
     getHTML: () => "<p></p>",
     isEditable: true,
-  }),
-  EditorContent: () => null,
-}));
+  };
+  return { useEditor: () => editor, EditorContent: () => null };
+});
 vi.mock("@tiptap/starter-kit", () => ({ default: {} }));
 vi.mock("@tiptap/extension-underline", () => ({ default: {} }));
 vi.mock("@tiptap/extension-placeholder", () => ({ default: { configure: () => ({}) } }));
+vi.mock("@tiptap/extension-task-list", () => ({ default: {} }));
+vi.mock("@tiptap/extension-task-item", () => ({ default: { configure: () => ({}) } }));
 vi.mock("./components/ResizableImage", () => ({
   ResizableImage: { configure: () => ({}) },
 }));

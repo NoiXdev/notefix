@@ -4,6 +4,9 @@ import type { EditorView } from '@tiptap/pm/view';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
 import Placeholder from '@tiptap/extension-placeholder';
+import TaskList from '@tiptap/extension-task-list';
+import TaskItem from '@tiptap/extension-task-item';
+import { countTasks } from '../tasks';
 import { ResizableImage } from './ResizableImage';
 import type { Note } from '../types';
 import { api } from '../api';
@@ -76,6 +79,7 @@ function ToolbarBtn({ onClick, active, title, children }: ToolbarBtnProps) {
 
 export default function NoteEditor({ note, onChange, isWindow = false }: Props) {
   const [pinned, setPinned] = useState(false);
+  const [progress, setProgress] = useState({ done: 0, total: 0 });
   const pendingSave = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipNextUpdate = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -85,6 +89,8 @@ export default function NoteEditor({ note, onChange, isWindow = false }: Props) 
       StarterKit,
       Underline,
       Placeholder.configure({ placeholder: 'Start writing…' }),
+      TaskList,
+      TaskItem.configure({ nested: true }),
       ResizableImage.configure({ inline: false, allowBase64: true }),
     ],
     content: note.content || '<p></p>',
@@ -94,6 +100,7 @@ export default function NoteEditor({ note, onChange, isWindow = false }: Props) 
         return;
       }
       const html = e.getHTML();
+        setProgress(countTasks(html));
       if (isWindow) api.setWindowTitle(getTitleFromHtml(html));
       if (pendingSave.current) clearTimeout(pendingSave.current);
       pendingSave.current = setTimeout(() => {
@@ -133,6 +140,7 @@ export default function NoteEditor({ note, onChange, isWindow = false }: Props) 
     }
     skipNextUpdate.current = true;
     editor.commands.setContent(note.content || '<p></p>');
+    setProgress(countTasks(note.content || ''));
     editor.commands.focus('end');
     if (isWindow) api.setWindowTitle(getTitleFromHtml(note.content || ''));
   }, [note.id, editor]);
@@ -198,6 +206,17 @@ export default function NoteEditor({ note, onChange, isWindow = false }: Props) 
         </div>
       )}
 
+      {progress.total > 0 && (
+        <div className="shrink-0 px-7 pt-4">
+          <div className="flex items-center justify-between text-xs mb-1" style={{ color: '#92400e' }}>
+            <span>{progress.done}/{progress.total} erledigt</span>
+          </div>
+          <div className="h-1.5 rounded-full overflow-hidden" style={{ background: '#fde68a' }}>
+            <div className="h-full rounded-full" style={{ width: `${(progress.done / progress.total) * 100}%`, background: '#ca8a04' }} />
+          </div>
+        </div>
+      )}
+
       {/* Scrollable content area */}
       <div className="flex-1 overflow-auto px-7 py-6">
         <EditorContent editor={editor} className="h-full" />
@@ -219,6 +238,11 @@ export default function NoteEditor({ note, onChange, isWindow = false }: Props) 
         </ToolbarBtn>
         <ToolbarBtn onClick={() => editor.chain().focus().toggleStrike().run()} active={editor.isActive('strike')} title="Strikethrough">
           <span className="line-through">S</span>
+        </ToolbarBtn>
+        <ToolbarBtn onClick={() => editor.chain().focus().toggleTaskList().run()} active={editor.isActive('taskList')} title="Aufgabenliste">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="3 7 5 9 9 5" /><polyline points="3 17 5 19 9 15" /><line x1="13" y1="7" x2="21" y2="7" /><line x1="13" y1="17" x2="21" y2="17" />
+          </svg>
         </ToolbarBtn>
 
         <div className="w-px h-5 bg-yellow-400 mx-1" />

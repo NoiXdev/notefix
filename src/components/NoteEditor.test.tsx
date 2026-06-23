@@ -2,8 +2,10 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Note } from "../types";
 
-vi.mock("@tiptap/react", () => ({
-  useEditor: () => ({
+vi.mock("@tiptap/react", () => {
+  // Return a STABLE editor object so NoteEditor's `[note.id, editor]` effect
+  // doesn't re-run every render (an unstable mock + setProgress => infinite loop).
+  const editor = {
     isActive: () => false,
     chain: () => ({
       focus: () => ({
@@ -13,18 +15,21 @@ vi.mock("@tiptap/react", () => ({
         toggleStrike: () => ({ run: vi.fn() }),
         toggleBulletList: () => ({ run: vi.fn() }),
         toggleOrderedList: () => ({ run: vi.fn() }),
+        toggleTaskList: () => ({ run: vi.fn() }),
         setImage: () => ({ run: vi.fn() }),
       }),
     }),
     commands: { setContent: vi.fn(), focus: vi.fn() },
     getHTML: () => "<p></p>",
     isEditable: true,
-  }),
-  EditorContent: () => null,
-}));
+  };
+  return { useEditor: () => editor, EditorContent: () => null };
+});
 vi.mock("@tiptap/starter-kit", () => ({ default: {} }));
 vi.mock("@tiptap/extension-underline", () => ({ default: {} }));
 vi.mock("@tiptap/extension-placeholder", () => ({ default: { configure: () => ({}) } }));
+vi.mock("@tiptap/extension-task-list", () => ({ default: {} }));
+vi.mock("@tiptap/extension-task-item", () => ({ default: { configure: () => ({}) } }));
 vi.mock("./ResizableImage", () => ({
   ResizableImage: { configure: () => ({}) },
 }));
@@ -104,5 +109,12 @@ describe("NoteEditor — standalone window mode (isWindow=true)", () => {
     render(<NoteEditor note={mockNote} onChange={onChange} isWindow />);
     fireEvent.click(screen.getByTitle("Close"));
     expect(mockCloseWindow).toHaveBeenCalledOnce();
+  });
+});
+
+describe("NoteEditor — task list", () => {
+  it("shows the task-list toolbar button", () => {
+    render(<NoteEditor note={mockNote} onChange={onChange} />);
+    expect(screen.getByTitle("Aufgabenliste")).toBeInTheDocument();
   });
 });
