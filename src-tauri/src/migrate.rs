@@ -62,6 +62,14 @@ pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
         set_meta(conn, "schema_version", "6")?;
     }
 
+    if version < 7 {
+        conn.execute_batch(
+            "ALTER TABLE folders ADD COLUMN icon  TEXT NOT NULL DEFAULT '';
+             ALTER TABLE folders ADD COLUMN color TEXT NOT NULL DEFAULT '';",
+        )?;
+        set_meta(conn, "schema_version", "7")?;
+    }
+
     Ok(())
 }
 
@@ -125,14 +133,14 @@ mod tests {
     #[test]
     fn migration_sets_schema_version() {
         let s = store();
-        assert_eq!(get_meta(&s.conn, "schema_version").unwrap().as_deref(), Some("6"));
+        assert_eq!(get_meta(&s.conn, "schema_version").unwrap().as_deref(), Some("7"));
     }
 
     #[test]
     fn migration_is_idempotent() {
         let s = store();
         run_migrations(&s.conn).unwrap();
-        assert_eq!(get_meta(&s.conn, "schema_version").unwrap().as_deref(), Some("6"));
+        assert_eq!(get_meta(&s.conn, "schema_version").unwrap().as_deref(), Some("7"));
     }
 
     #[test]

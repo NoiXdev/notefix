@@ -8,6 +8,10 @@ pub struct Folder {
     pub name: String,
     pub parent_id: Option<String>,
     pub position: i64,
+    #[serde(default)]
+    pub icon: String,
+    #[serde(default)]
+    pub color: String,
 }
 
 pub enum DeleteMode {
@@ -27,9 +31,9 @@ fn now_ms() -> i64 {
 }
 
 pub fn load_folders(conn: &Connection) -> rusqlite::Result<Vec<Folder>> {
-    let mut stmt = conn.prepare("SELECT id, name, parent_id, position FROM folders ORDER BY position, name")?;
+    let mut stmt = conn.prepare("SELECT id, name, parent_id, position, icon, color FROM folders ORDER BY position, name")?;
     let rows = stmt.query_map([], |r| Ok(Folder {
-        id: r.get(0)?, name: r.get(1)?, parent_id: r.get(2)?, position: r.get(3)?,
+        id: r.get(0)?, name: r.get(1)?, parent_id: r.get(2)?, position: r.get(3)?, icon: r.get(4)?, color: r.get(5)?,
     }))?;
     rows.collect()
 }
@@ -49,6 +53,16 @@ pub fn create_folder(conn: &Connection, id: &str, name: &str, parent_id: Option<
 
 pub fn rename_folder(conn: &Connection, id: &str, name: &str) -> rusqlite::Result<()> {
     conn.execute("UPDATE folders SET name = ?2 WHERE id = ?1", (id, name))?;
+    Ok(())
+}
+
+pub fn set_folder_icon(conn: &Connection, id: &str, icon: &str) -> rusqlite::Result<()> {
+    conn.execute("UPDATE folders SET icon = ?2 WHERE id = ?1", (id, icon))?;
+    Ok(())
+}
+
+pub fn set_folder_color(conn: &Connection, id: &str, color: &str) -> rusqlite::Result<()> {
+    conn.execute("UPDATE folders SET color = ?2 WHERE id = ?1", (id, color))?;
     Ok(())
 }
 
@@ -138,6 +152,20 @@ mod tests {
         create_folder(&s.conn, "b", "B", None).unwrap();
         let ids: Vec<String> = load_folders(&s.conn).unwrap().into_iter().map(|f| f.id).collect();
         assert_eq!(ids, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn set_icon_and_color_persist_and_default_empty() {
+        let s = store();
+        create_folder(&s.conn, "a", "A", None).unwrap();
+        let f = load_folders(&s.conn).unwrap();
+        assert_eq!(f[0].icon, "");
+        assert_eq!(f[0].color, "");
+        set_folder_icon(&s.conn, "a", "fa:star").unwrap();
+        set_folder_color(&s.conn, "a", "#22c55e").unwrap();
+        let f = load_folders(&s.conn).unwrap();
+        assert_eq!(f[0].icon, "fa:star");
+        assert_eq!(f[0].color, "#22c55e");
     }
 
     #[test]
