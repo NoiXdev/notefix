@@ -31,6 +31,8 @@ pub fn notes_save(
     {
         let store = store.lock().map_err(|e| e.to_string())?;
         store.save_note(&note).map_err(|e| e.to_string())?;
+        let limit = crate::settings::get_int(&store.conn, "revisionLimit", 50);
+        crate::revisions::add_revision(&store.conn, &note.id, &note.content, limit).map_err(|e| e.to_string())?;
     }
     broadcast_changed(&app, webview.label());
     crate::tray::rebuild_menu(&app);
@@ -316,4 +318,16 @@ pub fn set_db_location(app: AppHandle, store: State<'_, Mutex<Store>>, folder: S
     }
 
     Ok(DbLocationResult { mode: mode.to_string(), path: target.to_string_lossy().into_owned() })
+}
+
+#[tauri::command]
+pub fn note_revisions(store: State<'_, Mutex<Store>>, note_id: String) -> Result<Vec<crate::revisions::Revision>, String> {
+    let store = store.lock().map_err(|e| e.to_string())?;
+    crate::revisions::list_revisions(&store.conn, &note_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn note_revision_content(store: State<'_, Mutex<Store>>, id: i64) -> Result<Option<String>, String> {
+    let store = store.lock().map_err(|e| e.to_string())?;
+    crate::revisions::revision_content(&store.conn, id).map_err(|e| e.to_string())
 }

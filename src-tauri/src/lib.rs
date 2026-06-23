@@ -89,6 +89,8 @@ pub fn run() {
             commands::open_note_window,
             commands::settings_load,
             commands::settings_set,
+            commands::note_revisions,
+            commands::note_revision_content,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
