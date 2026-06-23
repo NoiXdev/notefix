@@ -30,9 +30,12 @@
     "@tiptap/react": "^3.27.1",
     "@tiptap/starter-kit": "^3.27.1",
     "emoji-picker-react": "^4.19.1",
+    "marked": "^18.0.5",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "tailwindcss": "^4.3.1"
+    "tailwindcss": "^4.3.1",
+    "turndown": "^7.2.4",
+    "turndown-plugin-gfm": "^1.0.2"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
@@ -41,6 +44,7 @@
     "@testing-library/user-event": "^14.6.1",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
+    "@types/turndown": "^5.0.6",
     "@vitejs/plugin-react": "^4.7.0",
     "jsdom": "^29.1.1",
     "typescript": "~5.8.3",
