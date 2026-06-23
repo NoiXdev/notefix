@@ -239,6 +239,20 @@ pub fn folders_reorder(app: AppHandle, webview: WebviewWindow, store: State<'_, 
     Ok(())
 }
 
+#[tauri::command]
+pub fn folder_set_icon(app: AppHandle, webview: WebviewWindow, store: State<'_, Mutex<Store>>, id: String, icon: String) -> Result<(), String> {
+    { let store = store.lock().map_err(|e| e.to_string())?; crate::folders::set_folder_icon(&store.conn, &id, &icon).map_err(|e| e.to_string())?; }
+    notify(&app, &webview);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn folder_set_color(app: AppHandle, webview: WebviewWindow, store: State<'_, Mutex<Store>>, id: String, color: String) -> Result<(), String> {
+    { let store = store.lock().map_err(|e| e.to_string())?; crate::folders::set_folder_color(&store.conn, &id, &color).map_err(|e| e.to_string())?; }
+    notify(&app, &webview);
+    Ok(())
+}
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DbLocationResult {
