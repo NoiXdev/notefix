@@ -7,7 +7,7 @@ export type PinnedScope = 'perFolder' | 'global';
 export type FolderColorStyle = 'icon' | 'bar' | 'row';
 export type StartView = 'dashboard' | 'lastNote';
 
-export interface DashboardWidget { key: string; w: 1 | 2; }
+export interface DashboardWidget { key: string; x: number; y: number; w: number; h: number; }
 
 export interface AppSettings {
   startMinimized: boolean;
@@ -25,7 +25,12 @@ export interface AppSettings {
   closeAction: CloseAction;
 }
 
-const DEFAULT_LAYOUT: DashboardWidget[] = [{ key: 'recent', w: 1 }, { key: 'due', w: 1 }, { key: 'stats', w: 1 }, { key: 'pinned', w: 1 }];
+const DEFAULT_LAYOUT: DashboardWidget[] = [
+  { key: 'recent', x: 0, y: 0, w: 6, h: 4 },
+  { key: 'due', x: 6, y: 0, w: 6, h: 4 },
+  { key: 'stats', x: 0, y: 4, w: 4, h: 3 },
+  { key: 'pinned', x: 4, y: 4, w: 4, h: 3 },
+];
 
 const DEFAULTS: AppSettings = {
   startMinimized: false,
@@ -43,13 +48,30 @@ const DEFAULTS: AppSettings = {
   closeAction: 'ask',
 };
 
+function isGridWidget(x: unknown): x is DashboardWidget {
+  const o = x as Record<string, unknown> | null;
+  return !!o && typeof o.key === 'string' && typeof o.x === 'number' && typeof o.y === 'number' && typeof o.w === 'number' && typeof o.h === 'number';
+}
+
+function stack(items: { key: string; w: number }[]): DashboardWidget[] {
+  let y = 0;
+  return items.map(it => {
+    const node = { key: it.key, x: 0, y, w: it.w, h: 4 };
+    y += 4;
+    return node;
+  });
+}
+
 export function parseLayout(raw: string | undefined): DashboardWidget[] {
   if (!raw) return DEFAULT_LAYOUT;
   try {
     const v = JSON.parse(raw);
     if (!Array.isArray(v)) return DEFAULT_LAYOUT;
-    if (v.every((x: unknown) => typeof x === 'string')) return (v as string[]).map(k => ({ key: k, w: 1 as const }));
-    if (v.every((x: unknown) => !!x && typeof (x as DashboardWidget).key === 'string' && ((x as DashboardWidget).w === 1 || (x as DashboardWidget).w === 2))) return v as DashboardWidget[];
+    if (v.every(isGridWidget)) return v as DashboardWidget[]; // neu (inkl. leeres [])
+    if (v.every((x: unknown) => typeof x === 'string')) return stack((v as string[]).map(k => ({ key: k, w: 6 })));
+    if (v.every((x: unknown) => { const o = x as Record<string, unknown> | null; return !!o && typeof o.key === 'string' && (o.w === 1 || o.w === 2); })) {
+      return stack((v as { key: string; w: number }[]).map(o => ({ key: o.key, w: o.w === 2 ? 12 : 6 })));
+    }
     return DEFAULT_LAYOUT;
   } catch {
     return DEFAULT_LAYOUT;
