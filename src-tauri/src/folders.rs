@@ -1,0 +1,170 @@
+use rusqlite::{Connection, OptionalExtension};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Folder {
+    pub id: String,
+    pub name: String,
+    pub parent_id: Option<String>,
+    pub position: i64,
+}
+
+pub enum DeleteMode {
+    Reparent,
+    Recursive,
+}
+
+impl DeleteMode {
+    pub fn from_str(s: &str) -> Self {
+        if s == "recursive" { DeleteMode::Recursive } else { DeleteMode::Reparent }
+    }
+}
+
+fn now_ms() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+}
+
+pub fn load_folders(conn: &Connection) -> rusqlite::Result<Vec<Folder>> {
+    let mut stmt = conn.prepare("SELECT id, name, parent_id, position FROM folders ORDER BY position, name")?;
+    let rows = stmt.query_map([], |r| Ok(Folder {
+        id: r.get(0)?, name: r.get(1)?, parent_id: r.get(2)?, position: r.get(3)?,
+    }))?;
+    rows.collect()
+}
+
+pub fn create_folder(conn: &Connection, id: &str, name: &str, parent_id: Option<&str>) -> rusqlite::Result<()> {
+    let position: i64 = conn.query_row(
+        "SELECT COALESCE(MAX(position), 0) + 1 FROM folders WHERE parent_id IS ?1",
+        [parent_id],
+        |r| r.get(0),
+    )?;
+    conn.execute(
+        "INSERT INTO folders (id, name, parent_id, position, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+        (id, name, parent_id, position, now_ms()),
+    )?;
+    Ok(())
+}
+
+pub fn rename_folder(conn: &Connection, id: &str, name: &str) -> rusqlite::Result<()> {
+    conn.execute("UPDATE folders SET name = ?2 WHERE id = ?1", (id, name))?;
+    Ok(())
+}
+
+/// All folder ids strictly below `id`.
+pub fn descendants(conn: &Connection, id: &str) -> rusqlite::Result<Vec<String>> {
+    let mut out = Vec::new();
+    let mut queue = vec![id.to_string()];
+    while let Some(cur) = queue.pop() {
+        let mut stmt = conn.prepare("SELECT id FROM folders WHERE parent_id = ?1")?;
+        let kids: Vec<String> = stmt.query_map([&cur], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+        for k in kids {
+            out.push(k.clone());
+            queue.push(k);
+        }
+    }
+    Ok(out)
+}
+
+/// Re-parent a folder. Rejects moving a folder into itself or a descendant.
+pub fn move_folder(conn: &Connection, id: &str, new_parent_id: Option<&str>) -> rusqlite::Result<()> {
+    if let Some(p) = new_parent_id {
+        if p == id || descendants(conn, id)?.iter().any(|d| d == p) {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+    }
+    conn.execute("UPDATE folders SET parent_id = ?2 WHERE id = ?1", (id, new_parent_id))?;
+    Ok(())
+}
+
+pub fn delete_folder(conn: &Connection, id: &str, mode: DeleteMode) -> rusqlite::Result<()> {
+    match mode {
+        DeleteMode::Reparent => {
+            let parent: Option<String> = conn
+                .query_row("SELECT parent_id FROM folders WHERE id = ?1", [id], |r| r.get(0))
+                .optional()?
+                .flatten();
+            conn.execute("UPDATE folders SET parent_id = ?2 WHERE parent_id = ?1", (id, parent.as_deref()))?;
+            conn.execute("UPDATE notes SET folder_id = ?2 WHERE folder_id = ?1", (id, parent.as_deref()))?;
+            conn.execute("DELETE FROM folders WHERE id = ?1", [id])?;
+        }
+        DeleteMode::Recursive => {
+            let mut ids = descendants(conn, id)?;
+            ids.push(id.to_string());
+            for fid in &ids {
+                conn.execute("DELETE FROM notes WHERE folder_id = ?1", [fid])?;
+                conn.execute("DELETE FROM folders WHERE id = ?1", [fid])?;
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{migrate, storage::{Note, Store}};
+
+    fn store() -> Store {
+        let s = Store::open_in_memory().unwrap();
+        migrate::run_migrations(&s.conn).unwrap();
+        s
+    }
+
+    fn note_in(id: &str, folder: &str) -> Note {
+        Note { id: id.into(), content: "<p>x</p>".into(), updated_at: 1, pinned: false, archived: false, color: String::new(), due_at: None, folder_id: Some(folder.into()) }
+    }
+
+    #[test]
+    fn create_and_load_orders_by_position() {
+        let s = store();
+        create_folder(&s.conn, "a", "A", None).unwrap();
+        create_folder(&s.conn, "b", "B", None).unwrap();
+        let ids: Vec<String> = load_folders(&s.conn).unwrap().into_iter().map(|f| f.id).collect();
+        assert_eq!(ids, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn rename_changes_name() {
+        let s = store();
+        create_folder(&s.conn, "a", "A", None).unwrap();
+        rename_folder(&s.conn, "a", "Neu").unwrap();
+        assert_eq!(load_folders(&s.conn).unwrap()[0].name, "Neu");
+    }
+
+    #[test]
+    fn move_into_own_descendant_is_rejected() {
+        let s = store();
+        create_folder(&s.conn, "a", "A", None).unwrap();
+        create_folder(&s.conn, "b", "B", Some("a")).unwrap();
+        assert!(move_folder(&s.conn, "a", Some("b")).is_err());
+        assert!(move_folder(&s.conn, "a", Some("a")).is_err());
+    }
+
+    #[test]
+    fn delete_reparent_moves_children_and_notes_to_parent() {
+        let s = store();
+        create_folder(&s.conn, "p", "P", None).unwrap();
+        create_folder(&s.conn, "c", "C", Some("p")).unwrap();
+        create_folder(&s.conn, "g", "G", Some("c")).unwrap();
+        s.save_note(&note_in("n", "c")).unwrap();
+        delete_folder(&s.conn, "c", DeleteMode::Reparent).unwrap();
+        // g now under p, n now under p, c gone
+        let folders = load_folders(&s.conn).unwrap();
+        assert!(folders.iter().all(|f| f.id != "c"));
+        assert_eq!(folders.iter().find(|f| f.id == "g").unwrap().parent_id.as_deref(), Some("p"));
+        assert_eq!(s.load_notes().unwrap()[0].folder_id.as_deref(), Some("p"));
+    }
+
+    #[test]
+    fn delete_recursive_removes_subtree_and_its_notes() {
+        let s = store();
+        create_folder(&s.conn, "c", "C", None).unwrap();
+        create_folder(&s.conn, "g", "G", Some("c")).unwrap();
+        s.save_note(&note_in("n", "g")).unwrap();
+        delete_folder(&s.conn, "c", DeleteMode::Recursive).unwrap();
+        assert!(load_folders(&s.conn).unwrap().is_empty());
+        assert!(s.load_notes().unwrap().is_empty());
+    }
+}

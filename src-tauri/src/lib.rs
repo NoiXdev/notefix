@@ -1,5 +1,6 @@
 mod commands;
 mod export;
+mod folders;
 mod migrate;
 mod settings;
 mod stats;
