@@ -160,7 +160,6 @@ export default function NoteList(props: Props) {
       <FolderRow
         key={folder.id}
         folder={folder}
-        depth={depth}
         open={open}
         count={count}
         iconTint={iconTint}
@@ -219,7 +218,7 @@ export default function NoteList(props: Props) {
               {childFolders(null).map(f => renderFolder(f, 0))}
               {treeNotesIn(null).map(n => renderRow(n, 0))}
               {notes.length === 0 && folders.length === 0 && <p className="text-gray-600 text-xs text-center mt-10 px-4">No notes yet.<br />Click + to create one.</p>}
-              {onReorderNotes && <RootDropZone />}
+              {(onReorderNotes || onReorderFolders) && <RootDropZone />}
             </>
           )}
         </div>

@@ -7,7 +7,6 @@ import FolderIcon from './FolderIcon';
 
 interface Props {
   folder: Folder;
-  depth: number;
   open: boolean;
   count: number;
   iconTint?: string;
@@ -18,7 +17,7 @@ interface Props {
   children?: ReactNode;
 }
 
-export default function FolderRow({ folder, depth: _depth, open, count, iconTint, baseStyle, dropMode, onToggle, onContextMenu, children }: Props) {
+export default function FolderRow({ folder, open, count, iconTint, baseStyle, dropMode, onToggle, onContextMenu, children }: Props) {
   const { setNodeRef, listeners, attributes, isDragging } = useDraggable({ id: `folder:${folder.id}` });
   const before = useDroppable({ id: `folder:${folder.id}:before` });
   const into = useDroppable({ id: `folder:${folder.id}:into` });
