@@ -10,7 +10,7 @@ vi.mock('emoji-picker-react', () => ({
   Theme: { DARK: 'dark' },
 }));
 
-const folder: Folder = { id: 'f1', name: 'A', parentId: null, position: 0, icon: '', color: '' };
+const folder: Folder = { id: 'f1', name: 'A', parentId: null, position: 0, icon: '', color: '', sort: 'manual' };
 
 describe('FolderCustomizer', () => {
   it('FA mode shows the icon search and picks fa:star', () => {

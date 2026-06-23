@@ -23,7 +23,7 @@ beforeEach(() => {
 
 describe("useFolders", () => {
   it("loads folders on mount", async () => {
-    mockLoad.mockResolvedValue([{ id: "a", name: "A", parentId: null, position: 1, icon: '', color: '' }]);
+    mockLoad.mockResolvedValue([{ id: "a", name: "A", parentId: null, position: 1, icon: '', color: '', sort: 'manual' }]);
     const { result } = renderHook(() => useFolders());
     await waitFor(() => expect(result.current.folders).toHaveLength(1));
   });

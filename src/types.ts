@@ -17,6 +17,7 @@ export interface Folder {
   position: number;
   icon: string;
   color: string;
+  sort: string;
 }
 
 export interface Stats {

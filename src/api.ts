@@ -46,6 +46,7 @@ export const api = {
       invoke("folders_reorder", { parentId, ids }),
     setIcon: (id: string, icon: string): Promise<void> => invoke("folder_set_icon", { id, icon }),
     setColor: (id: string, color: string): Promise<void> => invoke("folder_set_color", { id, color }),
+    setSort: (id: string, sort: string): Promise<void> => invoke("folder_set_sort", { id, sort }),
   },
 
   settings: {

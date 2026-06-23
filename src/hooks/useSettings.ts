@@ -15,6 +15,8 @@ export interface AppSettings {
   autosaveDelay: number;
   startView: StartView;
   dashboardLayout: string[];
+  compactTree: boolean;
+  treeProgress: boolean;
 }
 
 const DEFAULT_LAYOUT = ['recent', 'due', 'stats', 'pinned'];
@@ -28,6 +30,8 @@ const DEFAULTS: AppSettings = {
   autosaveDelay: 400,
   startView: 'lastNote',
   dashboardLayout: DEFAULT_LAYOUT,
+  compactTree: false,
+  treeProgress: true,
 };
 
 function parseLayout(raw: string | undefined): string[] {
@@ -55,6 +59,8 @@ export function useSettings() {
         autosaveDelay: Number(raw.autosaveDelay) >= 100 ? Number(raw.autosaveDelay) : 400,
         startView: raw.startView === 'dashboard' ? 'dashboard' : 'lastNote',
         dashboardLayout: parseLayout(raw.dashboardLayout),
+        compactTree: raw.compactTree === 'true',
+        treeProgress: raw.treeProgress !== 'false',
       });
       setLoaded(true);
     });
