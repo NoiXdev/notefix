@@ -1,18 +1,23 @@
 import { useState, useEffect } from 'react';
 import { api } from './api';
 import { useNotes } from './hooks/useNotes';
+import { useFolders } from './hooks/useFolders';
 import { useSettings } from './hooks/useSettings';
 import NoteList from './components/NoteList';
 import NoteEditor from './components/NoteEditor';
 import Settings from './components/Settings';
+import DeleteFolderModal from './components/DeleteFolderModal';
+import type { Folder } from './types';
 
 const windowNoteId = new URLSearchParams(window.location.search).get('windowNoteId');
 
 export default function App() {
-  const { notes, loading, createNote, updateNote, deleteNote, setPinned, setArchived, setColor, setDue } = useNotes();
+  const { notes, loading, createNote, updateNote, deleteNote, setPinned, setArchived, setColor, setDue, setFolder } = useNotes();
+  const { folders, createFolder, renameFolder, deleteFolder } = useFolders();
   const { settings, setSetting } = useSettings();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [folderToDelete, setFolderToDelete] = useState<Folder | null>(null);
 
   // Auto-select the first note on load
   useEffect(() => {
@@ -62,6 +67,24 @@ export default function App() {
     deleteNote(id);
   };
 
+  const countInSubtree = (folderId: string) => {
+    const subIds = new Set<string>([folderId]);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const f of folders) if (f.parentId && subIds.has(f.parentId) && !subIds.has(f.id)) { subIds.add(f.id); changed = true; }
+    }
+    const noteCount = notes.filter(n => n.folderId && subIds.has(n.folderId)).length;
+    const subfolderCount = subIds.size - 1;
+    return { noteCount, subfolderCount };
+  };
+
+  const requestDeleteFolder = (folder: Folder) => {
+    const { noteCount, subfolderCount } = countInSubtree(folder.id);
+    if (noteCount === 0 && subfolderCount === 0) deleteFolder(folder.id, 'reparent');
+    else setFolderToDelete(folder);
+  };
+
   if (showSettings) {
     return <Settings onClose={() => setShowSettings(false)} settings={settings} onSetSetting={setSetting} />;
   }
@@ -70,16 +93,21 @@ export default function App() {
     <div className="flex h-screen overflow-hidden">
       <NoteList
         notes={notes}
+        folders={folders}
         selectedId={selectedId}
         onSelect={setSelectedId}
         onCreate={handleCreate}
         onDelete={handleDelete}
         onOpenSettings={() => setShowSettings(true)}
-        displayMode={settings.pinnedDisplayMode}
         onTogglePin={setPinned}
         onArchive={setArchived}
         onSetColor={setColor}
+        onMoveNote={setFolder}
+        onCreateFolder={createFolder}
+        onRenameFolder={renameFolder}
+        onDeleteFolder={requestDeleteFolder}
         dateFormat={settings.dateFormat}
+        pinnedScope={settings.pinnedScope}
       />
       <main className="flex-1 overflow-hidden">
         {selectedNote ? (
@@ -96,6 +124,16 @@ export default function App() {
           </div>
         )}
       </main>
+      {folderToDelete && (
+        <DeleteFolderModal
+          folderName={folderToDelete.name}
+          noteCount={countInSubtree(folderToDelete.id).noteCount}
+          subfolderCount={countInSubtree(folderToDelete.id).subfolderCount}
+          onReparent={() => { deleteFolder(folderToDelete.id, 'reparent'); setFolderToDelete(null); }}
+          onRecursive={() => { deleteFolder(folderToDelete.id, 'recursive'); setFolderToDelete(null); }}
+          onCancel={() => setFolderToDelete(null)}
+        />
+      )}
     </div>
   );
 }

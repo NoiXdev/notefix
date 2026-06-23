@@ -44,6 +44,11 @@ const DATE_FORMATS: { value: DateFormat; label: string }[] = [
   { value: "us", label: "MM/TT/JJJJ" },
 ];
 
+const PIN_SCOPES: { value: import("../hooks/useSettings").PinnedScope; label: string }[] = [
+  { value: "perFolder", label: "Gepinnt zuerst je Ordner" },
+  { value: "global", label: "Globale „Angepinnt“-Sektion" },
+];
+
 export default function Settings({ onClose, settings, onSetSetting }: Props) {
   const [page, setPage] = useState<Page>("about");
   const [info, setInfo] = useState<AppInfo | null>(null);
@@ -137,6 +142,18 @@ export default function Settings({ onClose, settings, onSetSetting }: Props) {
                     style={{ background: active ? "#fde047" : "transparent", borderColor: active ? "#eab308" : "#e7d27a", color: "#1c1917" }}
                   >
                     {f.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            <h2 className="text-sm font-semibold text-gray-800 mt-8 mb-2">Angepinnte Notizen</h2>
+            <div className="flex flex-col gap-2 max-w-sm">
+              {PIN_SCOPES.map(s => {
+                const active = settings.pinnedScope === s.value;
+                return (
+                  <button key={s.value} onClick={() => onSetSetting("pinnedScope", s.value)} className="text-left px-4 py-2.5 rounded text-sm transition-colors border" style={{ background: active ? "#fde047" : "transparent", borderColor: active ? "#eab308" : "#e7d27a", color: "#1c1917" }}>
+                    {s.label}
                   </button>
                 );
               })}
