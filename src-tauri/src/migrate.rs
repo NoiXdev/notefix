@@ -35,6 +35,11 @@ pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
         set_meta(conn, "schema_version", "3")?;
     }
 
+    if version < 4 {
+        conn.execute_batch("ALTER TABLE notes ADD COLUMN due_at INTEGER;")?;
+        set_meta(conn, "schema_version", "4")?;
+    }
+
     Ok(())
 }
 
@@ -98,14 +103,14 @@ mod tests {
     #[test]
     fn migration_sets_schema_version() {
         let s = store();
-        assert_eq!(get_meta(&s.conn, "schema_version").unwrap().as_deref(), Some("3"));
+        assert_eq!(get_meta(&s.conn, "schema_version").unwrap().as_deref(), Some("4"));
     }
 
     #[test]
     fn migration_is_idempotent() {
         let s = store();
         run_migrations(&s.conn).unwrap();
-        assert_eq!(get_meta(&s.conn, "schema_version").unwrap().as_deref(), Some("3"));
+        assert_eq!(get_meta(&s.conn, "schema_version").unwrap().as_deref(), Some("4"));
     }
 
     #[test]
