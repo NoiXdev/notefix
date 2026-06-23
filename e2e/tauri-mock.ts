@@ -19,30 +19,44 @@ export async function installTauriMock(page: Page, data: MockData = {}): Promise
       note_revisions: [],
     };
     let cbId = 0;
+    // Registry so tests can drive Tauri events (e.g. window "close-requested").
+    const callbacks: Record<number, (e: unknown) => void> = {};
+    const eventHandlers: Record<string, number[]> = {};
     const w = window as unknown as {
       __TAURI_INTERNALS__: Record<string, unknown>;
       __TAURI_EVENT_PLUGIN_INTERNALS__: Record<string, unknown>;
+      __emitTauriEvent: (event: string, payload?: unknown) => void;
     };
     // The event API calls this on unlisten/cleanup; without it the app throws
     // "Cannot read properties of undefined (reading 'unregisterListener')".
     w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
     w.__TAURI_INTERNALS__ = {
-      invoke: async (cmd: string) => {
+      invoke: async (cmd: string, args?: unknown) => {
         if (cmd in responses) return responses[cmd];
         if (cmd.startsWith('plugin:autostart')) return false;
         if (cmd === 'plugin:app|version') return '0.0.0-e2e';
-        // Event plugin: listen returns an unlisten id, unlisten is a no-op.
-        if (cmd === 'plugin:event|listen') return ++cbId;
+        // Event plugin: remember which callback id handles which event so a test
+        // can emit it; return an unlisten id. unlisten is a no-op.
+        if (cmd === 'plugin:event|listen') {
+          const a = (args ?? {}) as { event?: string; handler?: number };
+          if (a.event && typeof a.handler === 'number') (eventHandlers[a.event] ??= []).push(a.handler);
+          return ++cbId;
+        }
         if (cmd === 'plugin:event|unlisten') return undefined;
         // Window/dialog/opener/process plugins are no-ops in the browser.
         if (cmd.startsWith('plugin:')) return undefined;
         return undefined;
       },
       transformCallback: (cb: unknown) => {
-        void cb;
-        return ++cbId;
+        const id = ++cbId;
+        callbacks[id] = cb as (e: unknown) => void;
+        return id;
       },
       unregisterCallback: () => {},
+    };
+    // Deliver an event to every listener registered for it (Tauri event shape).
+    w.__emitTauriEvent = (event: string, payload?: unknown) => {
+      for (const id of eventHandlers[event] ?? []) callbacks[id]?.({ event, id, payload });
     };
   }, data);
 }

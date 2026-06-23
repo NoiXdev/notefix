@@ -124,12 +124,13 @@ export default function App() {
     else setFolderToDelete(folder);
   };
 
-  if (showSettings) {
-    return <Settings onClose={() => setShowSettings(false)} settings={settings} onSetSetting={setSetting} />;
-  }
-
   return (
-    <div className="flex h-screen overflow-hidden">
+    <>
+      {showSettings && (
+        <Settings onClose={() => setShowSettings(false)} settings={settings} onSetSetting={setSetting} />
+      )}
+      {!showSettings && (
+      <div className="flex h-screen overflow-hidden">
       <NoteList
         notes={notes}
         folders={folders}
@@ -196,6 +197,8 @@ export default function App() {
           onCancel={() => setFolderToDelete(null)}
         />
       )}
+      </div>
+      )}
       {closePrompt && (
         <CloseDialog
           onMinimize={remember => { if (remember) setSetting('closeAction', 'minimize'); api.hideMain(); setClosePrompt(false); }}
@@ -203,6 +206,6 @@ export default function App() {
           onCancel={() => setClosePrompt(false)}
         />
       )}
-    </div>
+    </>
   );
 }
