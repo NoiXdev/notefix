@@ -40,6 +40,8 @@ interface Props {
   dateFormat?: DateFormat;
   pinnedScope?: PinnedScope;
   folderColorStyle?: FolderColorStyle;
+  compactTree?: boolean;
+  treeProgress?: boolean;
 }
 
 const sortNotes = (a: Note, b: Note) => Number(b.pinned) - Number(a.pinned) || a.position - b.position;
@@ -59,6 +61,7 @@ export default function NoteList(props: Props) {
     onTogglePin, onArchive, onSetColor, onMoveNote, onCreateFolder, onRenameFolder, onDeleteFolder,
     onReorderNotes, onReorderFolders, onSetFolderIcon, onSetFolderColor, onSetFolderSort,
     dateFormat = 'auto', pinnedScope = 'perFolder', folderColorStyle = 'icon',
+    compactTree = false, treeProgress = true,
   } = props;
 
   const [menu, setMenu] = useState<{ x: number; y: number; note: Note } | null>(null);
@@ -130,6 +133,8 @@ export default function NoteList(props: Props) {
       selected={selectedId === note.id}
       dropMode={dropHint?.id === note.id ? dropHint.mode : null}
       dateFormat={dateFormat}
+      compact={compactTree}
+      showProgress={treeProgress}
       onSelect={onSelect}
       onDelete={onDelete}
       onContextMenu={(e, n) => setMenu({ x: e.clientX, y: e.clientY, note: n })}

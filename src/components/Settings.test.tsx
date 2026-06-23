@@ -133,3 +133,14 @@ describe("Settings — editor & history", () => {
     expect(onSetSetting).toHaveBeenCalledWith("revisionLimit", 10);
   });
 });
+
+describe("Settings — tree view", () => {
+  const full = { startMinimized: false, dateFormat: "auto" as const, pinnedScope: "perFolder" as const, folderColorStyle: "icon" as const, revisionLimit: 50, autosaveDelay: 400, startView: "lastNote" as const, dashboardLayout: ["recent"], compactTree: false, treeProgress: true };
+  it("toggling compact view calls onSetSetting", () => {
+    const onSetSetting = vi.fn();
+    render(<Settings onClose={vi.fn()} settings={full} onSetSetting={onSetSetting} />);
+    fireEvent.click(screen.getByText("Darstellung"));
+    fireEvent.click(screen.getByLabelText(/Kompakte Ansicht/));
+    expect(onSetSetting).toHaveBeenCalledWith("compactTree", true);
+  });
+});

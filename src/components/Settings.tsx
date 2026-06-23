@@ -166,6 +166,18 @@ export default function Settings({ onClose, settings, onSetSetting }: Props) {
                 );
               })}
             </div>
+
+            <h2 className="text-sm font-semibold text-gray-800 mt-8 mb-2">Baum-Ansicht</h2>
+            <div className="flex flex-col gap-3 max-w-sm">
+              <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
+                <span>Kompakte Ansicht (nur Titel)</span>
+                <input type="checkbox" checked={settings.compactTree ?? false} onChange={() => onSetSetting("compactTree", !settings.compactTree)} />
+              </label>
+              <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
+                <span>Fortschritt im Baum zeigen</span>
+                <input type="checkbox" checked={settings.treeProgress ?? true} onChange={() => onSetSetting("treeProgress", !settings.treeProgress)} />
+              </label>
+            </div>
           </div>
         )}
 

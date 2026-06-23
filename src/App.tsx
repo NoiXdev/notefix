@@ -129,6 +129,8 @@ export default function App() {
         dateFormat={settings.dateFormat}
         pinnedScope={settings.pinnedScope}
         folderColorStyle={settings.folderColorStyle}
+        compactTree={settings.compactTree}
+        treeProgress={settings.treeProgress}
       />
       <main className="flex-1 overflow-hidden">
         {view === 'dashboard' ? (
