@@ -91,7 +91,7 @@ export default function NoteList(props: Props) {
   const folderModeAt = (e: React.DragEvent): DropMode => {
     const r = e.currentTarget.getBoundingClientRect();
     const y = e.clientY - r.top;
-    return y < r.height / 3 ? 'before' : y > (r.height * 2) / 3 ? 'into' : 'into';
+    return y < r.height / 3 ? 'before' : y > (r.height * 2) / 3 ? 'after' : 'into';
   };
 
   // Move-to submenu: all folders indented by depth + root.
