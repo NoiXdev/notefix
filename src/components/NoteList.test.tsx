@@ -249,3 +249,12 @@ describe("NoteList — delete & trash", () => {
     expect(onRestore).toHaveBeenCalledWith('t');
   });
 });
+
+describe("NoteList — easter egg", () => {
+  it("four quick logo clicks open tic-tac-toe", () => {
+    render(<NoteList {...defaultProps} />);
+    const logo = screen.getByAltText('Notefix');
+    for (let i = 0; i < 4; i++) fireEvent.click(logo);
+    expect(screen.getByLabelText('Feld 0')).toBeInTheDocument();
+  });
+});

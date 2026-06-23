@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { DndContext, DragOverlay, PointerSensor, useSensor, useSensors, pointerWithin, type DragStartEvent, type DragOverEvent, type DragEndEvent } from '@dnd-kit/core';
 import type { Note, Folder } from '../types';
 import { computeDrop, type DragKind, type DropMode } from '../dnd';
@@ -12,6 +12,7 @@ import { faThumbtack, faBoxArchive, faRightLong, faTrash, faTrashCan, faFileExpo
 import ConfirmDialog from './ConfirmDialog';
 import FolderCustomizer from './FolderCustomizer';
 import Logo from './Logo';
+import TicTacToe from './TicTacToe';
 import NoteRow from './NoteRow';
 import FolderRow from './FolderRow';
 import RootDropZone from './RootDropZone';
@@ -75,6 +76,14 @@ export default function NoteList(props: Props) {
     compactTree = false, treeProgress = true,
     trashed = [], trashEnabled = true, onRestore, onPurge, onEmptyTrash,
   } = props;
+
+  const [showGame, setShowGame] = useState(false);
+  const logoClicks = useRef<number[]>([]);
+  const onLogoClick = () => {
+    const now = Date.now();
+    logoClicks.current = [...logoClicks.current, now].filter(t => now - t < 1200);
+    if (logoClicks.current.length >= 4) { logoClicks.current = []; setShowGame(true); }
+  };
 
   const [menu, setMenu] = useState<{ x: number; y: number; note: Note } | null>(null);
   const [folderMenu, setFolderMenu] = useState<{ x: number; y: number; folder: Folder } | null>(null);
@@ -219,7 +228,7 @@ export default function NoteList(props: Props) {
     <aside className="w-60 shrink-0 bg-gray-950 flex flex-col h-full select-none">
       <div className="px-4 py-3 flex items-center justify-between border-b border-gray-800">
         <div className="flex items-center gap-1.5">
-          <Logo size={18} />
+          <button onClick={onLogoClick} className="flex items-center" aria-label="Notefix" title="Notefix"><Logo size={18} /></button>
           <span className="text-gray-200 text-xs font-semibold uppercase tracking-widest">{view === 'archived' ? 'Archiv' : view === 'trash' ? 'Papierkorb' : 'Notefix'}</span>
         </div>
         <div className="flex items-center gap-1">
@@ -374,6 +383,7 @@ export default function NoteList(props: Props) {
           onCancel={() => setPendingEmpty(false)}
         />
       )}
+      {showGame && <TicTacToe onClose={() => setShowGame(false)} />}
     </aside>
   );
 }
