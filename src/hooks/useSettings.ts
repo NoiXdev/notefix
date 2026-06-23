@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { api } from '../api';
 import type { DateFormat } from '../dates';
 
+export type CloseAction = 'ask' | 'minimize' | 'quit';
 export type PinnedScope = 'perFolder' | 'global';
 export type FolderColorStyle = 'icon' | 'bar' | 'row';
 export type StartView = 'dashboard' | 'lastNote';
@@ -19,6 +20,7 @@ export interface AppSettings {
   treeProgress: boolean;
   trashEnabled: boolean;
   trashRetentionDays: number;
+  closeAction: CloseAction;
 }
 
 const DEFAULT_LAYOUT = ['recent', 'due', 'stats', 'pinned'];
@@ -36,6 +38,7 @@ const DEFAULTS: AppSettings = {
   treeProgress: true,
   trashEnabled: true,
   trashRetentionDays: 30,
+  closeAction: 'ask',
 };
 
 function parseLayout(raw: string | undefined): string[] {
@@ -67,6 +70,7 @@ export function useSettings() {
         treeProgress: raw.treeProgress !== 'false',
         trashEnabled: raw.trashEnabled !== 'false',
         trashRetentionDays: Number(raw.trashRetentionDays) > 0 ? Number(raw.trashRetentionDays) : 30,
+        closeAction: (['minimize', 'quit'].includes(raw.closeAction) ? raw.closeAction : 'ask') as CloseAction,
       });
       setLoaded(true);
     });

@@ -71,6 +71,13 @@ export const api = {
   getDbPath: (): Promise<string> => invoke("get_db_path"),
   setDbLocation: (folder: string): Promise<{ mode: "moved" | "switched"; path: string }> =>
     invoke("set_db_location", { folder }),
+  quitApp: (): Promise<void> => invoke("quit_app"),
+  hideMain: (): Promise<void> => invoke("hide_main"),
+  onCloseRequested(callback: () => void): () => void {
+    const unlisten = listen("close-requested", () => callback());
+    return () => { void unlisten.then((un) => un()); };
+  },
+
   relaunch: (): Promise<void> => processRelaunch(),
   pickFolder: async (): Promise<string | null> => {
     const r = await openDialog({ directory: true });
