@@ -1,4 +1,5 @@
 mod commands;
+mod config;
 mod export;
 mod folders;
 mod migrate;
@@ -30,10 +31,13 @@ pub fn run() {
             None,
         ))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
-            let dir = app.path().app_data_dir()?;
-            std::fs::create_dir_all(&dir)?;
-            let store = Store::open(&dir.join("notefix.db"))?;
+            let db_path = config::read_db_path(app.handle());
+            if let Some(parent) = db_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let store = Store::open(&db_path)?;
             migrate::run_migrations(&store.conn)?;
             if let Some(legacy) = legacy_notes_dir() {
                 let _ = migrate::import_legacy_if_needed(&store, &legacy);
