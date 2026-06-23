@@ -79,3 +79,15 @@ export const WIDGETS: Record<string, { label: string; render: (ctx: WidgetCtx) =
 };
 
 export const WIDGET_KEYS = Object.keys(WIDGETS);
+
+export interface WidgetSize { w: number; h: number; minW: number; minH: number; }
+
+/** Default-/Mindestgröße je Widget in Rastereinheiten (12-Spalten-Grid). */
+export const WIDGET_SIZES: Record<string, WidgetSize> = {
+  recent: { w: 6, h: 4, minW: 3, minH: 2 },
+  due: { w: 6, h: 4, minW: 3, minH: 2 },
+  stats: { w: 4, h: 3, minW: 3, minH: 2 },
+  pinned: { w: 4, h: 3, minW: 2, minH: 2 },
+  folders: { w: 4, h: 3, minW: 2, minH: 2 },
+  quicknote: { w: 3, h: 2, minW: 2, minH: 2 },
+};
