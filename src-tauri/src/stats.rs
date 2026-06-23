@@ -47,7 +47,7 @@ mod tests {
     use crate::storage::Note;
 
     fn note(content: &str, archived: bool) -> Note {
-        Note { id: "x".into(), content: content.into(), updated_at: 1, pinned: false, archived, color: String::new(), due_at: None, folder_id: None }
+        Note { id: "x".into(), content: content.into(), updated_at: 1, pinned: false, archived, color: String::new(), due_at: None, folder_id: None, position: 0 }
     }
 
     #[test]

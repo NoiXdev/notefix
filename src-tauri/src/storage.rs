@@ -19,19 +19,21 @@ pub struct Note {
     pub due_at: Option<i64>,
     #[serde(default)]
     pub folder_id: Option<String>,
+    #[serde(default)]
+    pub position: i64,
 }
 
 pub struct Store {
     pub conn: Connection,
 }
 
-const COLS: &str = "id, content, updated_at, pinned, archived, color, due_at, folder_id";
+const COLS: &str = "id, content, updated_at, pinned, archived, color, due_at, folder_id, position";
 
 fn row_to_note(r: &rusqlite::Row) -> rusqlite::Result<Note> {
     Ok(Note {
         id: r.get(0)?, content: r.get(1)?, updated_at: r.get(2)?,
         pinned: r.get(3)?, archived: r.get(4)?, color: r.get(5)?, due_at: r.get(6)?,
-        folder_id: r.get(7)?,
+        folder_id: r.get(7)?, position: r.get(8)?,
     })
 }
 
@@ -46,7 +48,7 @@ impl Store {
     }
 
     pub fn load_notes(&self) -> rusqlite::Result<Vec<Note>> {
-        let sql = format!("SELECT {COLS} FROM notes ORDER BY pinned DESC, updated_at DESC");
+        let sql = format!("SELECT {COLS} FROM notes ORDER BY pinned DESC, position ASC");
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map([], row_to_note)?;
         rows.collect()
@@ -54,9 +56,9 @@ impl Store {
 
     pub fn save_note(&self, note: &Note) -> rusqlite::Result<()> {
         self.conn.execute(
-            "INSERT INTO notes (id, content, updated_at, pinned, archived, color, due_at, folder_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            "INSERT INTO notes (id, content, updated_at, pinned, archived, color, due_at, folder_id, position) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
              ON CONFLICT(id) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at",
-            (&note.id, &note.content, note.updated_at, note.pinned, note.archived, &note.color, note.due_at, &note.folder_id),
+            (&note.id, &note.content, note.updated_at, note.pinned, note.archived, &note.color, note.due_at, &note.folder_id, note.position),
         )?;
         Ok(())
     }
@@ -93,6 +95,14 @@ impl Store {
         Ok(())
     }
 
+    /// Set folder + position for each id in the given order.
+    pub fn reorder_notes(&self, folder_id: Option<&str>, ids: &[String]) -> rusqlite::Result<()> {
+        for (i, id) in ids.iter().enumerate() {
+            self.conn.execute("UPDATE notes SET folder_id = ?2, position = ?3 WHERE id = ?1", (id, folder_id, i as i64))?;
+        }
+        Ok(())
+    }
+
     /// The `limit` most-recently-updated NON-archived notes (newest first).
     pub fn recent_notes(&self, limit: i64) -> rusqlite::Result<Vec<Note>> {
         let sql = format!("SELECT {COLS} FROM notes WHERE archived = 0 ORDER BY updated_at DESC LIMIT ?1");
@@ -114,7 +124,7 @@ mod tests {
     }
 
     fn note(id: &str, content: &str, updated_at: i64) -> Note {
-        Note { id: id.into(), content: content.into(), updated_at, pinned: false, archived: false, color: String::new(), due_at: None, folder_id: None }
+        Note { id: id.into(), content: content.into(), updated_at, pinned: false, archived: false, color: String::new(), due_at: None, folder_id: None, position: 0 }
     }
 
     #[test]
@@ -179,6 +189,20 @@ mod tests {
         assert_eq!(n.updated_at, 1000);
         s.set_folder("a", None).unwrap();
         assert_eq!(s.load_notes().unwrap()[0].folder_id, None);
+    }
+
+    #[test]
+    fn reorder_notes_sets_folder_and_position() {
+        let s = store();
+        s.save_note(&note("a", "<p>a</p>", 1)).unwrap();
+        s.save_note(&note("b", "<p>b</p>", 2)).unwrap();
+        s.reorder_notes(Some("f1"), &["b".to_string(), "a".to_string()]).unwrap();
+        let loaded = s.load_notes().unwrap();
+        // both now in f1, ordered b(pos0) then a(pos1)
+        assert_eq!(loaded.iter().map(|n| n.id.clone()).collect::<Vec<_>>(), vec!["b", "a"]);
+        assert!(loaded.iter().all(|n| n.folder_id.as_deref() == Some("f1")));
+        assert_eq!(loaded[0].position, 0);
+        assert_eq!(loaded[1].position, 1);
     }
 
     #[test]
