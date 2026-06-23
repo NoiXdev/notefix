@@ -7,6 +7,7 @@ export interface Note {
   color: string;
   dueAt: number | null;
   folderId: string | null;
+  position: number;
 }
 
 export interface Folder {

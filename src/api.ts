@@ -27,6 +27,8 @@ export const api = {
       invoke("notes_set_due", { id, dueAt }),
     setFolder: (id: string, folderId: string | null): Promise<void> =>
       invoke("notes_set_folder", { id, folderId }),
+    reorder: (folderId: string | null, ids: string[]): Promise<void> =>
+      invoke("notes_reorder", { folderId, ids }),
   },
 
   folders: {
@@ -36,6 +38,8 @@ export const api = {
     rename: (id: string, name: string): Promise<void> => invoke("folder_rename", { id, name }),
     move: (id: string, parentId: string | null): Promise<void> => invoke("folder_move", { id, parentId }),
     delete: (id: string, mode: "reparent" | "recursive"): Promise<void> => invoke("folder_delete", { id, mode }),
+    reorder: (parentId: string | null, ids: string[]): Promise<void> =>
+      invoke("folders_reorder", { parentId, ids }),
   },
 
   settings: {

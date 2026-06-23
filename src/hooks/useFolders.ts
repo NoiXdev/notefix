@@ -38,5 +38,10 @@ export function useFolders() {
     await reload();
   }, [reload]);
 
-  return { folders, createFolder, renameFolder, moveFolder, deleteFolder };
+  const reorderFolders = useCallback(async (parentId: string | null, ids: string[]) => {
+    await api.folders.reorder(parentId, ids);
+    await reload();
+  }, [reload]);
+
+  return { folders, createFolder, renameFolder, moveFolder, deleteFolder, reorderFolders };
 }

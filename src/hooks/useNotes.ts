@@ -2,8 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { api } from '../api';
 import type { Note } from '../types';
 
-const sortNotes = (a: Note, b: Note) =>
-  Number(b.pinned) - Number(a.pinned) || b.updatedAt - a.updatedAt;
+const sortNotes = (a: Note, b: Note) => Number(b.pinned) - Number(a.pinned) || a.position - b.position;
 
 export function useNotes() {
   const [notes, setNotes] = useState<Note[]>([]);
@@ -21,7 +20,7 @@ export function useNotes() {
   const createNote = useCallback(async (): Promise<string> => {
     const note: Note = {
       id: crypto.randomUUID(), content: '', updatedAt: Date.now(),
-      pinned: false, archived: false, color: '', dueAt: null, folderId: null,
+      pinned: false, archived: false, color: '', dueAt: null, folderId: null, position: -Date.now(),
     };
     await api.notes.save(note);
     setNotes(prev => [note, ...prev]);
@@ -34,7 +33,15 @@ export function useNotes() {
       prev.map(n => (n.id === id ? { ...n, content, updatedAt } : n)).sort(sortNotes),
     );
     // backend's save_note preserves pinned/archived/color on conflict.
-    await api.notes.save({ id, content, updatedAt, pinned: false, archived: false, color: '', dueAt: null, folderId: null });
+    await api.notes.save({ id, content, updatedAt, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position: 0 });
+  }, []);
+
+  const reorderNotes = useCallback(async (folderId: string | null, ids: string[]) => {
+    setNotes(prev => prev.map(n => {
+      const idx = ids.indexOf(n.id);
+      return idx === -1 ? n : { ...n, folderId, position: idx };
+    }).sort(sortNotes));
+    await api.notes.reorder(folderId, ids);
   }, []);
 
   const deleteNote = useCallback(async (id: string) => {
@@ -67,5 +74,5 @@ export function useNotes() {
     await api.notes.setFolder(id, folderId);
   }, []);
 
-  return { notes, loading, createNote, updateNote, deleteNote, setPinned, setArchived, setColor, setDue, setFolder };
+  return { notes, loading, createNote, updateNote, deleteNote, setPinned, setArchived, setColor, setDue, setFolder, reorderNotes };
 }
