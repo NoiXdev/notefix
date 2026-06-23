@@ -2,6 +2,7 @@ mod commands;
 mod export;
 mod migrate;
 mod settings;
+mod stats;
 mod storage;
 mod tray;
 
@@ -65,6 +66,8 @@ pub fn run() {
             commands::notes_set_archived,
             commands::notes_set_color,
             commands::export_notes,
+            commands::notes_set_due,
+            commands::note_stats,
             commands::open_note_window,
             commands::settings_load,
             commands::settings_set,

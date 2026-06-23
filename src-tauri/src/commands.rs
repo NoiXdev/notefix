@@ -152,3 +152,29 @@ pub fn export_notes(
     let json = crate::export::notes_to_json(&notes, &ids).map_err(|e| e.to_string())?;
     std::fs::write(&path, json).map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub fn notes_set_due(
+    app: AppHandle,
+    webview: WebviewWindow,
+    store: State<'_, Mutex<Store>>,
+    id: String,
+    due_at: Option<i64>,
+) -> Result<(), String> {
+    {
+        let store = store.lock().map_err(|e| e.to_string())?;
+        store.set_due(&id, due_at).map_err(|e| e.to_string())?;
+    }
+    broadcast_changed(&app, webview.label());
+    crate::tray::rebuild_menu(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn note_stats(store: State<'_, Mutex<Store>>) -> Result<crate::stats::Stats, String> {
+    let notes = {
+        let store = store.lock().map_err(|e| e.to_string())?;
+        store.load_notes().map_err(|e| e.to_string())?
+    };
+    Ok(crate::stats::compute(&notes))
+}
