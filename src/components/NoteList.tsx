@@ -56,6 +56,7 @@ export default function NoteList(props: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [editingFolder, setEditingFolder] = useState<string | null>(null);
   const [rootMenu, setRootMenu] = useState<{ x: number; y: number } | null>(null);
+  const [headerMenu, setHeaderMenu] = useState<{ x: number; y: number } | null>(null);
   const [customizer, setCustomizer] = useState<{ x: number; y: number; folderId: string } | null>(null);
 
   const toggle = (id: string) => setExpanded(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -185,26 +186,13 @@ export default function NoteList(props: Props) {
           <span className="text-gray-200 text-xs font-semibold uppercase tracking-widest">{showArchived ? 'Archiv' : 'Notefix'}</span>
         </div>
         <div className="flex items-center gap-1">
-          {onOpenDashboard && (
-            <button onClick={onOpenDashboard} className="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 rounded" title="Dashboard">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /></svg>
-            </button>
-          )}
-          {!showArchived && onCreateFolder && (
-            <button onClick={() => createAndEdit(null)} className="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 rounded" title="Neuer Ordner">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><line x1="12" y1="11" x2="12" y2="17" /><line x1="9" y1="14" x2="15" y2="14" /></svg>
-            </button>
-          )}
-          <button onClick={() => setShowArchived(v => !v)} className={`w-6 h-6 flex items-center justify-center rounded ${showArchived ? 'text-white bg-gray-700' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`} title={showArchived ? 'Aktive Notizen' : 'Archiv anzeigen'}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="4" rx="1" /><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8" /><line x1="10" y1="12" x2="14" y2="12" /></svg>
-          </button>
           {!showArchived && (
             <button onClick={onCreate} className="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 rounded" title="New note">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
             </button>
           )}
-          <button onClick={onOpenSettings} className="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 rounded" title="Settings">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
+          <button onClick={e => setHeaderMenu({ x: e.clientX, y: e.clientY })} className="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 rounded" title="Mehr">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="19" cy="12" r="1.6" /></svg>
           </button>
         </div>
       </div>
@@ -269,6 +257,18 @@ export default function NoteList(props: Props) {
           x={rootMenu.x} y={rootMenu.y}
           items={[{ label: 'Neuer Ordner', onClick: () => createAndEdit(null) }]}
           onClose={() => setRootMenu(null)}
+        />
+      )}
+      {headerMenu && (
+        <ContextMenu
+          x={headerMenu.x} y={headerMenu.y}
+          items={[
+            ...(onOpenDashboard ? [{ label: 'Dashboard', onClick: onOpenDashboard }] : []),
+            ...((onCreateFolder && !showArchived) ? [{ label: 'Neuer Ordner', onClick: () => createAndEdit(null) }] : []),
+            { label: showArchived ? 'Aktive Notizen' : 'Archiv anzeigen', onClick: () => setShowArchived(v => !v) },
+            { label: 'Einstellungen', onClick: onOpenSettings },
+          ]}
+          onClose={() => setHeaderMenu(null)}
         />
       )}
       {customizer && onSetFolderIcon && onSetFolderColor && (() => {

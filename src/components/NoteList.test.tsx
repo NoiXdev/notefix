@@ -126,7 +126,8 @@ describe("NoteList — color & archive", () => {
     render(<NoteList {...defaultProps} notes={notes} />);
     expect(screen.getByText('Active')).toBeInTheDocument();
     expect(screen.queryByText('Gone')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByTitle('Archiv anzeigen'));
+    fireEvent.click(screen.getByTitle('Mehr'));
+    fireEvent.click(screen.getByText('Archiv anzeigen'));
     expect(screen.getByText('Gone')).toBeInTheDocument();
     expect(screen.queryByText('Active')).not.toBeInTheDocument();
   });
@@ -203,5 +204,14 @@ describe("NoteList — drag and drop", () => {
     render(<NoteList {...defaultProps} notes={notes} />);
     const texts = screen.getAllByText(/AAA|BBB/).map(e => e.textContent);
     expect(texts).toEqual(['BBB', 'AAA']); // position 1 before position 5, despite AAA being newer
+  });
+});
+
+describe("NoteList — header overflow", () => {
+  it("the menu offers Dashboard and Einstellungen", () => {
+    render(<NoteList {...defaultProps} onOpenDashboard={vi.fn()} />);
+    fireEvent.click(screen.getByTitle('Mehr'));
+    expect(screen.getByText('Dashboard')).toBeInTheDocument();
+    expect(screen.getByText('Einstellungen')).toBeInTheDocument();
   });
 });
