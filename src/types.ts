@@ -25,3 +25,9 @@ export interface Stats {
   characters: number;
   words: number;
 }
+
+export interface Revision {
+  id: number;
+  noteId: string;
+  createdAt: number;
+}

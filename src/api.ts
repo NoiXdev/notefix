@@ -31,6 +31,8 @@ export const api = {
       invoke("notes_set_folder", { id, folderId }),
     reorder: (folderId: string | null, ids: string[]): Promise<void> =>
       invoke("notes_reorder", { folderId, ids }),
+    revisions: (noteId: string): Promise<import("./types").Revision[]> => invoke("note_revisions", { noteId }),
+    revisionContent: (id: number): Promise<string | null> => invoke("note_revision_content", { id }),
   },
 
   folders: {
