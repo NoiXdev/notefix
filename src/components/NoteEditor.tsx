@@ -10,24 +10,16 @@ import { countTasks } from '../tasks';
 import { ResizableImage } from './ResizableImage';
 import type { Note } from '../types';
 import { api } from '../api';
+import { saveImageFile } from '../saveImage';
 import { toDateInputValue, fromDateInputValue } from '../dates';
 import { htmlToMarkdown, markdownToHtml } from '../markdown';
 import HistoryModal from './HistoryModal';
-
-function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-}
 
 async function insertImageFilesIntoView(view: EditorView, files: File[], pos?: number): Promise<void> {
   const images = files.filter(f => f.type.startsWith('image/'));
   if (!images.length) return;
   for (const file of images) {
-    const src = await readFileAsDataUrl(file);
+    const src = await saveImageFile(file);
     const node = view.state.schema.nodes.image?.create({ src });
     if (!node) continue;
     const insertAt = typeof pos === 'number' ? pos : view.state.selection.to;
@@ -39,7 +31,7 @@ async function insertImageFilesIntoEditor(editor: Editor, files: File[]): Promis
   const images = files.filter(f => f.type.startsWith('image/'));
   if (!images.length) return;
   for (const file of images) {
-    const src = await readFileAsDataUrl(file);
+    const src = await saveImageFile(file);
     editor.chain().focus().setImage({ src }).run();
   }
 }
