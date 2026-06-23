@@ -4,6 +4,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { isEnabled as autostartIsEnabled, enable as autostartEnable, disable as autostartDisable } from "@tauri-apps/plugin-autostart";
+import { relaunch as processRelaunch } from "@tauri-apps/plugin-process";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import type { Note } from "./types";
 
 export interface AppInfo {
@@ -53,6 +55,15 @@ export const api = {
     invoke("export_notes", { path, ids }),
 
   stats: (): Promise<import("./types").Stats> => invoke("note_stats"),
+
+  getDbPath: (): Promise<string> => invoke("get_db_path"),
+  setDbLocation: (folder: string): Promise<{ mode: "moved" | "switched"; path: string }> =>
+    invoke("set_db_location", { folder }),
+  relaunch: (): Promise<void> => processRelaunch(),
+  pickFolder: async (): Promise<string | null> => {
+    const r = await openDialog({ directory: true });
+    return typeof r === "string" ? r : null;
+  },
 
   autostart: {
     isEnabled: (): Promise<boolean> => autostartIsEnabled(),

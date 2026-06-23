@@ -1,11 +1,24 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockIsEnabled, mockEnable, mockDisable, mockExportSelected } = vi.hoisted(() => ({
+const {
+  mockIsEnabled,
+  mockEnable,
+  mockDisable,
+  mockExportSelected,
+  mockGetDbPath,
+  mockSetDbLocation,
+  mockRelaunch,
+  mockPickFolder,
+} = vi.hoisted(() => ({
   mockIsEnabled: vi.fn(() => Promise.resolve(false)),
   mockEnable: vi.fn(() => Promise.resolve()),
   mockDisable: vi.fn(() => Promise.resolve()),
   mockExportSelected: vi.fn(),
+  mockGetDbPath: vi.fn(() => Promise.resolve("/data/notefix.db")),
+  mockSetDbLocation: vi.fn(() => Promise.resolve({ mode: "moved", path: "/new/notefix.db" })),
+  mockRelaunch: vi.fn(),
+  mockPickFolder: vi.fn(() => Promise.resolve("/new")),
 }));
 
 vi.mock("../api", () => ({
@@ -13,6 +26,10 @@ vi.mock("../api", () => ({
     getAppInfo: vi.fn(() => Promise.resolve({ name: "Notefix", version: "0.1.0", description: "x" })),
     autostart: { isEnabled: mockIsEnabled, enable: mockEnable, disable: mockDisable },
     stats: vi.fn(() => Promise.resolve({ notes: 3, archived: 1, characters: 42, words: 8 })),
+    getDbPath: mockGetDbPath,
+    setDbLocation: mockSetDbLocation,
+    relaunch: mockRelaunch,
+    pickFolder: mockPickFolder,
   },
 }));
 vi.mock("../export", () => ({ exportSelected: mockExportSelected }));
@@ -65,6 +82,19 @@ describe("Settings — date format & stats", () => {
     render(<Settings onClose={vi.fn()} settings={{ startMinimized: false, dateFormat: "auto", pinnedScope: "perFolder" }} onSetSetting={vi.fn()} />);
     fireEvent.click(screen.getByText("Statistik"));
     await waitFor(() => expect(screen.getByText("42")).toBeInTheDocument());
+  });
+});
+
+describe("Settings — Speicherort", () => {
+  it("shows the db path and changes location then offers restart", async () => {
+    render(<Settings onClose={vi.fn()} settings={{ startMinimized: false, dateFormat: "auto", pinnedScope: "perFolder" }} onSetSetting={vi.fn()} />);
+    fireEvent.click(screen.getByText("System"));
+    await waitFor(() => expect(screen.getByText("/data/notefix.db")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("Ändern…"));
+    await waitFor(() => expect(screen.getByText("Jetzt neu starten")).toBeInTheDocument());
+    expect(mockSetDbLocation).toHaveBeenCalledWith("/new");
+    fireEvent.click(screen.getByText("Jetzt neu starten"));
+    expect(mockRelaunch).toHaveBeenCalledOnce();
   });
 });
 

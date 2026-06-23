@@ -69,6 +69,19 @@ export default function Settings({ onClose, settings, onSetSetting }: Props) {
     else await api.autostart.disable();
   };
 
+  const [dbPath, setDbPath] = useState("");
+  const [locResult, setLocResult] = useState<{ mode: string; path: string } | null>(null);
+  useEffect(() => {
+    api.getDbPath().then(setDbPath);
+  }, []);
+  const changeLocation = async () => {
+    const folder = await api.pickFolder();
+    if (!folder) return;
+    const res = await api.setDbLocation(folder);
+    setLocResult(res);
+    setDbPath(res.path);
+  };
+
   return (
     <div className="flex h-screen overflow-hidden">
       <aside className="w-52 shrink-0 bg-gray-950 flex flex-col h-full select-none">
@@ -160,6 +173,32 @@ export default function Settings({ onClose, settings, onSetSetting }: Props) {
               >
                 Alle als JSON exportieren
               </button>
+
+              <h2 className="text-sm font-semibold text-gray-800 mt-6 mb-1">Speicherort</h2>
+              <p className="text-xs text-gray-600 break-all mb-2">{dbPath}</p>
+              <button
+                onClick={changeLocation}
+                className="self-start px-4 py-1.5 rounded text-sm font-medium border"
+                style={{ borderColor: "#e7d27a", color: "#1c1917" }}
+              >
+                Ändern…
+              </button>
+              {locResult && (
+                <div className="mt-3 text-sm text-gray-700">
+                  <p className="mb-2">
+                    {locResult.mode === "switched"
+                      ? `Gewechselt zur vorhandenen DB unter ${locResult.path}. Deine bisherigen Notizen bleiben am alten Ort.`
+                      : `Verschoben nach ${locResult.path}.`}
+                  </p>
+                  <button
+                    onClick={() => api.relaunch()}
+                    className="self-start px-4 py-1.5 rounded text-sm font-medium"
+                    style={{ background: "#fde047", color: "#1c1917" }}
+                  >
+                    Jetzt neu starten
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         )}
