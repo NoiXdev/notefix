@@ -98,6 +98,16 @@ describe("Settings — Speicherort", () => {
   });
 });
 
+describe("Settings — folderColorStyle", () => {
+  it("selecting a folder color style calls onSetSetting", () => {
+    const onSetSetting = vi.fn();
+    render(<Settings onClose={vi.fn()} settings={{ startMinimized: false, dateFormat: "auto", pinnedScope: "perFolder", folderColorStyle: "icon" }} onSetSetting={onSetSetting} />);
+    fireEvent.click(screen.getByText("Darstellung"));
+    fireEvent.click(screen.getByText("Ganze Zeile tönen"));
+    expect(onSetSetting).toHaveBeenCalledWith("folderColorStyle", "row");
+  });
+});
+
 describe("Settings — pinnedScope", () => {
   it("selecting global calls onSetSetting", () => {
     const onSetSetting = vi.fn();
