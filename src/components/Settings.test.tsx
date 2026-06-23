@@ -163,3 +163,12 @@ describe("Settings — trash", () => {
     expect(onSetSetting).toHaveBeenCalledWith("trashEnabled", false);
   });
 });
+
+describe("Settings — shortcuts page", () => {
+  const full = { startMinimized: false, dateFormat: "auto" as const, pinnedScope: "perFolder" as const, folderColorStyle: "icon" as const, revisionLimit: 50, autosaveDelay: 400, startView: "lastNote" as const, dashboardLayout: ["recent"], compactTree: false, treeProgress: true, trashEnabled: true, trashRetentionDays: 30 };
+  it("lists the new-note shortcut", () => {
+    render(<Settings onClose={vi.fn()} settings={full} onSetSetting={vi.fn()} />);
+    fireEvent.click(screen.getByText("Tastatur"));
+    expect(screen.getByText("Neue Notiz")).toBeInTheDocument();
+  });
+});
