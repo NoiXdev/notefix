@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import type { Note, Folder } from '../types';
+import { computeDrop, type DragKind, type DropMode } from '../dnd';
 import type { PinnedScope } from '../hooks/useSettings';
 import ContextMenu, { type ContextMenuItem } from './ContextMenu';
 import { NOTE_COLORS, DEFAULT_MARKER } from '../colors';
@@ -21,6 +22,8 @@ interface Props {
   onCreateFolder?: (name: string, parentId: string | null) => Promise<string>;
   onRenameFolder?: (id: string, name: string) => void;
   onDeleteFolder?: (folder: Folder) => void;
+  onReorderNotes?: (folderId: string | null, ids: string[]) => void;
+  onReorderFolders?: (parentId: string | null, ids: string[]) => void;
   dateFormat?: DateFormat;
   pinnedScope?: PinnedScope;
 }
@@ -47,6 +50,7 @@ export default function NoteList(props: Props) {
   const {
     notes, folders, selectedId, onSelect, onCreate, onDelete, onOpenSettings,
     onTogglePin, onArchive, onSetColor, onMoveNote, onCreateFolder, onRenameFolder, onDeleteFolder,
+    onReorderNotes, onReorderFolders,
     dateFormat = 'auto', pinnedScope = 'perFolder',
   } = props;
 
@@ -65,6 +69,29 @@ export default function NoteList(props: Props) {
     if (!onCreateFolder) return;
     if (parentId) setExpanded(prev => { const n = new Set(prev); n.add(parentId); return n; });
     void onCreateFolder('Neuer Ordner', parentId).then(id => setEditingFolder(id));
+  };
+
+  const dragRef = useRef<{ kind: DragKind; id: string } | null>(null);
+  const [dropHint, setDropHint] = useState<{ id: string; mode: DropMode } | null>(null);
+
+  const finishDrop = (targetKind: DragKind | 'root', targetId: string | null, mode: DropMode) => {
+    const d = dragRef.current;
+    dragRef.current = null; setDropHint(null);
+    if (!d) return;
+    const res = computeDrop({ draggedKind: d.kind, draggedId: d.id, targetKind, targetId, mode, notes, folders });
+    if (!res) return;
+    if (res.kind === 'note') onReorderNotes?.(res.parentId, res.orderedIds);
+    else onReorderFolders?.(res.parentId, res.orderedIds);
+  };
+
+  const noteModeAt = (e: React.DragEvent): DropMode => {
+    const r = e.currentTarget.getBoundingClientRect();
+    return (e.clientY - r.top) < r.height / 2 ? 'before' : 'after';
+  };
+  const folderModeAt = (e: React.DragEvent): DropMode => {
+    const r = e.currentTarget.getBoundingClientRect();
+    const y = e.clientY - r.top;
+    return y < r.height / 3 ? 'before' : y > (r.height * 2) / 3 ? 'into' : 'into';
   };
 
   // Move-to submenu: all folders indented by depth + root.
@@ -89,7 +116,12 @@ export default function NoteList(props: Props) {
         onClick={() => onSelect(note.id)}
         onContextMenu={e => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, note }); }}
         className={`w-full text-left py-3 border-b border-gray-900 group relative transition-colors ${selectedId === note.id ? 'bg-gray-800' : 'hover:bg-gray-900'}`}
-        style={{ paddingLeft: 16 + depth * 14, paddingRight: 16 }}
+        draggable
+        onDragStart={e => { dragRef.current = { kind: 'note', id: note.id }; e.dataTransfer.effectAllowed = 'move'; }}
+        onDragEnd={() => { dragRef.current = null; setDropHint(null); }}
+        onDragOver={e => { e.preventDefault(); setDropHint({ id: note.id, mode: noteModeAt(e) }); }}
+        onDrop={e => { e.preventDefault(); e.stopPropagation(); finishDrop('note', note.id, noteModeAt(e)); }}
+        style={{ paddingLeft: 16 + depth * 14, paddingRight: 16, boxShadow: dropHint?.id === note.id ? (dropHint.mode === 'before' ? 'inset 0 2px 0 #fde047' : 'inset 0 -2px 0 #fde047') : undefined }}
       >
         <div className="flex items-start gap-2">
           {note.pinned ? <PinIcon color={marker} /> : <div className="w-2 h-2 rounded-sm shrink-0 mt-1.5" style={{ background: marker }} />}
@@ -140,7 +172,12 @@ export default function NoteList(props: Props) {
           <div
             onClick={() => toggle(folder.id)}
             onContextMenu={e => { e.preventDefault(); setFolderMenu({ x: e.clientX, y: e.clientY, folder }); }}
-            className="flex items-center gap-1 py-2 text-gray-300 hover:bg-gray-900 cursor-pointer select-none"
+            draggable
+            onDragStart={e => { e.stopPropagation(); dragRef.current = { kind: 'folder', id: folder.id }; e.dataTransfer.effectAllowed = 'move'; }}
+            onDragEnd={() => { dragRef.current = null; setDropHint(null); }}
+            onDragOver={e => { e.preventDefault(); e.stopPropagation(); setDropHint({ id: folder.id, mode: folderModeAt(e) }); }}
+            onDrop={e => { e.preventDefault(); e.stopPropagation(); finishDrop('folder', folder.id, folderModeAt(e)); }}
+            className={`flex items-center gap-1 py-2 text-gray-300 hover:bg-gray-900 cursor-pointer select-none ${dropHint?.id === folder.id && dropHint.mode === 'into' ? 'bg-gray-700' : ''}`}
             style={{ paddingLeft: 8 + depth * 14, paddingRight: 12 }}
           >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ transform: open ? 'rotate(90deg)' : 'none' }}><polyline points="9 6 15 12 9 18" /></svg>
@@ -188,6 +225,8 @@ export default function NoteList(props: Props) {
       <div
         className="flex-1 overflow-y-auto"
         onContextMenu={e => { if (e.target === e.currentTarget && onCreateFolder && !showArchived) { e.preventDefault(); setRootMenu({ x: e.clientX, y: e.clientY }); } }}
+        onDragOver={e => { if (e.target === e.currentTarget) e.preventDefault(); }}
+        onDrop={e => { if (e.target === e.currentTarget) { e.preventDefault(); finishDrop('root', null, 'into'); } }}
       >
         {showArchived ? (
           archivedNotes.length === 0

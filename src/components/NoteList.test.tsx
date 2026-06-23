@@ -173,3 +173,10 @@ describe("NoteList — folders", () => {
     expect(screen.getByText('Verschieben nach')).toBeInTheDocument();
   });
 });
+
+describe("NoteList — drag and drop", () => {
+  it("note rows are draggable", () => {
+    render(<NoteList {...defaultProps} notes={[note('a', '<p>Drag me</p>')]} />);
+    expect(screen.getByText('Drag me').closest('[draggable="true"]')).toBeTruthy();
+  });
+});

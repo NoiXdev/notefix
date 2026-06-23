@@ -12,8 +12,8 @@ import type { Folder } from './types';
 const windowNoteId = new URLSearchParams(window.location.search).get('windowNoteId');
 
 export default function App() {
-  const { notes, loading, createNote, updateNote, deleteNote, setPinned, setArchived, setColor, setDue, setFolder } = useNotes();
-  const { folders, createFolder, renameFolder, deleteFolder } = useFolders();
+  const { notes, loading, createNote, updateNote, deleteNote, setPinned, setArchived, setColor, setDue, setFolder, reorderNotes } = useNotes();
+  const { folders, createFolder, renameFolder, deleteFolder, reorderFolders } = useFolders();
   const { settings, setSetting } = useSettings();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -106,6 +106,8 @@ export default function App() {
         onCreateFolder={createFolder}
         onRenameFolder={renameFolder}
         onDeleteFolder={requestDeleteFolder}
+        onReorderNotes={reorderNotes}
+        onReorderFolders={reorderFolders}
         dateFormat={settings.dateFormat}
         pinnedScope={settings.pinnedScope}
       />
