@@ -6,6 +6,7 @@ import { parseDragId, parseDropId } from '../dndkit';
 import { getPreview } from '../preview';
 import type { PinnedScope, FolderColorStyle } from '../hooks/useSettings';
 import ContextMenu, { type ContextMenuItem } from './ContextMenu';
+import ConfirmDialog from './ConfirmDialog';
 import FolderCustomizer from './FolderCustomizer';
 import Logo from './Logo';
 import NoteRow from './NoteRow';
@@ -42,6 +43,11 @@ interface Props {
   folderColorStyle?: FolderColorStyle;
   compactTree?: boolean;
   treeProgress?: boolean;
+  trashed?: Note[];
+  trashEnabled?: boolean;
+  onRestore?: (id: string) => void;
+  onPurge?: (id: string) => void;
+  onEmptyTrash?: () => void;
 }
 
 const sortNotes = (a: Note, b: Note) => Number(b.pinned) - Number(a.pinned) || a.position - b.position;
@@ -62,11 +68,16 @@ export default function NoteList(props: Props) {
     onReorderNotes, onReorderFolders, onSetFolderIcon, onSetFolderColor, onSetFolderSort,
     dateFormat = 'auto', pinnedScope = 'perFolder', folderColorStyle = 'icon',
     compactTree = false, treeProgress = true,
+    trashed = [], trashEnabled = true, onRestore, onPurge, onEmptyTrash,
   } = props;
 
   const [menu, setMenu] = useState<{ x: number; y: number; note: Note } | null>(null);
   const [folderMenu, setFolderMenu] = useState<{ x: number; y: number; folder: Folder } | null>(null);
-  const [showArchived, setShowArchived] = useState(false);
+  const [view, setView] = useState<'active' | 'archived' | 'trash'>('active');
+  const showArchived = view === 'archived';
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const [pendingPurge, setPendingPurge] = useState<string | null>(null);
+  const [pendingEmpty, setPendingEmpty] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [editingFolder, setEditingFolder] = useState<string | null>(null);
   const [rootMenu, setRootMenu] = useState<{ x: number; y: number } | null>(null);
@@ -136,7 +147,7 @@ export default function NoteList(props: Props) {
       compact={compactTree}
       showProgress={treeProgress}
       onSelect={onSelect}
-      onDelete={onDelete}
+      onDelete={(id) => setPendingDelete(id)}
       onContextMenu={(e, n) => setMenu({ x: e.clientX, y: e.clientY, note: n })}
     />
   );
@@ -204,10 +215,10 @@ export default function NoteList(props: Props) {
       <div className="px-4 py-3 flex items-center justify-between border-b border-gray-800">
         <div className="flex items-center gap-1.5">
           <Logo size={18} />
-          <span className="text-gray-200 text-xs font-semibold uppercase tracking-widest">{showArchived ? 'Archiv' : 'Notefix'}</span>
+          <span className="text-gray-200 text-xs font-semibold uppercase tracking-widest">{view === 'archived' ? 'Archiv' : view === 'trash' ? 'Papierkorb' : 'Notefix'}</span>
         </div>
         <div className="flex items-center gap-1">
-          {!showArchived && (
+          {view === 'active' && (
             <button onClick={onCreate} className="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 rounded" title="New note">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
             </button>
@@ -218,10 +229,11 @@ export default function NoteList(props: Props) {
         </div>
       </div>
 
+      {view !== 'trash' && (
       <DndContext sensors={sensors} collisionDetection={pointerWithin} onDragStart={onDragStart} onDragOver={onDragOver} onDragEnd={onDragEnd} onDragCancel={onDragCancel}>
         <div
           className="flex-1 overflow-y-auto"
-          onContextMenu={e => { if (e.target === e.currentTarget && onCreateFolder && !showArchived) { e.preventDefault(); setRootMenu({ x: e.clientX, y: e.clientY }); } }}
+          onContextMenu={e => { if (e.target === e.currentTarget && onCreateFolder && view === 'active') { e.preventDefault(); setRootMenu({ x: e.clientX, y: e.clientY }); } }}
         >
           {showArchived ? (
             archivedNotes.length === 0
@@ -247,6 +259,26 @@ export default function NoteList(props: Props) {
           ) : null}
         </DragOverlay>
       </DndContext>
+      )}
+
+      {view === 'trash' && (
+        <div className="flex-1 overflow-y-auto">
+          <div className="flex items-center justify-between px-4 py-2 border-b border-gray-800">
+            <span className="text-gray-500 text-xs">{trashed.length} im Papierkorb</span>
+            {trashed.length > 0 && <button onClick={() => setPendingEmpty(true)} className="text-xs text-red-400 hover:text-red-300">Papierkorb leeren</button>}
+          </div>
+          {trashed.length === 0 && <p className="text-gray-600 text-xs text-center mt-10 px-4">Papierkorb ist leer.</p>}
+          {trashed.map(n => (
+            <div key={n.id} className="px-4 py-2 border-b border-gray-900 flex items-center justify-between gap-2">
+              <span className="text-gray-300 text-sm truncate">{getPreview(n.content)}</span>
+              <div className="flex items-center gap-3 shrink-0">
+                <button onClick={() => onRestore?.(n.id)} className="text-xs text-gray-400 hover:text-white" title="Wiederherstellen">Wiederherstellen</button>
+                <button onClick={() => setPendingPurge(n.id)} className="text-xs text-gray-500 hover:text-red-400" title="Endgültig löschen">Löschen</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {menu && (
         <ContextMenu
@@ -256,6 +288,7 @@ export default function NoteList(props: Props) {
             ...(onTogglePin ? [{ label: menu.note.pinned ? 'Lösen' : 'Anpinnen', onClick: () => onTogglePin(menu.note.id, !menu.note.pinned) }] : []),
             ...(onArchive ? [{ label: menu.note.archived ? 'Wiederherstellen' : 'Archivieren', onClick: () => onArchive(menu.note.id, !menu.note.archived) }] : []),
             ...(onMoveNote ? [{ label: 'Verschieben nach', submenu: moveSubmenu(menu.note) }] : []),
+            { label: 'Löschen', onClick: () => setPendingDelete(menu.note.id) },
             { label: 'Exportieren', onClick: () => { void exportSelected([menu.note.id], `${(getPreview(menu.note.content).slice(0, 40) || 'notiz').replace(/[/\\:]/g, '-')}.json`); } },
           ]}
           onClose={() => setMenu(null)}
@@ -286,8 +319,10 @@ export default function NoteList(props: Props) {
           x={headerMenu.x} y={headerMenu.y}
           items={[
             ...(onOpenDashboard ? [{ label: 'Dashboard', onClick: onOpenDashboard }] : []),
-            ...((onCreateFolder && !showArchived) ? [{ label: 'Neuer Ordner', onClick: () => createAndEdit(null) }] : []),
-            { label: showArchived ? 'Aktive Notizen' : 'Archiv anzeigen', onClick: () => setShowArchived(v => !v) },
+            ...((onCreateFolder && view === 'active') ? [{ label: 'Neuer Ordner', onClick: () => createAndEdit(null) }] : []),
+            ...(view !== 'active' ? [{ label: 'Aktive Notizen', onClick: () => setView('active') }] : []),
+            ...(view !== 'archived' ? [{ label: 'Archiv anzeigen', onClick: () => setView('archived') }] : []),
+            ...(view !== 'trash' ? [{ label: 'Papierkorb', onClick: () => setView('trash') }] : []),
             { label: 'Einstellungen', onClick: onOpenSettings },
           ]}
           onClose={() => setHeaderMenu(null)}
@@ -306,6 +341,34 @@ export default function NoteList(props: Props) {
           />
         ) : null;
       })()}
+      {pendingDelete && (
+        <ConfirmDialog
+          title="Notiz löschen"
+          message={trashEnabled ? 'In den Papierkorb verschieben?' : 'Diese Notiz endgültig löschen?'}
+          confirmLabel={trashEnabled ? 'In Papierkorb' : 'Endgültig löschen'}
+          danger={!trashEnabled}
+          onConfirm={() => { onDelete(pendingDelete); setPendingDelete(null); }}
+          onCancel={() => setPendingDelete(null)}
+        />
+      )}
+      {pendingPurge && (
+        <ConfirmDialog
+          title="Endgültig löschen"
+          message="Diese Notiz endgültig löschen? Das kann nicht rückgängig gemacht werden."
+          confirmLabel="Endgültig löschen" danger
+          onConfirm={() => { onPurge?.(pendingPurge); setPendingPurge(null); }}
+          onCancel={() => setPendingPurge(null)}
+        />
+      )}
+      {pendingEmpty && (
+        <ConfirmDialog
+          title="Papierkorb leeren"
+          message="Alle Notizen im Papierkorb endgültig löschen?"
+          confirmLabel="Leeren" danger
+          onConfirm={() => { onEmptyTrash?.(); setPendingEmpty(false); }}
+          onCancel={() => setPendingEmpty(false)}
+        />
+      )}
     </aside>
   );
 }

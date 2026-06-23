@@ -85,9 +85,10 @@ describe('NoteList — interactions', () => {
     expect(defaultProps.onSelect).toHaveBeenCalledWith('42');
   });
 
-  it('calls onDelete with the note id when the delete button is clicked', () => {
+  it('calls onDelete with the note id after confirming the delete dialog', () => {
     render(<NoteList {...defaultProps} notes={[note('7', '<p>Delete me</p>')]} />);
     fireEvent.click(screen.getByTitle('Delete note'));
+    fireEvent.click(screen.getByText('In Papierkorb'));
     expect(defaultProps.onDelete).toHaveBeenCalledWith('7');
   });
 
@@ -220,5 +221,31 @@ describe("NoteList — header overflow", () => {
     fireEvent.click(screen.getByTitle('Mehr'));
     expect(screen.getByText('Dashboard')).toBeInTheDocument();
     expect(screen.getByText('Einstellungen')).toBeInTheDocument();
+  });
+});
+
+describe("NoteList — delete & trash", () => {
+  it("context menu 'Löschen' opens a confirm dialog (trash wording)", () => {
+    render(<NoteList {...defaultProps} notes={[note('a', '<p>Note</p>')]} />);
+    fireEvent.contextMenu(screen.getByText('Note'));
+    fireEvent.click(screen.getByText('Löschen'));
+    expect(screen.getByText('In den Papierkorb verschieben?')).toBeInTheDocument();
+  });
+  it("confirming delete calls onDelete", () => {
+    const onDelete = vi.fn();
+    render(<NoteList {...defaultProps} notes={[note('a', '<p>Note</p>')]} onDelete={onDelete} />);
+    fireEvent.contextMenu(screen.getByText('Note'));
+    fireEvent.click(screen.getByText('Löschen'));
+    fireEvent.click(screen.getByText('In Papierkorb'));
+    expect(onDelete).toHaveBeenCalledWith('a');
+  });
+  it("trash view lists trashed notes and restore calls onRestore", () => {
+    const onRestore = vi.fn();
+    render(<NoteList {...defaultProps} trashed={[note('t', '<p>Weg</p>')]} onRestore={onRestore} />);
+    fireEvent.click(screen.getByTitle('Mehr'));
+    fireEvent.click(screen.getByText('Papierkorb'));
+    expect(screen.getByText('Weg')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Wiederherstellen'));
+    expect(onRestore).toHaveBeenCalledWith('t');
   });
 });
