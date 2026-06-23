@@ -83,6 +83,11 @@ describe("NoteEditor — main window mode (isWindow=false)", () => {
     expect(screen.queryByTitle("Keep on top")).not.toBeInTheDocument();
     expect(screen.queryByTitle("Close")).not.toBeInTheDocument();
   });
+
+  it("renders the save indicator", () => {
+    render(<NoteEditor note={{ id: 'a', content: '<p>x</p>', updatedAt: 1, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position: 0, deletedAt: null }} onChange={vi.fn()} />);
+    expect(screen.getByLabelText('Speichern')).toBeInTheDocument();
+  });
 });
 
 describe("NoteEditor — standalone window mode (isWindow=true)", () => {

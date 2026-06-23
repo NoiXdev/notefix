@@ -91,6 +91,8 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
   const [historyOpen, setHistoryOpen] = useState(false);
   const [mdMode, setMdMode] = useState(false);
   const [mdText, setMdText] = useState('');
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('saved');
+  const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
   const delayRef = useRef(autosaveDelay);
   delayRef.current = autosaveDelay;
 
@@ -113,9 +115,12 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
         setProgress(countTasks(html));
       if (isWindow) api.setWindowTitle(getTitleFromHtml(html));
       if (pendingSave.current) clearTimeout(pendingSave.current);
+      setSaveState('saving');
       pendingSave.current = setTimeout(() => {
         pendingSave.current = null;
         onChange(note.id, html);
+        setSaveState('saved');
+        setLastSavedAt(Date.now());
       }, delayRef.current);
     },
     editorProps: {
@@ -154,6 +159,8 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
     editor.commands.focus('end');
     if (isWindow) api.setWindowTitle(getTitleFromHtml(note.content || ''));
     setMdMode(false);
+    setSaveState('saved');
+    setLastSavedAt(null);
   }, [note.id, editor]);
 
   // Apply external content changes (e.g. edits from a note window) without
@@ -168,6 +175,15 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
   }, [note.content, editor]);
 
   if (!editor) return null;
+
+  const flushSave = () => {
+    if (!pendingSave.current) return;
+    clearTimeout(pendingSave.current);
+    pendingSave.current = null;
+    onChange(note.id, mdMode ? markdownToHtml(mdText) : editor.getHTML());
+    setSaveState('saved');
+    setLastSavedAt(Date.now());
+  };
 
   const restore = (content: string) => {
     skipNextUpdate.current = true;
@@ -191,9 +207,12 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
   const onMdChange = (value: string) => {
     setMdText(value);
     if (pendingSave.current) clearTimeout(pendingSave.current);
+    setSaveState('saving');
     pendingSave.current = setTimeout(() => {
       pendingSave.current = null;
       onChange(note.id, markdownToHtml(value));
+      setSaveState('saved');
+      setLastSavedAt(Date.now());
     }, delayRef.current);
   };
 
@@ -205,7 +224,19 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
   };
 
   return (
-    <div className="flex flex-col h-full" style={{ background: '#fef9c3' }}>
+    <div className="flex flex-col h-full relative" style={{ background: '#fef9c3' }}>
+      <button
+        onClick={flushSave}
+        title={saveState === 'saving' ? 'Speichern…' : lastSavedAt ? `Zuletzt gespeichert: ${new Date(lastSavedAt).toLocaleTimeString()}` : 'Gespeichert'}
+        className="absolute right-2 top-1 z-10 w-6 h-6 flex items-center justify-center rounded text-amber-700/70 hover:text-amber-800"
+        aria-label="Speichern"
+      >
+        {saveState === 'saving' ? (
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="animate-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
+        ) : (
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" /><polyline points="17 21 17 13 7 13 7 21" /><polyline points="7 3 7 8 15 8" /></svg>
+        )}
+      </button>
 
       {/* Custom title bar — only in frameless window mode */}
       {isWindow && (
