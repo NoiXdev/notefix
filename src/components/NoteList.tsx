@@ -147,7 +147,7 @@ export default function NoteList({
           items={[
             ...(onTogglePin ? [{ label: menu.note.pinned ? 'Lösen' : 'Anpinnen', onClick: () => onTogglePin(menu.note.id, !menu.note.pinned) }] : []),
             ...(onArchive ? [{ label: menu.note.archived ? 'Wiederherstellen' : 'Archivieren', onClick: () => onArchive(menu.note.id, !menu.note.archived) }] : []),
-            { label: 'Exportieren', onClick: () => { void exportSelected([menu.note.id], `${getPreview(menu.note.content).slice(0, 40) || 'notiz'}.json`); } },
+            { label: 'Exportieren', onClick: () => { void exportSelected([menu.note.id], `${(getPreview(menu.note.content).slice(0, 40) || 'notiz').replace(/[/\\:]/g, '-')}.json`); } },
           ]}
           onClose={() => setMenu(null)}
         />
