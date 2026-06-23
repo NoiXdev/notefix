@@ -1,0 +1,7 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <title>Notefix</title>
+  <rect x="96" y="96" width="832" height="832" rx="180" fill="#1c1917"/>
+  <rect x="300" y="290" width="128" height="444" fill="#fde047"/>
+  <rect x="596" y="290" width="128" height="444" fill="#fde047"/>
+  <polygon points="300,290 428,290 724,734 596,734" fill="#fde047"/>
+</svg>
