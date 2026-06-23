@@ -191,15 +191,7 @@ describe("NoteList — folders", () => {
 describe("NoteList — drag and drop", () => {
   it("note rows are draggable", () => {
     render(<NoteList {...defaultProps} notes={[note('a', '<p>Drag me</p>')]} />);
-    expect(screen.getByText('Drag me').closest('[draggable="true"]')).toBeTruthy();
-  });
-
-  it("dragStart populates dataTransfer so WKWebView actually starts the drag", () => {
-    render(<NoteList {...defaultProps} notes={[note('a', '<p>Drag</p>')]} />);
-    const setData = vi.fn();
-    const row = screen.getByText('Drag').closest('[draggable="true"]')!;
-    fireEvent.dragStart(row, { dataTransfer: { setData, effectAllowed: '' } });
-    expect(setData).toHaveBeenCalledWith('text/plain', 'a');
+    expect(screen.getByText('Drag me').closest('[aria-roledescription="draggable"]')).toBeTruthy();
   });
 
   it("renders notes in position order, not by updatedAt", () => {

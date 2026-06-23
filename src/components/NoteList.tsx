@@ -1,14 +1,19 @@
-import { useState, useRef } from 'react';
+import { useState } from 'react';
+import { DndContext, DragOverlay, PointerSensor, useSensor, useSensors, pointerWithin, type DragStartEvent, type DragOverEvent, type DragEndEvent } from '@dnd-kit/core';
 import type { Note, Folder } from '../types';
 import { computeDrop, type DragKind, type DropMode } from '../dnd';
+import { parseDragId, parseDropId } from '../dndkit';
+import { getPreview } from '../preview';
 import type { PinnedScope, FolderColorStyle } from '../hooks/useSettings';
 import ContextMenu, { type ContextMenuItem } from './ContextMenu';
-import FolderIcon from './FolderIcon';
 import FolderCustomizer from './FolderCustomizer';
 import Logo from './Logo';
-import { NOTE_COLORS, DEFAULT_MARKER } from '../colors';
+import NoteRow from './NoteRow';
+import FolderRow from './FolderRow';
+import RootDropZone from './RootDropZone';
+import { NOTE_COLORS } from '../colors';
 import { exportSelected } from '../export';
-import { formatDate, type DateFormat } from '../dates';
+import type { DateFormat } from '../dates';
 
 interface Props {
   notes: Note[];
@@ -34,23 +39,7 @@ interface Props {
   folderColorStyle?: FolderColorStyle;
 }
 
-export function getPreview(html: string): string {
-  const el = document.createElement('div');
-  el.innerHTML = html;
-  const first = el.firstElementChild;
-  const text = first?.textContent?.trim() ?? el.textContent?.trim() ?? '';
-  return text.slice(0, 60) || 'New note';
-}
-
 const sortNotes = (a: Note, b: Note) => Number(b.pinned) - Number(a.pinned) || a.position - b.position;
-
-function PinIcon({ color }: { color: string }) {
-  return (
-    <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" className="shrink-0 mt-1" style={{ color }} aria-hidden>
-      <path d="M14 4v5l2 3v2h-5v5l-1 1-1-1v-5H4v-2l2-3V4a1 1 0 0 1-1-1h10a1 1 0 0 1-1 1z" />
-    </svg>
-  );
-}
 
 export default function NoteList(props: Props) {
   const {
@@ -78,44 +67,33 @@ export default function NoteList(props: Props) {
     void onCreateFolder('Neuer Ordner', parentId).then(id => setEditingFolder(id));
   };
 
-  const dragRef = useRef<{ kind: DragKind; id: string } | null>(null);
   const [dropHint, setDropHint] = useState<{ id: string; mode: DropMode } | null>(null);
+  const [activeDrag, setActiveDrag] = useState<{ kind: DragKind; id: string } | null>(null);
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
-  const finishDrop = (targetKind: DragKind | 'root', targetId: string | null, mode: DropMode) => {
-    const d = dragRef.current;
-    dragRef.current = null; setDropHint(null);
-    if (!d) return;
-    const res = computeDrop({ draggedKind: d.kind, draggedId: d.id, targetKind, targetId, mode, notes, folders });
+  const applyDrop = (draggedKind: DragKind, draggedId: string, targetKind: DragKind | 'root', targetId: string | null, mode: DropMode) => {
+    const res = computeDrop({ draggedKind, draggedId, targetKind, targetId, mode, notes, folders });
     if (!res) return;
     if (res.kind === 'note') onReorderNotes?.(res.parentId, res.orderedIds);
     else onReorderFolders?.(res.parentId, res.orderedIds);
   };
 
-  // WKWebView (Tauri/macOS) only initiates an HTML5 drag — and thus fires
-  // dragover/drop — when dragstart populates dataTransfer. Without this the
-  // drop never lands and the reorder is silently lost.
-  const startDrag = (e: React.DragEvent, kind: DragKind, id: string) => {
-    dragRef.current = { kind, id };
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', id);
+  const onDragStart = (e: DragStartEvent) => setActiveDrag(parseDragId(String(e.active.id)));
+  const onDragOver = (e: DragOverEvent) => {
+    if (!e.over) { setDropHint(null); return; }
+    const d = parseDropId(String(e.over.id));
+    setDropHint(d.kind === 'root' || d.id == null ? null : { id: d.id, mode: d.mode });
   };
-
-  // A bright horizontal snap-line at the top (before) or bottom (after) of the
-  // hovered row; 'into' is shown by a row highlight instead.
-  const dropLine = (id: string): React.CSSProperties => {
-    if (dropHint?.id !== id || dropHint.mode === 'into') return {};
-    return { boxShadow: dropHint.mode === 'before' ? 'inset 0 3px 0 0 #facc15' : 'inset 0 -3px 0 0 #facc15' };
+  const onDragEnd = (e: DragEndEvent) => {
+    if (e.over) {
+      const a = parseDragId(String(e.active.id));
+      const t = parseDropId(String(e.over.id));
+      applyDrop(a.kind, a.id, t.kind, t.id, t.mode);
+    }
+    setDropHint(null);
+    setActiveDrag(null);
   };
-
-  const noteModeAt = (e: React.DragEvent): DropMode => {
-    const r = e.currentTarget.getBoundingClientRect();
-    return (e.clientY - r.top) < r.height / 2 ? 'before' : 'after';
-  };
-  const folderModeAt = (e: React.DragEvent): DropMode => {
-    const r = e.currentTarget.getBoundingClientRect();
-    const y = e.clientY - r.top;
-    return y < r.height / 3 ? 'before' : y > (r.height * 2) / 3 ? 'after' : 'into';
-  };
+  const onDragCancel = () => { setDropHint(null); setActiveDrag(null); };
 
   // Move-to submenu: all folders indented by depth + root.
   const moveSubmenu = (note: Note): ContextMenuItem[] => {
@@ -131,42 +109,19 @@ export default function NoteList(props: Props) {
     return items;
   };
 
-  const renderRow = (note: Note, depth: number) => {
-    const marker = note.color || DEFAULT_MARKER;
-    return (
-      <button
-        key={note.id}
-        onClick={() => onSelect(note.id)}
-        onContextMenu={e => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, note }); }}
-        className={`w-full text-left py-3 border-b border-gray-900 group relative transition-colors ${selectedId === note.id ? 'bg-gray-800' : 'hover:bg-gray-900'}`}
-        draggable
-        onDragStart={e => startDrag(e, 'note', note.id)}
-        onDragEnd={() => { dragRef.current = null; setDropHint(null); }}
-        onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDropHint({ id: note.id, mode: noteModeAt(e) }); }}
-        onDrop={e => { e.preventDefault(); e.stopPropagation(); finishDrop('note', note.id, noteModeAt(e)); }}
-        style={{ paddingLeft: 16 + depth * 14, paddingRight: 16, ...dropLine(note.id) }}
-      >
-        <div className="flex items-start gap-2">
-          {note.pinned ? <PinIcon color={marker} /> : <div className="w-2 h-2 rounded-sm shrink-0 mt-1.5" style={{ background: marker }} />}
-          <div className="min-w-0 flex-1">
-            <div className="text-gray-100 text-sm font-medium truncate pr-5 leading-snug">{getPreview(note.content)}</div>
-            <div className="text-gray-500 text-xs mt-0.5 flex items-center gap-2">
-              <span>{formatDate(note.updatedAt, dateFormat)}</span>
-              {note.dueAt != null && (
-                <span className="inline-flex items-center gap-1 px-1.5 rounded" style={note.dueAt < Date.now() ? { background: '#fee2e2', color: '#b91c1c' } : { background: '#1f2937', color: '#9ca3af' }} title="Fällig">
-                  <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" /><line x1="3" y1="10" x2="21" y2="10" /></svg>
-                  {formatDate(note.dueAt, dateFormat)}
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
-        <span onClick={e => { e.stopPropagation(); onDelete(note.id); }} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity" title="Delete note">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14H6L5 6" /></svg>
-        </span>
-      </button>
-    );
-  };
+  const renderRow = (note: Note, depth: number) => (
+    <NoteRow
+      key={note.id}
+      note={note}
+      depth={depth}
+      selected={selectedId === note.id}
+      dropMode={dropHint?.id === note.id ? dropHint.mode : null}
+      dateFormat={dateFormat}
+      onSelect={onSelect}
+      onDelete={onDelete}
+      onContextMenu={(e, n) => setMenu({ x: e.clientX, y: e.clientY, note: n })}
+    />
+  );
 
   // active (non-archived) notes for the tree; archived rendered flat.
   const activeNotes = notes.filter(n => !n.archived);
@@ -180,50 +135,43 @@ export default function NoteList(props: Props) {
   const renderFolder = (folder: Folder, depth: number) => {
     const open = expanded.has(folder.id);
     const count = activeNotes.filter(n => (n.folderId ?? null) === folder.id).length;
-    const rowStyle: React.CSSProperties = { paddingLeft: 8 + depth * 14, paddingRight: 12, ...dropLine(folder.id) };
+    const baseStyle: React.CSSProperties = { paddingLeft: 8 + depth * 14, paddingRight: 12 };
     let iconTint = folder.color || undefined;
     if (folderColorStyle === 'row') {
       iconTint = undefined;
-      if (folder.color) rowStyle.background = folder.color + '22';
+      if (folder.color) baseStyle.background = folder.color + '22';
     } else if (folderColorStyle === 'bar' && folder.color) {
-      rowStyle.borderLeft = `3px solid ${folder.color}`;
+      baseStyle.borderLeft = `3px solid ${folder.color}`;
+    }
+    if (editingFolder === folder.id) {
+      return (
+        <input
+          key={folder.id}
+          autoFocus
+          defaultValue={folder.name}
+          onBlur={e => { onRenameFolder?.(folder.id, e.target.value.trim() || folder.name); setEditingFolder(null); }}
+          onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') setEditingFolder(null); }}
+          className="w-full bg-gray-800 text-gray-100 text-sm px-2 py-2 outline-none"
+          style={{ marginLeft: 8 + depth * 14 }}
+        />
+      );
     }
     return (
-      <div key={folder.id}>
-        {editingFolder === folder.id ? (
-          <input
-            autoFocus
-            defaultValue={folder.name}
-            onBlur={e => { onRenameFolder?.(folder.id, e.target.value.trim() || folder.name); setEditingFolder(null); }}
-            onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') setEditingFolder(null); }}
-            className="w-full bg-gray-800 text-gray-100 text-sm px-2 py-2 outline-none"
-            style={{ marginLeft: 8 + depth * 14 }}
-          />
-        ) : (
-          <div
-            onClick={() => toggle(folder.id)}
-            onContextMenu={e => { e.preventDefault(); setFolderMenu({ x: e.clientX, y: e.clientY, folder }); }}
-            draggable
-            onDragStart={e => { e.stopPropagation(); startDrag(e, 'folder', folder.id); }}
-            onDragEnd={() => { dragRef.current = null; setDropHint(null); }}
-            onDragOver={e => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'; setDropHint({ id: folder.id, mode: folderModeAt(e) }); }}
-            onDrop={e => { e.preventDefault(); e.stopPropagation(); finishDrop('folder', folder.id, folderModeAt(e)); }}
-            className={`flex items-center gap-1 py-2 text-gray-300 hover:bg-gray-900 cursor-pointer select-none ${dropHint?.id === folder.id && dropHint.mode === 'into' ? 'bg-gray-700 ring-1 ring-inset ring-yellow-400' : ''}`}
-            style={rowStyle}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ transform: open ? 'rotate(90deg)' : 'none' }}><polyline points="9 6 15 12 9 18" /></svg>
-            <FolderIcon icon={folder.icon} tint={iconTint} />
-            <span className="text-sm font-medium truncate flex-1">{folder.name}</span>
-            <span className="text-gray-600 text-xs">{count || ''}</span>
-          </div>
-        )}
-        {open && (
-          <>
-            {childFolders(folder.id).map(f => renderFolder(f, depth + 1))}
-            {treeNotesIn(folder.id).map(n => renderRow(n, depth + 1))}
-          </>
-        )}
-      </div>
+      <FolderRow
+        key={folder.id}
+        folder={folder}
+        depth={depth}
+        open={open}
+        count={count}
+        iconTint={iconTint}
+        baseStyle={baseStyle}
+        dropMode={dropHint?.id === folder.id ? dropHint.mode : null}
+        onToggle={toggle}
+        onContextMenu={(e, f) => setFolderMenu({ x: e.clientX, y: e.clientY, folder: f })}
+      >
+        {childFolders(folder.id).map(f => renderFolder(f, depth + 1))}
+        {treeNotesIn(folder.id).map(n => renderRow(n, depth + 1))}
+      </FolderRow>
     );
   };
 
@@ -256,25 +204,35 @@ export default function NoteList(props: Props) {
         </div>
       </div>
 
-      <div
-        className="flex-1 overflow-y-auto"
-        onContextMenu={e => { if (e.target === e.currentTarget && onCreateFolder && !showArchived) { e.preventDefault(); setRootMenu({ x: e.clientX, y: e.clientY }); } }}
-        onDragOver={e => { if (e.target === e.currentTarget) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; } }}
-        onDrop={e => { if (e.target === e.currentTarget) { e.preventDefault(); finishDrop('root', null, 'into'); } }}
-      >
-        {showArchived ? (
-          archivedNotes.length === 0
-            ? <p className="text-gray-600 text-xs text-center mt-10 px-4">Keine archivierten Notizen.</p>
-            : archivedNotes.sort(sortNotes).map(n => renderRow(n, 0))
-        ) : (
-          <>
-            {globalPinned.length > 0 && (<><div className="px-4 pt-3 pb-1 text-gray-600 text-[10px] font-semibold uppercase tracking-widest">Angepinnt</div>{globalPinned.map(n => renderRow(n, 0))}</>)}
-            {childFolders(null).map(f => renderFolder(f, 0))}
-            {treeNotesIn(null).map(n => renderRow(n, 0))}
-            {notes.length === 0 && folders.length === 0 && <p className="text-gray-600 text-xs text-center mt-10 px-4">No notes yet.<br />Click + to create one.</p>}
-          </>
-        )}
-      </div>
+      <DndContext sensors={sensors} collisionDetection={pointerWithin} onDragStart={onDragStart} onDragOver={onDragOver} onDragEnd={onDragEnd} onDragCancel={onDragCancel}>
+        <div
+          className="flex-1 overflow-y-auto"
+          onContextMenu={e => { if (e.target === e.currentTarget && onCreateFolder && !showArchived) { e.preventDefault(); setRootMenu({ x: e.clientX, y: e.clientY }); } }}
+        >
+          {showArchived ? (
+            archivedNotes.length === 0
+              ? <p className="text-gray-600 text-xs text-center mt-10 px-4">Keine archivierten Notizen.</p>
+              : archivedNotes.sort(sortNotes).map(n => renderRow(n, 0))
+          ) : (
+            <>
+              {globalPinned.length > 0 && (<><div className="px-4 pt-3 pb-1 text-gray-600 text-[10px] font-semibold uppercase tracking-widest">Angepinnt</div>{globalPinned.map(n => renderRow(n, 0))}</>)}
+              {childFolders(null).map(f => renderFolder(f, 0))}
+              {treeNotesIn(null).map(n => renderRow(n, 0))}
+              {notes.length === 0 && folders.length === 0 && <p className="text-gray-600 text-xs text-center mt-10 px-4">No notes yet.<br />Click + to create one.</p>}
+              {onReorderNotes && <RootDropZone />}
+            </>
+          )}
+        </div>
+        <DragOverlay>
+          {activeDrag ? (
+            <div className="px-3 py-2 rounded bg-gray-800 text-gray-100 text-sm shadow-lg max-w-56 truncate">
+              {activeDrag.kind === 'note'
+                ? getPreview(notes.find(n => n.id === activeDrag.id)?.content ?? '')
+                : (folders.find(f => f.id === activeDrag.id)?.name ?? '')}
+            </div>
+          ) : null}
+        </DragOverlay>
+      </DndContext>
 
       {menu && (
         <ContextMenu
