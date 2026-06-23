@@ -4,3 +4,7 @@ dist-ssr
 *.local
 .DS_Store
 src-tauri/target
+playwright-report/
+test-results/
+/blob-report/
+.playwright/
