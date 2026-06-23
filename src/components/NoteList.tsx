@@ -84,6 +84,22 @@ export default function NoteList(props: Props) {
     else onReorderFolders?.(res.parentId, res.orderedIds);
   };
 
+  // WKWebView (Tauri/macOS) only initiates an HTML5 drag — and thus fires
+  // dragover/drop — when dragstart populates dataTransfer. Without this the
+  // drop never lands and the reorder is silently lost.
+  const startDrag = (e: React.DragEvent, kind: DragKind, id: string) => {
+    dragRef.current = { kind, id };
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', id);
+  };
+
+  // A bright horizontal snap-line at the top (before) or bottom (after) of the
+  // hovered row; 'into' is shown by a row highlight instead.
+  const dropLine = (id: string): React.CSSProperties => {
+    if (dropHint?.id !== id || dropHint.mode === 'into') return {};
+    return { boxShadow: dropHint.mode === 'before' ? 'inset 0 3px 0 0 #facc15' : 'inset 0 -3px 0 0 #facc15' };
+  };
+
   const noteModeAt = (e: React.DragEvent): DropMode => {
     const r = e.currentTarget.getBoundingClientRect();
     return (e.clientY - r.top) < r.height / 2 ? 'before' : 'after';
@@ -117,11 +133,11 @@ export default function NoteList(props: Props) {
         onContextMenu={e => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, note }); }}
         className={`w-full text-left py-3 border-b border-gray-900 group relative transition-colors ${selectedId === note.id ? 'bg-gray-800' : 'hover:bg-gray-900'}`}
         draggable
-        onDragStart={e => { dragRef.current = { kind: 'note', id: note.id }; e.dataTransfer.effectAllowed = 'move'; }}
+        onDragStart={e => startDrag(e, 'note', note.id)}
         onDragEnd={() => { dragRef.current = null; setDropHint(null); }}
-        onDragOver={e => { e.preventDefault(); setDropHint({ id: note.id, mode: noteModeAt(e) }); }}
+        onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDropHint({ id: note.id, mode: noteModeAt(e) }); }}
         onDrop={e => { e.preventDefault(); e.stopPropagation(); finishDrop('note', note.id, noteModeAt(e)); }}
-        style={{ paddingLeft: 16 + depth * 14, paddingRight: 16, boxShadow: dropHint?.id === note.id ? (dropHint.mode === 'before' ? 'inset 0 2px 0 #fde047' : 'inset 0 -2px 0 #fde047') : undefined }}
+        style={{ paddingLeft: 16 + depth * 14, paddingRight: 16, ...dropLine(note.id) }}
       >
         <div className="flex items-start gap-2">
           {note.pinned ? <PinIcon color={marker} /> : <div className="w-2 h-2 rounded-sm shrink-0 mt-1.5" style={{ background: marker }} />}
@@ -173,12 +189,12 @@ export default function NoteList(props: Props) {
             onClick={() => toggle(folder.id)}
             onContextMenu={e => { e.preventDefault(); setFolderMenu({ x: e.clientX, y: e.clientY, folder }); }}
             draggable
-            onDragStart={e => { e.stopPropagation(); dragRef.current = { kind: 'folder', id: folder.id }; e.dataTransfer.effectAllowed = 'move'; }}
+            onDragStart={e => { e.stopPropagation(); startDrag(e, 'folder', folder.id); }}
             onDragEnd={() => { dragRef.current = null; setDropHint(null); }}
-            onDragOver={e => { e.preventDefault(); e.stopPropagation(); setDropHint({ id: folder.id, mode: folderModeAt(e) }); }}
+            onDragOver={e => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'; setDropHint({ id: folder.id, mode: folderModeAt(e) }); }}
             onDrop={e => { e.preventDefault(); e.stopPropagation(); finishDrop('folder', folder.id, folderModeAt(e)); }}
-            className={`flex items-center gap-1 py-2 text-gray-300 hover:bg-gray-900 cursor-pointer select-none ${dropHint?.id === folder.id && dropHint.mode === 'into' ? 'bg-gray-700' : ''}`}
-            style={{ paddingLeft: 8 + depth * 14, paddingRight: 12 }}
+            className={`flex items-center gap-1 py-2 text-gray-300 hover:bg-gray-900 cursor-pointer select-none ${dropHint?.id === folder.id && dropHint.mode === 'into' ? 'bg-gray-700 ring-1 ring-inset ring-yellow-400' : ''}`}
+            style={{ paddingLeft: 8 + depth * 14, paddingRight: 12, ...dropLine(folder.id) }}
           >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ transform: open ? 'rotate(90deg)' : 'none' }}><polyline points="9 6 15 12 9 18" /></svg>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
@@ -225,7 +241,7 @@ export default function NoteList(props: Props) {
       <div
         className="flex-1 overflow-y-auto"
         onContextMenu={e => { if (e.target === e.currentTarget && onCreateFolder && !showArchived) { e.preventDefault(); setRootMenu({ x: e.clientX, y: e.clientY }); } }}
-        onDragOver={e => { if (e.target === e.currentTarget) e.preventDefault(); }}
+        onDragOver={e => { if (e.target === e.currentTarget) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; } }}
         onDrop={e => { if (e.target === e.currentTarget) { e.preventDefault(); finishDrop('root', null, 'into'); } }}
       >
         {showArchived ? (

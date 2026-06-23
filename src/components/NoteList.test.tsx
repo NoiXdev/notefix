@@ -180,6 +180,14 @@ describe("NoteList — drag and drop", () => {
     expect(screen.getByText('Drag me').closest('[draggable="true"]')).toBeTruthy();
   });
 
+  it("dragStart populates dataTransfer so WKWebView actually starts the drag", () => {
+    render(<NoteList {...defaultProps} notes={[note('a', '<p>Drag</p>')]} />);
+    const setData = vi.fn();
+    const row = screen.getByText('Drag').closest('[draggable="true"]')!;
+    fireEvent.dragStart(row, { dataTransfer: { setData, effectAllowed: '' } });
+    expect(setData).toHaveBeenCalledWith('text/plain', 'a');
+  });
+
   it("renders notes in position order, not by updatedAt", () => {
     const notes = [
       { id: 'a', content: '<p>AAA</p>', updatedAt: 999, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position: 5 },
