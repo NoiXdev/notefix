@@ -1,8 +1,15 @@
 import { useEffect, useState } from 'react';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { searchIcons, FA_BY_NAME, EMOJIS } from '../folderIcons';
+import EmojiPicker, { Theme } from 'emoji-picker-react';
+import IconCombobox from './IconCombobox';
 import { NOTE_COLORS } from '../colors';
 import type { Folder } from '../types';
+
+type Mode = 'standard' | 'fa' | 'emoji';
+
+function modeOf(icon: string): Mode {
+  if (!icon) return 'standard';
+  return icon.startsWith('fa:') ? 'fa' : 'emoji';
+}
 
 interface Props {
   x: number;
@@ -13,8 +20,14 @@ interface Props {
   onClose: () => void;
 }
 
+const MODES: { value: Mode; label: string }[] = [
+  { value: 'standard', label: 'Standard' },
+  { value: 'fa', label: 'Font Awesome' },
+  { value: 'emoji', label: 'Emoji' },
+];
+
 export default function FolderCustomizer({ x, y, folder, onSetIcon, onSetColor, onClose }: Props) {
-  const [query, setQuery] = useState('');
+  const [mode, setMode] = useState<Mode>(modeOf(folder.icon));
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -26,41 +39,39 @@ export default function FolderCustomizer({ x, y, folder, onSetIcon, onSetColor, 
     };
   }, [onClose]);
 
-  const results = searchIcons(query);
+  const selectMode = (m: Mode) => {
+    setMode(m);
+    if (m === 'standard') onSetIcon('');
+  };
 
   return (
     <div
-      className="fixed z-50 w-64 p-3 rounded-md bg-gray-900 border border-gray-700 shadow-lg text-gray-200"
-      style={{ left: Math.min(x, window.innerWidth - 270), top: Math.min(y, window.innerHeight - 380) }}
+      className="fixed z-50 w-72 p-3 rounded-md bg-gray-900 border border-gray-700 shadow-lg text-gray-200"
+      style={{ left: Math.min(x, window.innerWidth - 300), top: Math.min(y, window.innerHeight - 460) }}
       onClick={e => e.stopPropagation()}
       onContextMenu={e => { e.preventDefault(); e.stopPropagation(); }}
     >
       <div className="text-xs font-semibold text-gray-400 mb-1">Icon</div>
-      <input
-        autoFocus
-        value={query}
-        onChange={e => setQuery(e.target.value)}
-        placeholder="Icon suchen…"
-        className="w-full bg-gray-800 text-gray-100 text-sm px-2 py-1 rounded outline-none mb-2"
-      />
-      <div className="grid grid-cols-7 gap-1 max-h-28 overflow-y-auto mb-2">
-        <button onClick={() => onSetIcon('')} title="Standard" aria-label="Standard" className="h-7 flex items-center justify-center rounded hover:bg-gray-700 text-gray-400 text-xs">∅</button>
-        {results.map(name => (
-          <button key={name} onClick={() => onSetIcon('fa:' + name)} title={name} aria-label={name} className="h-7 flex items-center justify-center rounded hover:bg-gray-700">
-            <FontAwesomeIcon icon={FA_BY_NAME[name]} />
+      <div className="flex gap-1 mb-2">
+        {MODES.map(m => (
+          <button
+            key={m.value}
+            onClick={() => selectMode(m.value)}
+            className={`flex-1 px-2 py-1 rounded text-xs ${mode === m.value ? 'bg-yellow-400 text-gray-900' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}
+          >
+            {m.label}
           </button>
         ))}
       </div>
-      <div className="grid grid-cols-7 gap-1 mb-2">
-        {EMOJIS.map(em => (
-          <button key={em} onClick={() => onSetIcon(em)} className="h-7 flex items-center justify-center rounded hover:bg-gray-700">{em}</button>
-        ))}
-      </div>
-      <input
-        onKeyDown={e => { if (e.key === 'Enter') { const v = (e.target as HTMLInputElement).value.trim(); if (v) onSetIcon(v); } }}
-        placeholder="oder Emoji… ⏎"
-        className="w-full bg-gray-800 text-gray-100 text-sm px-2 py-1 rounded outline-none mb-3"
-      />
+
+      {mode === 'standard' && <p className="text-xs text-gray-500 mb-3">Standard-Ordnersymbol.</p>}
+      {mode === 'fa' && <div className="mb-3"><IconCombobox value={folder.icon} onPick={onSetIcon} /></div>}
+      {mode === 'emoji' && (
+        <div className="mb-3">
+          <EmojiPicker theme={Theme.DARK} width="100%" height={300} onEmojiClick={d => onSetIcon(d.emoji)} />
+        </div>
+      )}
+
       <div className="text-xs font-semibold text-gray-400 mb-1">Farbe</div>
       <div className="flex items-center gap-1.5">
         <button onClick={() => onSetColor('')} aria-label="Keine Farbe" title="Keine" className="w-5 h-5 rounded-full border border-gray-600 text-gray-400 flex items-center justify-center text-[10px]">×</button>

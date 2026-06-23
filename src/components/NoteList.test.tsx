@@ -4,6 +4,7 @@ import NoteList from './NoteList';
 import type { Note, Folder } from '../types';
 
 vi.mock('../export', () => ({ exportSelected: vi.fn() }));
+vi.mock('emoji-picker-react', () => ({ default: () => null, Theme: { DARK: 'dark' } }));
 
 const note = (id: string, content: string, updatedAt = Date.now(), pinned = false, archived = false, color = '', dueAt: number | null = null, folderId: string | null = null): Note =>
   ({ id, content, updatedAt, pinned, archived, color, dueAt, folderId });
@@ -178,7 +179,7 @@ describe("NoteList — folders", () => {
     render(<NoteList {...defaultProps} folders={folders} onSetFolderIcon={vi.fn()} onSetFolderColor={vi.fn()} />);
     fireEvent.contextMenu(screen.getByText('Arbeit'));
     fireEvent.click(screen.getByText('Anpassen…'));
-    expect(screen.getByPlaceholderText('Icon suchen…')).toBeInTheDocument();
+    expect(screen.getByText('Font Awesome')).toBeInTheDocument();
   });
 
   it("renders a custom folder icon", () => {
