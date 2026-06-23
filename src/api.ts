@@ -33,6 +33,13 @@ export const api = {
       invoke("notes_reorder", { folderId, ids }),
     revisions: (noteId: string): Promise<import("./types").Revision[]> => invoke("note_revisions", { noteId }),
     revisionContent: (id: number): Promise<string | null> => invoke("note_revision_content", { id }),
+    restore: (id: string): Promise<void> => invoke("notes_restore", { id }),
+    purge: (id: string): Promise<void> => invoke("notes_purge", { id }),
+  },
+
+  trash: {
+    load: (): Promise<import("./types").Note[]> => invoke("trash_load"),
+    empty: (): Promise<void> => invoke("trash_empty"),
   },
 
   folders: {

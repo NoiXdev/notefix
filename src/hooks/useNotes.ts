@@ -6,10 +6,13 @@ const sortNotes = (a: Note, b: Note) => Number(b.pinned) - Number(a.pinned) || a
 
 export function useNotes() {
   const [notes, setNotes] = useState<Note[]>([]);
+  const [trashed, setTrashed] = useState<Note[]>([]);
   const [loading, setLoading] = useState(true);
 
   const reload = useCallback(async () => {
-    setNotes(await api.notes.load());
+    const [active, t] = await Promise.all([api.notes.load(), api.trash.load()]);
+    setNotes(active);
+    setTrashed(t);
   }, []);
 
   useEffect(() => {
@@ -20,7 +23,7 @@ export function useNotes() {
   const createNote = useCallback(async (): Promise<string> => {
     const note: Note = {
       id: crypto.randomUUID(), content: '', updatedAt: Date.now(),
-      pinned: false, archived: false, color: '', dueAt: null, folderId: null, position: -Date.now(),
+      pinned: false, archived: false, color: '', dueAt: null, folderId: null, position: -Date.now(), deletedAt: null,
     };
     await api.notes.save(note);
     setNotes(prev => [note, ...prev]);
@@ -33,7 +36,7 @@ export function useNotes() {
       prev.map(n => (n.id === id ? { ...n, content, updatedAt } : n)).sort(sortNotes),
     );
     // backend's save_note preserves pinned/archived/color on conflict.
-    await api.notes.save({ id, content, updatedAt, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position: 0 });
+    await api.notes.save({ id, content, updatedAt, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position: 0, deletedAt: null });
   }, []);
 
   const reorderNotes = useCallback(async (folderId: string | null, ids: string[]) => {
@@ -45,9 +48,10 @@ export function useNotes() {
   }, []);
 
   const deleteNote = useCallback(async (id: string) => {
-    await api.notes.delete(id);
     setNotes(prev => prev.filter(n => n.id !== id));
-  }, []);
+    await api.notes.delete(id);
+    await reload();
+  }, [reload]);
 
   const setPinned = useCallback(async (id: string, pinned: boolean) => {
     setNotes(prev => prev.map(n => (n.id === id ? { ...n, pinned } : n)).sort(sortNotes));
@@ -74,5 +78,9 @@ export function useNotes() {
     await api.notes.setFolder(id, folderId);
   }, []);
 
-  return { notes, loading, createNote, updateNote, deleteNote, setPinned, setArchived, setColor, setDue, setFolder, reorderNotes };
+  const restoreNote = useCallback(async (id: string) => { await api.notes.restore(id); await reload(); }, [reload]);
+  const purgeNote = useCallback(async (id: string) => { await api.notes.purge(id); await reload(); }, [reload]);
+  const emptyTrash = useCallback(async () => { await api.trash.empty(); await reload(); }, [reload]);
+
+  return { notes, trashed, loading, createNote, updateNote, deleteNote, setPinned, setArchived, setColor, setDue, setFolder, reorderNotes, restoreNote, purgeNote, emptyTrash };
 }

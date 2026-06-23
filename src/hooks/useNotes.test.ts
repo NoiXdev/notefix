@@ -2,7 +2,7 @@ import { renderHook, act, waitFor } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { Note } from "../types";
 
-const { mockLoad, mockSave, mockDeleteFn, mockSetPinned, mockSetArchived, mockSetColor, mockSetDue, mockSetFolder, mockReorder, setOnChanged } = vi.hoisted(() => {
+const { mockLoad, mockSave, mockDeleteFn, mockSetPinned, mockSetArchived, mockSetColor, mockSetDue, mockSetFolder, mockReorder, mockRestore, mockPurge, mockTrashLoad, mockTrashEmpty, setOnChanged } = vi.hoisted(() => {
   let cb: (() => void) | null = null;
   return {
     mockLoad: vi.fn<() => Promise<Note[]>>(),
@@ -14,13 +14,18 @@ const { mockLoad, mockSave, mockDeleteFn, mockSetPinned, mockSetArchived, mockSe
     mockSetDue: vi.fn<(id: string, dueAt: number | null) => Promise<void>>(),
     mockSetFolder: vi.fn<(id: string, folderId: string | null) => Promise<void>>(),
     mockReorder: vi.fn<(folderId: string | null, ids: string[]) => Promise<void>>(),
+    mockRestore: vi.fn<(id: string) => Promise<void>>(),
+    mockPurge: vi.fn<(id: string) => Promise<void>>(),
+    mockTrashLoad: vi.fn<() => Promise<Note[]>>(),
+    mockTrashEmpty: vi.fn<() => Promise<void>>(),
     setOnChanged: { get: () => cb, set: (f: (() => void) | null) => (cb = f) },
   };
 });
 
 vi.mock("../api", () => ({
   api: {
-    notes: { load: mockLoad, save: mockSave, delete: mockDeleteFn, setPinned: mockSetPinned, setArchived: mockSetArchived, setColor: mockSetColor, setDue: mockSetDue, setFolder: mockSetFolder, reorder: mockReorder },
+    notes: { load: mockLoad, save: mockSave, delete: mockDeleteFn, setPinned: mockSetPinned, setArchived: mockSetArchived, setColor: mockSetColor, setDue: mockSetDue, setFolder: mockSetFolder, reorder: mockReorder, restore: mockRestore, purge: mockPurge },
+    trash: { load: mockTrashLoad, empty: mockTrashEmpty },
     onNotesChanged: (cb: () => void) => {
       setOnChanged.set(cb);
       return () => {};
@@ -42,6 +47,10 @@ beforeEach(() => {
   mockSetDue.mockResolvedValue(undefined);
   mockSetFolder.mockResolvedValue(undefined);
   mockReorder.mockResolvedValue(undefined);
+  mockRestore.mockResolvedValue(undefined);
+  mockPurge.mockResolvedValue(undefined);
+  mockTrashLoad.mockResolvedValue([]);
+  mockTrashEmpty.mockResolvedValue(undefined);
 });
 
 async function rendered(initial: Note[] = []) {

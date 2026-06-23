@@ -8,6 +8,7 @@ export interface Note {
   dueAt: number | null;
   folderId: string | null;
   position: number;
+  deletedAt: number | null;
 }
 
 export interface Folder {

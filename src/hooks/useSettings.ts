@@ -17,6 +17,8 @@ export interface AppSettings {
   dashboardLayout: string[];
   compactTree: boolean;
   treeProgress: boolean;
+  trashEnabled: boolean;
+  trashRetentionDays: number;
 }
 
 const DEFAULT_LAYOUT = ['recent', 'due', 'stats', 'pinned'];
@@ -32,6 +34,8 @@ const DEFAULTS: AppSettings = {
   dashboardLayout: DEFAULT_LAYOUT,
   compactTree: false,
   treeProgress: true,
+  trashEnabled: true,
+  trashRetentionDays: 30,
 };
 
 function parseLayout(raw: string | undefined): string[] {
@@ -61,6 +65,8 @@ export function useSettings() {
         dashboardLayout: parseLayout(raw.dashboardLayout),
         compactTree: raw.compactTree === 'true',
         treeProgress: raw.treeProgress !== 'false',
+        trashEnabled: raw.trashEnabled !== 'false',
+        trashRetentionDays: Number(raw.trashRetentionDays) > 0 ? Number(raw.trashRetentionDays) : 30,
       });
       setLoaded(true);
     });
