@@ -31,6 +31,13 @@ pub fn get_bool_default(conn: &Connection, key: &str, default: bool) -> bool {
         .unwrap_or(default)
 }
 
+pub fn get_string(conn: &Connection, key: &str, default: &str) -> String {
+    load_settings(conn)
+        .ok()
+        .and_then(|all| all.into_iter().find(|(k, _)| k == key).map(|(_, v)| v))
+        .unwrap_or_else(|| default.to_string())
+}
+
 /// Read a setting as a bool ("true" => true, anything else / missing => false).
 pub fn get_bool(conn: &Connection, key: &str) -> bool {
     load_settings(conn)
@@ -81,5 +88,13 @@ mod tests {
         assert!(get_bool(&s.conn, "startMinimized"));
         set_setting(&s.conn, "startMinimized", "false").unwrap();
         assert!(!get_bool(&s.conn, "startMinimized"));
+    }
+
+    #[test]
+    fn get_string_default_and_set() {
+        let s = conn();
+        assert_eq!(get_string(&s.conn, "closeAction", "ask"), "ask");
+        set_setting(&s.conn, "closeAction", "quit").unwrap();
+        assert_eq!(get_string(&s.conn, "closeAction", "ask"), "quit");
     }
 }

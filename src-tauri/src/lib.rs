@@ -11,6 +11,7 @@ mod tray;
 
 use std::sync::Mutex;
 
+use tauri::Emitter;
 use tauri::Manager;
 
 use storage::Store;
@@ -61,11 +62,19 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // The main window hides instead of closing; note windows close normally.
+            // Main window: honor the closeAction setting (ask / minimize / quit).
             if window.label() == "main" {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
-                    let _ = window.hide();
+                    let action = {
+                        let state = window.app_handle().state::<Mutex<Store>>();
+                        let store = state.lock().unwrap();
+                        settings::get_string(&store.conn, "closeAction", "ask")
+                    };
+                    match action.as_str() {
+                        "quit" => { window.app_handle().exit(0); }
+                        "minimize" => { api.prevent_close(); let _ = window.hide(); }
+                        _ => { api.prevent_close(); let _ = window.emit("close-requested", ()); }
+                    }
                 }
             }
         })
@@ -101,6 +110,8 @@ pub fn run() {
             commands::settings_set,
             commands::note_revisions,
             commands::note_revision_content,
+            commands::quit_app,
+            commands::hide_main,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

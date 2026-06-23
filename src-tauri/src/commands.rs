@@ -372,3 +372,15 @@ pub fn folder_set_sort(app: AppHandle, webview: WebviewWindow, store: State<'_, 
     notify(&app, &webview);
     Ok(())
 }
+
+#[tauri::command]
+pub fn quit_app(app: AppHandle) {
+    app.exit(0);
+}
+
+#[tauri::command]
+pub fn hide_main(app: AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.hide();
+    }
+}
