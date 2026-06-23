@@ -70,6 +70,19 @@ pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
         set_meta(conn, "schema_version", "7")?;
     }
 
+    if version < 8 {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS note_revisions (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                note_id    TEXT NOT NULL,
+                content    TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_note_revisions_note ON note_revisions (note_id, created_at DESC);",
+        )?;
+        set_meta(conn, "schema_version", "8")?;
+    }
+
     Ok(())
 }
 
@@ -133,14 +146,14 @@ mod tests {
     #[test]
     fn migration_sets_schema_version() {
         let s = store();
-        assert_eq!(get_meta(&s.conn, "schema_version").unwrap().as_deref(), Some("7"));
+        assert_eq!(get_meta(&s.conn, "schema_version").unwrap().as_deref(), Some("8"));
     }
 
     #[test]
     fn migration_is_idempotent() {
         let s = store();
         run_migrations(&s.conn).unwrap();
-        assert_eq!(get_meta(&s.conn, "schema_version").unwrap().as_deref(), Some("7"));
+        assert_eq!(get_meta(&s.conn, "schema_version").unwrap().as_deref(), Some("8"));
     }
 
     #[test]

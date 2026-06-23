@@ -16,6 +16,14 @@ pub fn set_setting(conn: &Connection, key: &str, value: &str) -> rusqlite::Resul
     Ok(())
 }
 
+/// Read a setting as an i64; missing/unparsable => default.
+pub fn get_int(conn: &Connection, key: &str, default: i64) -> i64 {
+    load_settings(conn)
+        .ok()
+        .and_then(|all| all.into_iter().find(|(k, _)| k == key).and_then(|(_, v)| v.parse().ok()))
+        .unwrap_or(default)
+}
+
 /// Read a setting as a bool ("true" => true, anything else / missing => false).
 pub fn get_bool(conn: &Connection, key: &str) -> bool {
     load_settings(conn)

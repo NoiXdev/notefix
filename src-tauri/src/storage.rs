@@ -64,6 +64,7 @@ impl Store {
     }
 
     pub fn delete_note(&self, id: &str) -> rusqlite::Result<()> {
+        self.conn.execute("DELETE FROM note_revisions WHERE note_id = ?1", [id])?;
         self.conn.execute("DELETE FROM notes WHERE id = ?1", [id])?;
         Ok(())
     }

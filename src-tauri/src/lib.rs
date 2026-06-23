@@ -3,6 +3,7 @@ mod config;
 mod export;
 mod folders;
 mod migrate;
+mod revisions;
 mod settings;
 mod stats;
 mod storage;
