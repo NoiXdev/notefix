@@ -7,6 +7,8 @@ export type PinnedScope = 'perFolder' | 'global';
 export type FolderColorStyle = 'icon' | 'bar' | 'row';
 export type StartView = 'dashboard' | 'lastNote';
 
+export interface DashboardWidget { key: string; w: 1 | 2; }
+
 export interface AppSettings {
   startMinimized: boolean;
   dateFormat: DateFormat;
@@ -15,7 +17,7 @@ export interface AppSettings {
   revisionLimit: number;
   autosaveDelay: number;
   startView: StartView;
-  dashboardLayout: string[];
+  dashboardLayout: DashboardWidget[];
   compactTree: boolean;
   treeProgress: boolean;
   trashEnabled: boolean;
@@ -23,7 +25,7 @@ export interface AppSettings {
   closeAction: CloseAction;
 }
 
-const DEFAULT_LAYOUT = ['recent', 'due', 'stats', 'pinned'];
+const DEFAULT_LAYOUT: DashboardWidget[] = [{ key: 'recent', w: 1 }, { key: 'due', w: 1 }, { key: 'stats', w: 1 }, { key: 'pinned', w: 1 }];
 
 const DEFAULTS: AppSettings = {
   startMinimized: false,
@@ -41,11 +43,14 @@ const DEFAULTS: AppSettings = {
   closeAction: 'ask',
 };
 
-function parseLayout(raw: string | undefined): string[] {
+export function parseLayout(raw: string | undefined): DashboardWidget[] {
   if (!raw) return DEFAULT_LAYOUT;
   try {
     const v = JSON.parse(raw);
-    return Array.isArray(v) && v.every(x => typeof x === 'string') ? v : DEFAULT_LAYOUT;
+    if (!Array.isArray(v)) return DEFAULT_LAYOUT;
+    if (v.every((x: unknown) => typeof x === 'string')) return (v as string[]).map(k => ({ key: k, w: 1 as const }));
+    if (v.every((x: unknown) => !!x && typeof (x as DashboardWidget).key === 'string' && ((x as DashboardWidget).w === 1 || (x as DashboardWidget).w === 2))) return v as DashboardWidget[];
+    return DEFAULT_LAYOUT;
   } catch {
     return DEFAULT_LAYOUT;
   }

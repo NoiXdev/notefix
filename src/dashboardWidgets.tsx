@@ -1,12 +1,14 @@
 import type { ReactNode } from 'react';
-import type { Note, Stats } from './types';
+import type { Note, Stats, Folder } from './types';
 import { getPreview } from './preview';
 import { formatDate } from './dates';
 
 export interface WidgetCtx {
   notes: Note[];
+  folders: Folder[];
   stats: Stats | null;
   onSelectNote: (id: string) => void;
+  onCreateNote: () => void;
 }
 
 function NoteLine({ note, onSelectNote }: { note: Note; onSelectNote: (id: string) => void }) {
@@ -54,6 +56,25 @@ export const WIDGETS: Record<string, { label: string; render: (ctx: WidgetCtx) =
       const list = notes.filter(n => !n.archived && n.pinned);
       return <div>{list.length === 0 ? <p className="text-xs text-gray-400 px-2">Nichts angepinnt.</p> : list.map(n => <NoteLine key={n.id} note={n} onSelectNote={onSelectNote} />)}</div>;
     },
+  },
+  folders: {
+    label: 'Ordner-Übersicht',
+    render: ({ folders, notes }) => {
+      const count = (fid: string) => notes.filter(n => !n.archived && n.folderId === fid).length;
+      const list = folders.slice().sort((a, b) => a.position - b.position);
+      return <div>{list.length === 0 ? <p className="text-xs text-gray-400 px-2">Keine Ordner.</p> : list.map(f => (
+        <div key={f.id} className="flex items-center justify-between px-2 py-1 text-sm text-gray-800">
+          <span className="truncate">{f.name}</span>
+          <span className="text-xs text-gray-500">{count(f.id)}</span>
+        </div>
+      ))}</div>;
+    },
+  },
+  quicknote: {
+    label: 'Schnellnotiz',
+    render: ({ onCreateNote }) => (
+      <button onClick={onCreateNote} className="w-full py-2 rounded text-sm font-medium" style={{ background: '#fde047', color: '#1c1917' }}>+ Neue Notiz</button>
+    ),
   },
 };
 

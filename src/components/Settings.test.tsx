@@ -85,7 +85,7 @@ describe("Settings — System", () => {
 describe("Settings — date format & stats", () => {
   it("selecting a date format calls onSetSetting", () => {
     const onSetSetting = vi.fn();
-    render(<Settings onClose={vi.fn()} settings={{ startMinimized: false, dateFormat: "auto" as const, pinnedScope: "perFolder" as const, folderColorStyle: "icon" as const, revisionLimit: 50, autosaveDelay: 400, startView: "lastNote" as const, dashboardLayout: ["recent"], compactTree: false, treeProgress: true, trashEnabled: true, trashRetentionDays: 30, closeAction: "ask" as const }} onSetSetting={onSetSetting} />);
+    render(<Settings onClose={vi.fn()} settings={{ startMinimized: false, dateFormat: "auto" as const, pinnedScope: "perFolder" as const, folderColorStyle: "icon" as const, revisionLimit: 50, autosaveDelay: 400, startView: "lastNote" as const, dashboardLayout: [{ key: "recent", w: 1 as const }], compactTree: false, treeProgress: true, trashEnabled: true, trashRetentionDays: 30, closeAction: "ask" as const }} onSetSetting={onSetSetting} />);
     fireEvent.click(screen.getByText("Darstellung"));
     fireEvent.change(screen.getByDisplayValue("Auto (relativ)"), { target: { value: "iso" } });
     expect(onSetSetting).toHaveBeenCalledWith("dateFormat", "iso");
@@ -114,7 +114,7 @@ describe("Settings — Speicherort", () => {
 describe("Settings — folderColorStyle", () => {
   it("selecting a folder color style calls onSetSetting", () => {
     const onSetSetting = vi.fn();
-    render(<Settings onClose={vi.fn()} settings={{ startMinimized: false, dateFormat: "auto" as const, pinnedScope: "perFolder" as const, folderColorStyle: "icon" as const, revisionLimit: 50, autosaveDelay: 400, startView: "lastNote" as const, dashboardLayout: ["recent"], compactTree: false, treeProgress: true, trashEnabled: true, trashRetentionDays: 30, closeAction: "ask" as const }} onSetSetting={onSetSetting} />);
+    render(<Settings onClose={vi.fn()} settings={{ startMinimized: false, dateFormat: "auto" as const, pinnedScope: "perFolder" as const, folderColorStyle: "icon" as const, revisionLimit: 50, autosaveDelay: 400, startView: "lastNote" as const, dashboardLayout: [{ key: "recent", w: 1 as const }], compactTree: false, treeProgress: true, trashEnabled: true, trashRetentionDays: 30, closeAction: "ask" as const }} onSetSetting={onSetSetting} />);
     fireEvent.click(screen.getByText("Darstellung"));
     fireEvent.change(screen.getByDisplayValue("Nur Icon einfärben"), { target: { value: "row" } });
     expect(onSetSetting).toHaveBeenCalledWith("folderColorStyle", "row");
@@ -124,7 +124,7 @@ describe("Settings — folderColorStyle", () => {
 describe("Settings — pinnedScope", () => {
   it("selecting global calls onSetSetting", () => {
     const onSetSetting = vi.fn();
-    render(<Settings onClose={vi.fn()} settings={{ startMinimized: false, dateFormat: "auto" as const, pinnedScope: "perFolder" as const, folderColorStyle: "icon" as const, revisionLimit: 50, autosaveDelay: 400, startView: "lastNote" as const, dashboardLayout: ["recent"], compactTree: false, treeProgress: true, trashEnabled: true, trashRetentionDays: 30, closeAction: "ask" as const }} onSetSetting={onSetSetting} />);
+    render(<Settings onClose={vi.fn()} settings={{ startMinimized: false, dateFormat: "auto" as const, pinnedScope: "perFolder" as const, folderColorStyle: "icon" as const, revisionLimit: 50, autosaveDelay: 400, startView: "lastNote" as const, dashboardLayout: [{ key: "recent", w: 1 as const }], compactTree: false, treeProgress: true, trashEnabled: true, trashRetentionDays: 30, closeAction: "ask" as const }} onSetSetting={onSetSetting} />);
     fireEvent.click(screen.getByText("Darstellung"));
     fireEvent.change(screen.getByDisplayValue("Gepinnt zuerst je Ordner"), { target: { value: "global" } });
     expect(onSetSetting).toHaveBeenCalledWith("pinnedScope", "global");
@@ -132,7 +132,7 @@ describe("Settings — pinnedScope", () => {
 });
 
 describe("Settings — editor & history", () => {
-  const full = { startMinimized: false, dateFormat: "auto" as const, pinnedScope: "perFolder" as const, folderColorStyle: "icon" as const, revisionLimit: 50, autosaveDelay: 400, startView: "lastNote" as const, dashboardLayout: ["recent"] };
+  const full = { startMinimized: false, dateFormat: "auto" as const, pinnedScope: "perFolder" as const, folderColorStyle: "icon" as const, revisionLimit: 50, autosaveDelay: 400, startView: "lastNote" as const, dashboardLayout: [{ key: "recent", w: 1 as const }] };
   it("changing the revision limit calls onSetSetting", () => {
     const onSetSetting = vi.fn();
     render(<Settings onClose={vi.fn()} settings={full} onSetSetting={onSetSetting} />);
@@ -143,7 +143,7 @@ describe("Settings — editor & history", () => {
 });
 
 describe("Settings — tree view", () => {
-  const full = { startMinimized: false, dateFormat: "auto" as const, pinnedScope: "perFolder" as const, folderColorStyle: "icon" as const, revisionLimit: 50, autosaveDelay: 400, startView: "lastNote" as const, dashboardLayout: ["recent"], compactTree: false, treeProgress: true };
+  const full = { startMinimized: false, dateFormat: "auto" as const, pinnedScope: "perFolder" as const, folderColorStyle: "icon" as const, revisionLimit: 50, autosaveDelay: 400, startView: "lastNote" as const, dashboardLayout: [{ key: "recent", w: 1 as const }], compactTree: false, treeProgress: true };
   it("toggling compact view calls onSetSetting", () => {
     const onSetSetting = vi.fn();
     render(<Settings onClose={vi.fn()} settings={full} onSetSetting={onSetSetting} />);
@@ -154,7 +154,7 @@ describe("Settings — tree view", () => {
 });
 
 describe("Settings — trash", () => {
-  const full = { startMinimized: false, dateFormat: "auto" as const, pinnedScope: "perFolder" as const, folderColorStyle: "icon" as const, revisionLimit: 50, autosaveDelay: 400, startView: "lastNote" as const, dashboardLayout: ["recent"], compactTree: false, treeProgress: true, trashEnabled: true, trashRetentionDays: 30, closeAction: "ask" as const };
+  const full = { startMinimized: false, dateFormat: "auto" as const, pinnedScope: "perFolder" as const, folderColorStyle: "icon" as const, revisionLimit: 50, autosaveDelay: 400, startView: "lastNote" as const, dashboardLayout: [{ key: "recent", w: 1 as const }], compactTree: false, treeProgress: true, trashEnabled: true, trashRetentionDays: 30, closeAction: "ask" as const };
   it("toggling trash calls onSetSetting", () => {
     const onSetSetting = vi.fn();
     render(<Settings onClose={vi.fn()} settings={full} onSetSetting={onSetSetting} />);
@@ -165,7 +165,7 @@ describe("Settings — trash", () => {
 });
 
 describe("Settings — shortcuts page", () => {
-  const full = { startMinimized: false, dateFormat: "auto" as const, pinnedScope: "perFolder" as const, folderColorStyle: "icon" as const, revisionLimit: 50, autosaveDelay: 400, startView: "lastNote" as const, dashboardLayout: ["recent"], compactTree: false, treeProgress: true, trashEnabled: true, trashRetentionDays: 30, closeAction: "ask" as const };
+  const full = { startMinimized: false, dateFormat: "auto" as const, pinnedScope: "perFolder" as const, folderColorStyle: "icon" as const, revisionLimit: 50, autosaveDelay: 400, startView: "lastNote" as const, dashboardLayout: [{ key: "recent", w: 1 as const }], compactTree: false, treeProgress: true, trashEnabled: true, trashRetentionDays: 30, closeAction: "ask" as const };
   it("lists the new-note shortcut", () => {
     render(<Settings onClose={vi.fn()} settings={full} onSetSetting={vi.fn()} />);
     fireEvent.click(screen.getByText("Tastatur"));
@@ -174,7 +174,7 @@ describe("Settings — shortcuts page", () => {
 });
 
 describe("Settings — close behavior", () => {
-  const full = { startMinimized: false, dateFormat: "auto" as const, pinnedScope: "perFolder" as const, folderColorStyle: "icon" as const, revisionLimit: 50, autosaveDelay: 400, startView: "lastNote" as const, dashboardLayout: ["recent"], compactTree: false, treeProgress: true, trashEnabled: true, trashRetentionDays: 30, closeAction: "ask" as const };
+  const full = { startMinimized: false, dateFormat: "auto" as const, pinnedScope: "perFolder" as const, folderColorStyle: "icon" as const, revisionLimit: 50, autosaveDelay: 400, startView: "lastNote" as const, dashboardLayout: [{ key: "recent", w: 1 as const }], compactTree: false, treeProgress: true, trashEnabled: true, trashRetentionDays: 30, closeAction: "ask" as const };
   it("changing close behavior calls onSetSetting", () => {
     const onSetSetting = vi.fn();
     render(<Settings onClose={vi.fn()} settings={full} onSetSetting={onSetSetting} />);

@@ -166,10 +166,12 @@ export default function App() {
         {view === 'dashboard' ? (
           <Dashboard
             notes={notes}
+            folders={folders}
             stats={stats}
             layout={settings.dashboardLayout}
             editMode={dashEdit}
             onSelectNote={selectNote}
+            onCreateNote={handleCreate}
             onChangeLayout={l => setSetting('dashboardLayout', l)}
             onToggleEdit={() => setDashEdit(v => !v)}
           />
