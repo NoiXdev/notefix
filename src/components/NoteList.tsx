@@ -6,6 +6,9 @@ import { parseDragId, parseDropId } from '../dndkit';
 import { getPreview } from '../preview';
 import type { PinnedScope, FolderColorStyle } from '../hooks/useSettings';
 import ContextMenu, { type ContextMenuItem } from './ContextMenu';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import type { IconDefinition } from '@fortawesome/fontawesome-svg-core';
+import { faThumbtack, faBoxArchive, faRightLong, faTrash, faTrashCan, faFileExport, faPalette, faArrowDownAZ, faCheck, faFolderPlus, faPen, faTableColumns, faNoteSticky, faGear, faFolder } from '@fortawesome/free-solid-svg-icons';
 import ConfirmDialog from './ConfirmDialog';
 import FolderCustomizer from './FolderCustomizer';
 import Logo from './Logo';
@@ -51,6 +54,8 @@ interface Props {
 }
 
 const sortNotes = (a: Note, b: Note) => Number(b.pinned) - Number(a.pinned) || a.position - b.position;
+
+const fa = (icon: IconDefinition) => <FontAwesomeIcon icon={icon} />;
 
 const SORT_OPTIONS: { value: string; label: string }[] = [
   { value: 'manual', label: 'Manuell' },
@@ -125,10 +130,10 @@ export default function NoteList(props: Props) {
   // Move-to submenu: all folders indented by depth + root.
   const moveSubmenu = (note: Note): ContextMenuItem[] => {
     const byParent = (pid: string | null): Folder[] => folders.filter(f => (f.parentId ?? null) === pid).sort((a, b) => a.position - b.position);
-    const items: ContextMenuItem[] = [{ label: '— Root —', onClick: () => onMoveNote?.(note.id, null) }];
+    const items: ContextMenuItem[] = [{ label: '— Root —', icon: fa(faFolder), onClick: () => onMoveNote?.(note.id, null) }];
     const walk = (pid: string | null, depth: number) => {
       for (const f of byParent(pid)) {
-        items.push({ label: `${'  '.repeat(depth)}${f.name}`, onClick: () => onMoveNote?.(note.id, f.id) });
+        items.push({ label: `${'  '.repeat(depth)}${f.name}`, icon: fa(faFolder), onClick: () => onMoveNote?.(note.id, f.id) });
         walk(f.id, depth + 1);
       }
     };
@@ -285,11 +290,11 @@ export default function NoteList(props: Props) {
           x={menu.x} y={menu.y}
           swatches={onSetColor ? { colors: NOTE_COLORS, current: menu.note.color, onPick: c => onSetColor(menu.note.id, c) } : undefined}
           items={[
-            ...(onTogglePin ? [{ label: menu.note.pinned ? 'Lösen' : 'Anpinnen', onClick: () => onTogglePin(menu.note.id, !menu.note.pinned) }] : []),
-            ...(onArchive ? [{ label: menu.note.archived ? 'Wiederherstellen' : 'Archivieren', onClick: () => onArchive(menu.note.id, !menu.note.archived) }] : []),
-            ...(onMoveNote ? [{ label: 'Verschieben nach', submenu: moveSubmenu(menu.note) }] : []),
-            { label: 'Löschen', onClick: () => setPendingDelete(menu.note.id) },
-            { label: 'Exportieren', onClick: () => { void exportSelected([menu.note.id], `${(getPreview(menu.note.content).slice(0, 40) || 'notiz').replace(/[/\\:]/g, '-')}.json`); } },
+            ...(onTogglePin ? [{ label: menu.note.pinned ? 'Lösen' : 'Anpinnen', icon: fa(faThumbtack), onClick: () => onTogglePin(menu.note.id, !menu.note.pinned) }] : []),
+            ...(onArchive ? [{ label: menu.note.archived ? 'Wiederherstellen' : 'Archivieren', icon: fa(faBoxArchive), onClick: () => onArchive(menu.note.id, !menu.note.archived) }] : []),
+            ...(onMoveNote ? [{ label: 'Verschieben nach', icon: fa(faRightLong), submenu: moveSubmenu(menu.note) }] : []),
+            { label: 'Löschen', icon: fa(faTrash), onClick: () => setPendingDelete(menu.note.id) },
+            { label: 'Exportieren', icon: fa(faFileExport), onClick: () => { void exportSelected([menu.note.id], `${(getPreview(menu.note.content).slice(0, 40) || 'notiz').replace(/[/\\:]/g, '-')}.json`); } },
           ]}
           onClose={() => setMenu(null)}
         />
@@ -298,11 +303,11 @@ export default function NoteList(props: Props) {
         <ContextMenu
           x={folderMenu.x} y={folderMenu.y}
           items={[
-            ...((onSetFolderIcon && onSetFolderColor) ? [{ label: 'Anpassen…', onClick: () => setCustomizer({ x: folderMenu.x, y: folderMenu.y, folderId: folderMenu.folder.id }) }] : []),
-            ...(onSetFolderSort ? [{ label: 'Sortierung', submenu: SORT_OPTIONS.map(o => ({ label: (folderMenu.folder.sort === o.value ? '✓ ' : '') + o.label, onClick: () => onSetFolderSort(folderMenu.folder.id, o.value) })) }] : []),
-            { label: 'Neuer Unterordner', onClick: () => createAndEdit(folderMenu.folder.id) },
-            { label: 'Umbenennen', onClick: () => setEditingFolder(folderMenu.folder.id) },
-            { label: 'Löschen', onClick: () => onDeleteFolder?.(folderMenu.folder) },
+            ...((onSetFolderIcon && onSetFolderColor) ? [{ label: 'Anpassen…', icon: fa(faPalette), onClick: () => setCustomizer({ x: folderMenu.x, y: folderMenu.y, folderId: folderMenu.folder.id }) }] : []),
+            ...(onSetFolderSort ? [{ label: 'Sortierung', icon: fa(faArrowDownAZ), submenu: SORT_OPTIONS.map(o => ({ label: o.label, icon: fa(folderMenu.folder.sort === o.value ? faCheck : faArrowDownAZ), onClick: () => onSetFolderSort(folderMenu.folder.id, o.value) })) }] : []),
+            { label: 'Neuer Unterordner', icon: fa(faFolderPlus), onClick: () => createAndEdit(folderMenu.folder.id) },
+            { label: 'Umbenennen', icon: fa(faPen), onClick: () => setEditingFolder(folderMenu.folder.id) },
+            { label: 'Löschen', icon: fa(faTrash), onClick: () => onDeleteFolder?.(folderMenu.folder) },
           ]}
           onClose={() => setFolderMenu(null)}
         />
@@ -310,7 +315,7 @@ export default function NoteList(props: Props) {
       {rootMenu && onCreateFolder && (
         <ContextMenu
           x={rootMenu.x} y={rootMenu.y}
-          items={[{ label: 'Neuer Ordner', onClick: () => createAndEdit(null) }]}
+          items={[{ label: 'Neuer Ordner', icon: fa(faFolderPlus), onClick: () => createAndEdit(null) }]}
           onClose={() => setRootMenu(null)}
         />
       )}
@@ -318,12 +323,12 @@ export default function NoteList(props: Props) {
         <ContextMenu
           x={headerMenu.x} y={headerMenu.y}
           items={[
-            ...(onOpenDashboard ? [{ label: 'Dashboard', onClick: onOpenDashboard }] : []),
-            ...((onCreateFolder && view === 'active') ? [{ label: 'Neuer Ordner', onClick: () => createAndEdit(null) }] : []),
-            ...(view !== 'active' ? [{ label: 'Aktive Notizen', onClick: () => setView('active') }] : []),
-            ...(view !== 'archived' ? [{ label: 'Archiv anzeigen', onClick: () => setView('archived') }] : []),
-            ...(view !== 'trash' ? [{ label: 'Papierkorb', onClick: () => setView('trash') }] : []),
-            { label: 'Einstellungen', onClick: onOpenSettings },
+            ...(onOpenDashboard ? [{ label: 'Dashboard', icon: fa(faTableColumns), onClick: onOpenDashboard }] : []),
+            ...((onCreateFolder && view === 'active') ? [{ label: 'Neuer Ordner', icon: fa(faFolderPlus), onClick: () => createAndEdit(null) }] : []),
+            ...(view !== 'active' ? [{ label: 'Aktive Notizen', icon: fa(faNoteSticky), onClick: () => setView('active') }] : []),
+            ...(view !== 'archived' ? [{ label: 'Archiv anzeigen', icon: fa(faBoxArchive), onClick: () => setView('archived') }] : []),
+            ...(view !== 'trash' ? [{ label: 'Papierkorb', icon: fa(faTrashCan), onClick: () => setView('trash') }] : []),
+            { label: 'Einstellungen', icon: fa(faGear), onClick: onOpenSettings },
           ]}
           onClose={() => setHeaderMenu(null)}
         />

@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 export interface ContextMenuItem {
   label: string;
+  icon?: ReactNode;
   onClick?: () => void;
   submenu?: ContextMenuItem[];
 }
@@ -49,7 +50,7 @@ export default function ContextMenu({ x, y, items, swatches, onClose }: Props) {
 
   return (
     <div
-      className="fixed z-50 min-w-40 py-1 rounded-md bg-gray-900 border border-gray-700 shadow-lg"
+      className="fixed z-50 w-max min-w-[7rem] max-w-72 py-1 rounded-md bg-gray-900 border border-gray-700 shadow-lg"
       style={{ left: Math.min(x, window.innerWidth - 180), top: Math.min(y, window.innerHeight - 140) }}
       onClick={e => e.stopPropagation()}
       onContextMenu={e => { e.preventDefault(); e.stopPropagation(); }}
@@ -78,23 +79,26 @@ export default function ContextMenu({ x, y, items, swatches, onClose }: Props) {
           <div key={i} className="relative" onMouseEnter={() => setOpenSub(i)}>
             <button
               onClick={() => setOpenSub(openSub === i ? null : i)}
-              className="w-full text-left px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-800 flex items-center justify-between"
+              className="w-full text-left px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-800 flex items-center gap-2.5 whitespace-nowrap"
             >
-              <span>{item.label}</span><span className="text-gray-500">▸</span>
+              {item.icon && <span className="w-4 flex justify-center text-gray-400 shrink-0">{item.icon}</span>}
+              <span className="flex-1">{item.label}</span><span className="text-gray-500">▸</span>
             </button>
             {openSub === i && (
-              <div className="absolute left-full top-0 ml-0.5 min-w-40 py-1 rounded-md bg-gray-900 border border-gray-700 shadow-lg max-h-72 overflow-y-auto" style={{ right: x > window.innerWidth - 360 ? '100%' : undefined, left: x > window.innerWidth - 360 ? 'auto' : '100%' }}>
+              <div className="absolute left-full top-0 ml-0.5 w-max min-w-[7rem] py-1 rounded-md bg-gray-900 border border-gray-700 shadow-lg max-h-72 overflow-y-auto" style={{ right: x > window.innerWidth - 360 ? '100%' : undefined, left: x > window.innerWidth - 360 ? 'auto' : '100%' }}>
                 {item.submenu.map((sub, j) => (
-                  <button key={j} onClick={() => { sub.onClick?.(); onClose(); }} className="w-full text-left px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-800 whitespace-nowrap">
-                    {sub.label}
+                  <button key={j} onClick={() => { sub.onClick?.(); onClose(); }} className="w-full text-left px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-800 flex items-center gap-2.5 whitespace-nowrap">
+                    {sub.icon && <span className="w-4 flex justify-center text-gray-400 shrink-0">{sub.icon}</span>}
+                    <span>{sub.label}</span>
                   </button>
                 ))}
               </div>
             )}
           </div>
         ) : (
-          <button key={i} onClick={() => { item.onClick?.(); onClose(); }} className="w-full text-left px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-800 transition-colors">
-            {item.label}
+          <button key={i} onClick={() => { item.onClick?.(); onClose(); }} className="w-full text-left px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-800 transition-colors flex items-center gap-2.5 whitespace-nowrap">
+            {item.icon && <span className="w-4 flex justify-center text-gray-400 shrink-0">{item.icon}</span>}
+            <span>{item.label}</span>
           </button>
         )
       )}
