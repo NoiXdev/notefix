@@ -122,3 +122,14 @@ describe("Settings — pinnedScope", () => {
     expect(onSetSetting).toHaveBeenCalledWith("pinnedScope", "global");
   });
 });
+
+describe("Settings — editor & history", () => {
+  const full = { startMinimized: false, dateFormat: "auto" as const, pinnedScope: "perFolder" as const, folderColorStyle: "icon" as const, revisionLimit: 50, autosaveDelay: 400, startView: "lastNote" as const, dashboardLayout: ["recent"] };
+  it("changing the revision limit calls onSetSetting", () => {
+    const onSetSetting = vi.fn();
+    render(<Settings onClose={vi.fn()} settings={full} onSetSetting={onSetSetting} />);
+    fireEvent.click(screen.getByText("System"));
+    fireEvent.change(screen.getByDisplayValue("50"), { target: { value: "10" } });
+    expect(onSetSetting).toHaveBeenCalledWith("revisionLimit", 10);
+  });
+});

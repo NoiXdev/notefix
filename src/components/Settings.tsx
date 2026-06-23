@@ -219,6 +219,22 @@ export default function Settings({ onClose, settings, onSetSetting }: Props) {
                   </button>
                 </div>
               )}
+              <h2 className="text-sm font-semibold text-gray-800 mt-6 mb-1">Editor &amp; Verlauf</h2>
+              <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
+                <span>Auto-Save-Verzögerung (ms)</span>
+                <input type="number" min={100} step={50} value={settings.autosaveDelay ?? 400} onChange={e => onSetSetting("autosaveDelay", Number(e.target.value))} className="w-24 bg-white border rounded px-2 py-1" style={{ borderColor: "#e7d27a" }} />
+              </label>
+              <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
+                <span>Versionen pro Notiz</span>
+                <input type="number" min={1} value={settings.revisionLimit ?? 50} onChange={e => onSetSetting("revisionLimit", Number(e.target.value))} className="w-24 bg-white border rounded px-2 py-1" style={{ borderColor: "#e7d27a" }} />
+              </label>
+              <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
+                <span>Startansicht</span>
+                <select value={settings.startView ?? "lastNote"} onChange={e => onSetSetting("startView", e.target.value as import("../hooks/useSettings").StartView)} className="bg-white border rounded px-2 py-1" style={{ borderColor: "#e7d27a" }}>
+                  <option value="lastNote">Zuletzt geöffnete Notiz</option>
+                  <option value="dashboard">Dashboard</option>
+                </select>
+              </label>
             </div>
           </div>
         )}
