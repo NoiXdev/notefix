@@ -12,6 +12,8 @@ pub struct Folder {
     pub icon: String,
     #[serde(default)]
     pub color: String,
+    #[serde(default)]
+    pub sort: String,
 }
 
 pub enum DeleteMode {
@@ -31,9 +33,9 @@ fn now_ms() -> i64 {
 }
 
 pub fn load_folders(conn: &Connection) -> rusqlite::Result<Vec<Folder>> {
-    let mut stmt = conn.prepare("SELECT id, name, parent_id, position, icon, color FROM folders ORDER BY position, name")?;
+    let mut stmt = conn.prepare("SELECT id, name, parent_id, position, icon, color, sort FROM folders ORDER BY position, name")?;
     let rows = stmt.query_map([], |r| Ok(Folder {
-        id: r.get(0)?, name: r.get(1)?, parent_id: r.get(2)?, position: r.get(3)?, icon: r.get(4)?, color: r.get(5)?,
+        id: r.get(0)?, name: r.get(1)?, parent_id: r.get(2)?, position: r.get(3)?, icon: r.get(4)?, color: r.get(5)?, sort: r.get(6)?,
     }))?;
     rows.collect()
 }
@@ -63,6 +65,11 @@ pub fn set_folder_icon(conn: &Connection, id: &str, icon: &str) -> rusqlite::Res
 
 pub fn set_folder_color(conn: &Connection, id: &str, color: &str) -> rusqlite::Result<()> {
     conn.execute("UPDATE folders SET color = ?2 WHERE id = ?1", (id, color))?;
+    Ok(())
+}
+
+pub fn set_folder_sort(conn: &Connection, id: &str, sort: &str) -> rusqlite::Result<()> {
+    conn.execute("UPDATE folders SET sort = ?2 WHERE id = ?1", (id, sort))?;
     Ok(())
 }
 
@@ -214,6 +221,15 @@ mod tests {
         assert_eq!(b.position, 1);
         // cycle: move a under its descendant c
         assert!(reorder_folders(&s.conn, Some("c"), &["a".to_string()]).is_err());
+    }
+
+    #[test]
+    fn set_sort_persists_and_defaults_manual() {
+        let s = store();
+        create_folder(&s.conn, "a", "A", None).unwrap();
+        assert_eq!(load_folders(&s.conn).unwrap()[0].sort, "manual");
+        set_folder_sort(&s.conn, "a", "titleAsc").unwrap();
+        assert_eq!(load_folders(&s.conn).unwrap()[0].sort, "titleAsc");
     }
 
     #[test]

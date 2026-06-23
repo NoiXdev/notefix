@@ -83,6 +83,11 @@ pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
         set_meta(conn, "schema_version", "8")?;
     }
 
+    if version < 9 {
+        conn.execute_batch("ALTER TABLE folders ADD COLUMN sort TEXT NOT NULL DEFAULT 'manual';")?;
+        set_meta(conn, "schema_version", "9")?;
+    }
+
     Ok(())
 }
 
@@ -146,14 +151,14 @@ mod tests {
     #[test]
     fn migration_sets_schema_version() {
         let s = store();
-        assert_eq!(get_meta(&s.conn, "schema_version").unwrap().as_deref(), Some("8"));
+        assert_eq!(get_meta(&s.conn, "schema_version").unwrap().as_deref(), Some("9"));
     }
 
     #[test]
     fn migration_is_idempotent() {
         let s = store();
         run_migrations(&s.conn).unwrap();
-        assert_eq!(get_meta(&s.conn, "schema_version").unwrap().as_deref(), Some("8"));
+        assert_eq!(get_meta(&s.conn, "schema_version").unwrap().as_deref(), Some("9"));
     }
 
     #[test]
