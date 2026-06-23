@@ -34,6 +34,14 @@ vi.mock("../api", () => ({
 }));
 vi.mock("../export", () => ({ exportSelected: mockExportSelected }));
 
+vi.mock('react-select', () => ({
+  default: ({ options, value, onChange }: { options: { value: string; label: string }[]; value: { value: string } | null; onChange: (o: { value: string }) => void }) => (
+    <select aria-label="select" value={value?.value ?? ''} onChange={e => onChange(options.find(o => o.value === e.target.value)!)}>
+      {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+    </select>
+  ),
+}));
+
 import Settings from "./Settings";
 
 beforeEach(() => vi.clearAllMocks());
@@ -77,9 +85,9 @@ describe("Settings — System", () => {
 describe("Settings — date format & stats", () => {
   it("selecting a date format calls onSetSetting", () => {
     const onSetSetting = vi.fn();
-    render(<Settings onClose={vi.fn()} settings={{ startMinimized: false, dateFormat: "auto", pinnedScope: "perFolder" }} onSetSetting={onSetSetting} />);
+    render(<Settings onClose={vi.fn()} settings={{ startMinimized: false, dateFormat: "auto" as const, pinnedScope: "perFolder" as const, folderColorStyle: "icon" as const, revisionLimit: 50, autosaveDelay: 400, startView: "lastNote" as const, dashboardLayout: ["recent"], compactTree: false, treeProgress: true, trashEnabled: true, trashRetentionDays: 30 }} onSetSetting={onSetSetting} />);
     fireEvent.click(screen.getByText("Darstellung"));
-    fireEvent.click(screen.getByText("JJJJ-MM-TT"));
+    fireEvent.change(screen.getByDisplayValue("Auto (relativ)"), { target: { value: "iso" } });
     expect(onSetSetting).toHaveBeenCalledWith("dateFormat", "iso");
   });
 
@@ -106,9 +114,9 @@ describe("Settings — Speicherort", () => {
 describe("Settings — folderColorStyle", () => {
   it("selecting a folder color style calls onSetSetting", () => {
     const onSetSetting = vi.fn();
-    render(<Settings onClose={vi.fn()} settings={{ startMinimized: false, dateFormat: "auto", pinnedScope: "perFolder", folderColorStyle: "icon" }} onSetSetting={onSetSetting} />);
+    render(<Settings onClose={vi.fn()} settings={{ startMinimized: false, dateFormat: "auto" as const, pinnedScope: "perFolder" as const, folderColorStyle: "icon" as const, revisionLimit: 50, autosaveDelay: 400, startView: "lastNote" as const, dashboardLayout: ["recent"], compactTree: false, treeProgress: true, trashEnabled: true, trashRetentionDays: 30 }} onSetSetting={onSetSetting} />);
     fireEvent.click(screen.getByText("Darstellung"));
-    fireEvent.click(screen.getByText("Ganze Zeile tönen"));
+    fireEvent.change(screen.getByDisplayValue("Nur Icon einfärben"), { target: { value: "row" } });
     expect(onSetSetting).toHaveBeenCalledWith("folderColorStyle", "row");
   });
 });
@@ -116,9 +124,9 @@ describe("Settings — folderColorStyle", () => {
 describe("Settings — pinnedScope", () => {
   it("selecting global calls onSetSetting", () => {
     const onSetSetting = vi.fn();
-    render(<Settings onClose={vi.fn()} settings={{ startMinimized: false, dateFormat: "auto", pinnedScope: "perFolder" }} onSetSetting={onSetSetting} />);
+    render(<Settings onClose={vi.fn()} settings={{ startMinimized: false, dateFormat: "auto" as const, pinnedScope: "perFolder" as const, folderColorStyle: "icon" as const, revisionLimit: 50, autosaveDelay: 400, startView: "lastNote" as const, dashboardLayout: ["recent"], compactTree: false, treeProgress: true, trashEnabled: true, trashRetentionDays: 30 }} onSetSetting={onSetSetting} />);
     fireEvent.click(screen.getByText("Darstellung"));
-    fireEvent.click(screen.getByText(/Globale/));
+    fireEvent.change(screen.getByDisplayValue("Gepinnt zuerst je Ordner"), { target: { value: "global" } });
     expect(onSetSetting).toHaveBeenCalledWith("pinnedScope", "global");
   });
 });

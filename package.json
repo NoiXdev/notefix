@@ -36,6 +36,7 @@
     "marked": "^18.0.5",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "react-select": "^5.10.2",
     "tailwindcss": "^4.3.1",
     "turndown": "^7.2.4",
     "turndown-plugin-gfm": "^1.0.2"

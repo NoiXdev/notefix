@@ -5,6 +5,8 @@ import type { DateFormat } from "../dates";
 import type { AppSettings } from "../hooks/useSettings";
 import { exportSelected } from "../export";
 import Logo from "./Logo";
+import Select from "./Select";
+import Toggle from "./Toggle";
 
 type Page = "about" | "appearance" | "system" | "stats";
 
@@ -49,6 +51,11 @@ const FOLDER_COLOR_STYLES: { value: import("../hooks/useSettings").FolderColorSt
   { value: "icon", label: "Nur Icon einfärben" },
   { value: "bar", label: "Icon + Akzentbalken" },
   { value: "row", label: "Ganze Zeile tönen" },
+];
+
+const START_VIEWS: { value: import("../hooks/useSettings").StartView; label: string }[] = [
+  { value: "lastNote", label: "Zuletzt geöffnete Notiz" },
+  { value: "dashboard", label: "Dashboard" },
 ];
 
 export default function Settings({ onClose, settings, onSetSetting }: Props) {
@@ -127,55 +134,23 @@ export default function Settings({ onClose, settings, onSetSetting }: Props) {
             <h1 className="text-2xl font-bold text-gray-900 mb-1">Darstellung</h1>
             <p className="text-sm text-gray-500 mb-6">Wie angepinnte Notizen in der Liste erscheinen.</p>
             <h2 className="text-sm font-semibold text-gray-800 mb-2">Datumsformat</h2>
-            <div className="flex flex-col gap-2 max-w-sm">
-              {DATE_FORMATS.map(f => {
-                const active = settings.dateFormat === f.value;
-                return (
-                  <button
-                    key={f.value}
-                    onClick={() => onSetSetting("dateFormat", f.value)}
-                    className="text-left px-4 py-2.5 rounded text-sm transition-colors border"
-                    style={{ background: active ? "#fde047" : "transparent", borderColor: active ? "#eab308" : "#e7d27a", color: "#1c1917" }}
-                  >
-                    {f.label}
-                  </button>
-                );
-              })}
-            </div>
+            <div className="max-w-sm"><Select value={settings.dateFormat} options={DATE_FORMATS} onChange={v => onSetSetting("dateFormat", v as DateFormat)} /></div>
 
             <h2 className="text-sm font-semibold text-gray-800 mt-8 mb-2">Angepinnte Notizen</h2>
-            <div className="flex flex-col gap-2 max-w-sm">
-              {PIN_SCOPES.map(s => {
-                const active = settings.pinnedScope === s.value;
-                return (
-                  <button key={s.value} onClick={() => onSetSetting("pinnedScope", s.value)} className="text-left px-4 py-2.5 rounded text-sm transition-colors border" style={{ background: active ? "#fde047" : "transparent", borderColor: active ? "#eab308" : "#e7d27a", color: "#1c1917" }}>
-                    {s.label}
-                  </button>
-                );
-              })}
-            </div>
+            <div className="max-w-sm"><Select value={settings.pinnedScope} options={PIN_SCOPES} onChange={v => onSetSetting("pinnedScope", v as import("../hooks/useSettings").PinnedScope)} /></div>
 
             <h2 className="text-sm font-semibold text-gray-800 mt-8 mb-2">Ordnerfarbe</h2>
-            <div className="flex flex-col gap-2 max-w-sm">
-              {FOLDER_COLOR_STYLES.map(s => {
-                const active = settings.folderColorStyle === s.value;
-                return (
-                  <button key={s.value} onClick={() => onSetSetting("folderColorStyle", s.value)} className="text-left px-4 py-2.5 rounded text-sm transition-colors border" style={{ background: active ? "#fde047" : "transparent", borderColor: active ? "#eab308" : "#e7d27a", color: "#1c1917" }}>
-                    {s.label}
-                  </button>
-                );
-              })}
-            </div>
+            <div className="max-w-sm"><Select value={settings.folderColorStyle} options={FOLDER_COLOR_STYLES} onChange={v => onSetSetting("folderColorStyle", v as import("../hooks/useSettings").FolderColorStyle)} /></div>
 
             <h2 className="text-sm font-semibold text-gray-800 mt-8 mb-2">Baum-Ansicht</h2>
             <div className="flex flex-col gap-3 max-w-sm">
               <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
                 <span>Kompakte Ansicht (nur Titel)</span>
-                <input type="checkbox" checked={settings.compactTree ?? false} onChange={() => onSetSetting("compactTree", !settings.compactTree)} />
+                <Toggle checked={settings.compactTree ?? false} onChange={() => onSetSetting("compactTree", !settings.compactTree)} label="Kompakte Ansicht (nur Titel)" />
               </label>
               <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
                 <span>Fortschritt im Baum zeigen</span>
-                <input type="checkbox" checked={settings.treeProgress ?? true} onChange={() => onSetSetting("treeProgress", !settings.treeProgress)} />
+                <Toggle checked={settings.treeProgress ?? true} onChange={() => onSetSetting("treeProgress", !settings.treeProgress)} label="Fortschritt im Baum zeigen" />
               </label>
             </div>
           </div>
@@ -188,15 +163,11 @@ export default function Settings({ onClose, settings, onSetSetting }: Props) {
             <div className="flex flex-col gap-3 max-w-md">
               <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
                 <span>Bei Anmeldung starten</span>
-                <input type="checkbox" checked={bootEnabled} onChange={toggleBoot} />
+                <Toggle checked={bootEnabled} onChange={toggleBoot} label="Bei Anmeldung starten" />
               </label>
               <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
                 <span>Minimiert starten (nur Menüleiste)</span>
-                <input
-                  type="checkbox"
-                  checked={settings.startMinimized}
-                  onChange={() => onSetSetting("startMinimized", !settings.startMinimized)}
-                />
+                <Toggle checked={settings.startMinimized} onChange={() => onSetSetting("startMinimized", !settings.startMinimized)} label="Minimiert starten (nur Menüleiste)" />
               </label>
               <button
                 onClick={() => exportSelected([], "notefix-export.json")}
@@ -242,15 +213,12 @@ export default function Settings({ onClose, settings, onSetSetting }: Props) {
               </label>
               <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
                 <span>Startansicht</span>
-                <select value={settings.startView ?? "lastNote"} onChange={e => onSetSetting("startView", e.target.value as import("../hooks/useSettings").StartView)} className="bg-white border rounded px-2 py-1" style={{ borderColor: "#e7d27a" }}>
-                  <option value="lastNote">Zuletzt geöffnete Notiz</option>
-                  <option value="dashboard">Dashboard</option>
-                </select>
+                <div className="w-56"><Select value={settings.startView ?? "lastNote"} options={START_VIEWS} onChange={v => onSetSetting("startView", v as import("../hooks/useSettings").StartView)} /></div>
               </label>
               <h2 className="text-sm font-semibold text-gray-800 mt-6 mb-1">Papierkorb</h2>
               <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
                 <span>Papierkorb verwenden</span>
-                <input type="checkbox" checked={settings.trashEnabled ?? true} onChange={() => onSetSetting("trashEnabled", !settings.trashEnabled)} />
+                <Toggle checked={settings.trashEnabled ?? true} onChange={() => onSetSetting("trashEnabled", !settings.trashEnabled)} label="Papierkorb verwenden" />
               </label>
               <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
                 <span>Automatisch leeren nach (Tagen)</span>
