@@ -331,3 +331,10 @@ pub fn note_revision_content(store: State<'_, Mutex<Store>>, id: i64) -> Result<
     let store = store.lock().map_err(|e| e.to_string())?;
     crate::revisions::revision_content(&store.conn, id).map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub fn folder_set_sort(app: AppHandle, webview: WebviewWindow, store: State<'_, Mutex<Store>>, id: String, sort: String) -> Result<(), String> {
+    { let store = store.lock().map_err(|e| e.to_string())?; crate::folders::set_folder_sort(&store.conn, &id, &sort).map_err(|e| e.to_string())?; }
+    notify(&app, &webview);
+    Ok(())
+}

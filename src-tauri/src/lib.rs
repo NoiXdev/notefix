@@ -84,6 +84,7 @@ pub fn run() {
             commands::folders_reorder,
             commands::folder_set_icon,
             commands::folder_set_color,
+            commands::folder_set_sort,
             commands::get_db_path,
             commands::set_db_location,
             commands::open_note_window,
