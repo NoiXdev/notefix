@@ -10,6 +10,7 @@ import { countTasks } from '../tasks';
 import { ResizableImage } from './ResizableImage';
 import type { Note } from '../types';
 import { api } from '../api';
+import { toDateInputValue, fromDateInputValue } from '../dates';
 
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -52,6 +53,7 @@ interface Props {
   note: Note;
   onChange: (id: string, content: string) => void;
   isWindow?: boolean;
+  onSetDue?: (id: string, dueAt: number | null) => void;
 }
 
 interface ToolbarBtnProps {
@@ -77,7 +79,7 @@ function ToolbarBtn({ onClick, active, title, children }: ToolbarBtnProps) {
   );
 }
 
-export default function NoteEditor({ note, onChange, isWindow = false }: Props) {
+export default function NoteEditor({ note, onChange, isWindow = false, onSetDue }: Props) {
   const [pinned, setPinned] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const pendingSave = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -203,6 +205,23 @@ export default function NoteEditor({ note, onChange, isWindow = false }: Props) 
               <line x1="2" y1="2" x2="8" y2="8" /><line x1="8" y1="2" x2="2" y2="8" />
             </svg>
           </button>
+        </div>
+      )}
+
+      {onSetDue && (
+        <div className="shrink-0 px-7 pt-3 flex items-center gap-2 text-xs" style={{ color: '#92400e' }}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" /><line x1="3" y1="10" x2="21" y2="10" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="16" y1="2" x2="16" y2="6" /></svg>
+          <input
+            type="date"
+            aria-label="Fälligkeitsdatum"
+            value={toDateInputValue(note.dueAt)}
+            onChange={e => onSetDue(note.id, fromDateInputValue(e.target.value))}
+            className="bg-transparent outline-none"
+            style={{ color: '#92400e' }}
+          />
+          {note.dueAt != null && (
+            <button onMouseDown={e => e.preventDefault()} onClick={() => onSetDue(note.id, null)} title="Fälligkeit löschen" className="px-1">×</button>
+          )}
         </div>
       )}
 

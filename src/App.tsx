@@ -9,7 +9,7 @@ import Settings from './components/Settings';
 const windowNoteId = new URLSearchParams(window.location.search).get('windowNoteId');
 
 export default function App() {
-  const { notes, loading, createNote, updateNote, deleteNote, setPinned, setArchived, setColor } = useNotes();
+  const { notes, loading, createNote, updateNote, deleteNote, setPinned, setArchived, setColor, setDue } = useNotes();
   const { settings, setSetting } = useSettings();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -43,7 +43,7 @@ export default function App() {
     }
     const note = notes.find(n => n.id === windowNoteId);
     return note
-      ? <div className="h-screen"><NoteEditor note={note} onChange={updateNote} isWindow /></div>
+      ? <div className="h-screen"><NoteEditor note={note} onChange={updateNote} isWindow onSetDue={setDue} /></div>
       : <div className="flex h-screen items-center justify-center text-gray-400 text-sm">Note not found.</div>;
   }
 
@@ -83,7 +83,7 @@ export default function App() {
       />
       <main className="flex-1 overflow-hidden">
         {selectedNote ? (
-          <NoteEditor note={selectedNote} onChange={updateNote} />
+          <NoteEditor note={selectedNote} onChange={updateNote} onSetDue={setDue} />
         ) : (
           <div className="flex h-full items-center justify-center" style={{ background: '#fef9c3' }}>
             <div className="text-center" style={{ color: '#b59f3b' }}>

@@ -54,7 +54,7 @@ vi.mock("../api", () => ({
 
 const { default: NoteEditor } = await import("./NoteEditor");
 
-const mockNote: Note = { id: "1", content: "<p>Hello</p>", updatedAt: 1000 };
+const mockNote: Note = { id: "1", content: "<p>Hello</p>", updatedAt: 1000, pinned: false, archived: false, color: "", dueAt: null };
 const onChange = vi.fn();
 
 beforeEach(() => {
@@ -116,5 +116,15 @@ describe("NoteEditor — task list", () => {
   it("shows the task-list toolbar button", () => {
     render(<NoteEditor note={mockNote} onChange={onChange} />);
     expect(screen.getByTitle("Aufgabenliste")).toBeInTheDocument();
+  });
+});
+
+describe("NoteEditor — due date", () => {
+  it("renders the due-date control and reports changes", () => {
+    const onSetDue = vi.fn();
+    render(<NoteEditor note={mockNote} onChange={onChange} onSetDue={onSetDue} />);
+    const input = screen.getByLabelText("Fälligkeitsdatum");
+    fireEvent.change(input, { target: { value: "2026-06-23" } });
+    expect(onSetDue).toHaveBeenCalledWith(mockNote.id, new Date(2026, 5, 23).getTime());
   });
 });
