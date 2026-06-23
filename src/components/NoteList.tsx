@@ -36,7 +36,7 @@ export function getPreview(html: string): string {
   return text.slice(0, 60) || 'New note';
 }
 
-const sortNotes = (a: Note, b: Note) => Number(b.pinned) - Number(a.pinned) || b.updatedAt - a.updatedAt;
+const sortNotes = (a: Note, b: Note) => Number(b.pinned) - Number(a.pinned) || a.position - b.position;
 
 function PinIcon({ color }: { color: string }) {
   return (

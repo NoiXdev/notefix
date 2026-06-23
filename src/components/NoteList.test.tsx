@@ -179,4 +179,14 @@ describe("NoteList — drag and drop", () => {
     render(<NoteList {...defaultProps} notes={[note('a', '<p>Drag me</p>')]} />);
     expect(screen.getByText('Drag me').closest('[draggable="true"]')).toBeTruthy();
   });
+
+  it("renders notes in position order, not by updatedAt", () => {
+    const notes = [
+      { id: 'a', content: '<p>AAA</p>', updatedAt: 999, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position: 5 },
+      { id: 'b', content: '<p>BBB</p>', updatedAt: 1, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position: 1 },
+    ];
+    render(<NoteList {...defaultProps} notes={notes} />);
+    const texts = screen.getAllByText(/AAA|BBB/).map(e => e.textContent);
+    expect(texts).toEqual(['BBB', 'AAA']); // position 1 before position 5, despite AAA being newer
+  });
 });
