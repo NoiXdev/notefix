@@ -11,6 +11,7 @@ import { ResizableImage } from './ResizableImage';
 import type { Note } from '../types';
 import { api } from '../api';
 import { toDateInputValue, fromDateInputValue } from '../dates';
+import HistoryModal from './HistoryModal';
 
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -54,6 +55,7 @@ interface Props {
   onChange: (id: string, content: string) => void;
   isWindow?: boolean;
   onSetDue?: (id: string, dueAt: number | null) => void;
+  autosaveDelay?: number;
 }
 
 interface ToolbarBtnProps {
@@ -79,12 +81,15 @@ function ToolbarBtn({ onClick, active, title, children }: ToolbarBtnProps) {
   );
 }
 
-export default function NoteEditor({ note, onChange, isWindow = false, onSetDue }: Props) {
+export default function NoteEditor({ note, onChange, isWindow = false, onSetDue, autosaveDelay = 400 }: Props) {
   const [pinned, setPinned] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const pendingSave = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipNextUpdate = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const delayRef = useRef(autosaveDelay);
+  delayRef.current = autosaveDelay;
 
   const editor = useEditor({
     extensions: [
@@ -108,7 +113,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue 
       pendingSave.current = setTimeout(() => {
         pendingSave.current = null;
         onChange(note.id, html);
-      }, 400);
+      }, delayRef.current);
     },
     editorProps: {
       attributes: {
@@ -159,6 +164,13 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue 
   }, [note.content, editor]);
 
   if (!editor) return null;
+
+  const restore = (content: string) => {
+    skipNextUpdate.current = true;
+    editor.commands.setContent(content);
+    onChange(note.id, content);
+    setHistoryOpen(false);
+  };
 
   const openInWindow = () => api.openNoteWindow(note.id);
 
@@ -305,6 +317,13 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue 
           }}
         />
 
+        <div className="w-px h-5 bg-yellow-400 mx-1" />
+        <ToolbarBtn onClick={() => setHistoryOpen(true)} title="Verlauf">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 3v5h5" /><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8" /><path d="M12 7v5l3 2" />
+          </svg>
+        </ToolbarBtn>
+
         {!isWindow && (
           <>
             <div className="w-px h-5 bg-yellow-400 mx-1" />
@@ -317,6 +336,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue 
           </>
         )}
       </div>
+      {historyOpen && <HistoryModal noteId={note.id} onRestore={restore} onClose={() => setHistoryOpen(false)} />}
     </div>
   );
 }
