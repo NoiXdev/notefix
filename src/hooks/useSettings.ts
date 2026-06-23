@@ -1,14 +1,16 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '../api';
+import type { DateFormat } from '../dates';
 
 export type PinnedDisplayMode = 'flat' | 'sections';
 
 export interface AppSettings {
   pinnedDisplayMode: PinnedDisplayMode;
   startMinimized: boolean;
+  dateFormat: DateFormat;
 }
 
-const DEFAULTS: AppSettings = { pinnedDisplayMode: 'flat', startMinimized: false };
+const DEFAULTS: AppSettings = { pinnedDisplayMode: 'flat', startMinimized: false, dateFormat: 'auto' };
 
 export function useSettings() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULTS);
@@ -18,6 +20,7 @@ export function useSettings() {
       setSettings({
         pinnedDisplayMode: raw.pinnedDisplayMode === 'sections' ? 'sections' : 'flat',
         startMinimized: raw.startMinimized === 'true',
+        dateFormat: (['de', 'iso', 'us'].includes(raw.dateFormat) ? raw.dateFormat : 'auto') as DateFormat,
       });
     });
   }, []);

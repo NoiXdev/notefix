@@ -23,6 +23,8 @@ export const api = {
       invoke("notes_set_archived", { id, archived }),
     setColor: (id: string, color: string): Promise<void> =>
       invoke("notes_set_color", { id, color }),
+    setDue: (id: string, dueAt: number | null): Promise<void> =>
+      invoke("notes_set_due", { id, dueAt }),
   },
 
   settings: {
@@ -34,6 +36,8 @@ export const api = {
 
   exportNotes: (path: string, ids: string[]): Promise<void> =>
     invoke("export_notes", { path, ids }),
+
+  stats: (): Promise<import("./types").Stats> => invoke("note_stats"),
 
   autostart: {
     isEnabled: (): Promise<boolean> => autostartIsEnabled(),

@@ -5,4 +5,12 @@ export interface Note {
   pinned: boolean;
   archived: boolean;
   color: string;
+  dueAt: number | null;
+}
+
+export interface Stats {
+  notes: number;
+  archived: number;
+  characters: number;
+  words: number;
 }

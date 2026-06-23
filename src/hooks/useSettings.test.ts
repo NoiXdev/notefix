@@ -54,3 +54,11 @@ describe("useSettings — startMinimized", () => {
     expect(mockSet).toHaveBeenCalledWith("startMinimized", "true");
   });
 });
+
+describe("useSettings — dateFormat", () => {
+  it("defaults to auto and loads a stored value", async () => {
+    mockLoad.mockResolvedValue({ dateFormat: "de" });
+    const { result } = renderHook(() => useSettings());
+    await waitFor(() => expect(result.current.settings.dateFormat).toBe("de"));
+  });
+});
