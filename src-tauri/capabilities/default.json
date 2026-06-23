@@ -15,6 +15,7 @@
     "core:app:allow-version",
     "opener:default",
     "autostart:default",
-    "dialog:default"
+    "dialog:default",
+    "process:default"
   ]
 }

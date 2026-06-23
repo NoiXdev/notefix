@@ -238,3 +238,68 @@ pub fn folders_reorder(app: AppHandle, webview: WebviewWindow, store: State<'_, 
     notify(&app, &webview);
     Ok(())
 }
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DbLocationResult {
+    pub mode: String,
+    pub path: String,
+}
+
+fn with_ext(path: &std::path::Path, ext: &str) -> std::path::PathBuf {
+    if ext.is_empty() {
+        path.to_path_buf()
+    } else {
+        std::path::PathBuf::from(format!("{}{}", path.to_string_lossy(), ext))
+    }
+}
+
+fn move_file(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    match std::fs::rename(from, to) {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            std::fs::copy(from, to)?;
+            std::fs::remove_file(from)
+        }
+    }
+}
+
+#[tauri::command]
+pub fn get_db_path(app: AppHandle) -> String {
+    crate::config::read_db_path(&app).to_string_lossy().into_owned()
+}
+
+#[tauri::command]
+pub fn set_db_location(app: AppHandle, store: State<'_, Mutex<Store>>, folder: String) -> Result<DbLocationResult, String> {
+    let target = std::path::PathBuf::from(&folder).join("notefix.db");
+    let current = crate::config::read_db_path(&app);
+
+    let mode = if target.exists() {
+        "switched"
+    } else {
+        std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
+        // Release the DB file so it can be moved.
+        {
+            let mut s = store.lock().map_err(|e| e.to_string())?;
+            s.conn = rusqlite::Connection::open_in_memory().map_err(|e| e.to_string())?;
+        }
+        for ext in ["", "-wal", "-shm"] {
+            let from = with_ext(&current, ext);
+            if from.exists() {
+                move_file(&from, &with_ext(&target, ext)).map_err(|e| e.to_string())?;
+            }
+        }
+        "moved"
+    };
+
+    crate::config::write_db_path(&app, &target).map_err(|e| e.to_string())?;
+
+    // Reopen at the target so the running app stays consistent until relaunch.
+    {
+        let mut s = store.lock().map_err(|e| e.to_string())?;
+        s.conn = rusqlite::Connection::open(&target).map_err(|e| e.to_string())?;
+        crate::migrate::run_migrations(&s.conn).map_err(|e| e.to_string())?;
+    }
+
+    Ok(DbLocationResult { mode: mode.to_string(), path: target.to_string_lossy().into_owned() })
+}

@@ -81,6 +81,8 @@ pub fn run() {
             commands::notes_set_folder,
             commands::notes_reorder,
             commands::folders_reorder,
+            commands::get_db_path,
+            commands::set_db_location,
             commands::open_note_window,
             commands::settings_load,
             commands::settings_set,
