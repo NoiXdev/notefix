@@ -17,18 +17,21 @@ pub struct Note {
     pub color: String,
     #[serde(default)]
     pub due_at: Option<i64>,
+    #[serde(default)]
+    pub folder_id: Option<String>,
 }
 
 pub struct Store {
     pub conn: Connection,
 }
 
-const COLS: &str = "id, content, updated_at, pinned, archived, color, due_at";
+const COLS: &str = "id, content, updated_at, pinned, archived, color, due_at, folder_id";
 
 fn row_to_note(r: &rusqlite::Row) -> rusqlite::Result<Note> {
     Ok(Note {
         id: r.get(0)?, content: r.get(1)?, updated_at: r.get(2)?,
         pinned: r.get(3)?, archived: r.get(4)?, color: r.get(5)?, due_at: r.get(6)?,
+        folder_id: r.get(7)?,
     })
 }
 
@@ -51,9 +54,9 @@ impl Store {
 
     pub fn save_note(&self, note: &Note) -> rusqlite::Result<()> {
         self.conn.execute(
-            "INSERT INTO notes (id, content, updated_at, pinned, archived, color, due_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            "INSERT INTO notes (id, content, updated_at, pinned, archived, color, due_at, folder_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
              ON CONFLICT(id) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at",
-            (&note.id, &note.content, note.updated_at, note.pinned, note.archived, &note.color, note.due_at),
+            (&note.id, &note.content, note.updated_at, note.pinned, note.archived, &note.color, note.due_at, &note.folder_id),
         )?;
         Ok(())
     }
@@ -84,6 +87,12 @@ impl Store {
         Ok(())
     }
 
+    /// Move a note to a folder (None = root). Does NOT touch `updated_at`.
+    pub fn set_folder(&self, id: &str, folder_id: Option<&str>) -> rusqlite::Result<()> {
+        self.conn.execute("UPDATE notes SET folder_id = ?2 WHERE id = ?1", (id, folder_id))?;
+        Ok(())
+    }
+
     /// The `limit` most-recently-updated NON-archived notes (newest first).
     pub fn recent_notes(&self, limit: i64) -> rusqlite::Result<Vec<Note>> {
         let sql = format!("SELECT {COLS} FROM notes WHERE archived = 0 ORDER BY updated_at DESC LIMIT ?1");
@@ -105,7 +114,7 @@ mod tests {
     }
 
     fn note(id: &str, content: &str, updated_at: i64) -> Note {
-        Note { id: id.into(), content: content.into(), updated_at, pinned: false, archived: false, color: String::new(), due_at: None }
+        Note { id: id.into(), content: content.into(), updated_at, pinned: false, archived: false, color: String::new(), due_at: None, folder_id: None }
     }
 
     #[test]
@@ -158,6 +167,18 @@ mod tests {
         let n = &s.load_notes().unwrap()[0];
         assert!(n.pinned && n.archived);
         assert_eq!(n.color, "#ef4444");
+    }
+
+    #[test]
+    fn set_folder_moves_note_without_touching_updated_at() {
+        let s = store();
+        s.save_note(&note("a", "<p>x</p>", 1000)).unwrap();
+        s.set_folder("a", Some("f1")).unwrap();
+        let n = &s.load_notes().unwrap()[0];
+        assert_eq!(n.folder_id.as_deref(), Some("f1"));
+        assert_eq!(n.updated_at, 1000);
+        s.set_folder("a", None).unwrap();
+        assert_eq!(s.load_notes().unwrap()[0].folder_id, None);
     }
 
     #[test]

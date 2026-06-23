@@ -40,6 +40,20 @@ pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
         set_meta(conn, "schema_version", "4")?;
     }
 
+    if version < 5 {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS folders (
+                id         TEXT PRIMARY KEY,
+                name       TEXT NOT NULL,
+                parent_id  TEXT,
+                position   INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL
+            );
+            ALTER TABLE notes ADD COLUMN folder_id TEXT;",
+        )?;
+        set_meta(conn, "schema_version", "5")?;
+    }
+
     Ok(())
 }
 
@@ -103,14 +117,14 @@ mod tests {
     #[test]
     fn migration_sets_schema_version() {
         let s = store();
-        assert_eq!(get_meta(&s.conn, "schema_version").unwrap().as_deref(), Some("4"));
+        assert_eq!(get_meta(&s.conn, "schema_version").unwrap().as_deref(), Some("5"));
     }
 
     #[test]
     fn migration_is_idempotent() {
         let s = store();
         run_migrations(&s.conn).unwrap();
-        assert_eq!(get_meta(&s.conn, "schema_version").unwrap().as_deref(), Some("4"));
+        assert_eq!(get_meta(&s.conn, "schema_version").unwrap().as_deref(), Some("5"));
     }
 
     #[test]
