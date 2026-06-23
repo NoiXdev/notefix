@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { api } from './api';
 import { useNotes } from './hooks/useNotes';
 import { useFolders } from './hooks/useFolders';
@@ -8,17 +8,23 @@ import NoteEditor from './components/NoteEditor';
 import Logo from './components/Logo';
 import Settings from './components/Settings';
 import DeleteFolderModal from './components/DeleteFolderModal';
-import type { Folder } from './types';
+import Dashboard from './components/Dashboard';
+import type { Folder, Stats } from './types';
 
 const windowNoteId = new URLSearchParams(window.location.search).get('windowNoteId');
 
 export default function App() {
   const { notes, loading, createNote, updateNote, deleteNote, setPinned, setArchived, setColor, setDue, setFolder, reorderNotes } = useNotes();
   const { folders, createFolder, renameFolder, deleteFolder, reorderFolders, setFolderIcon, setFolderColor } = useFolders();
-  const { settings, setSetting } = useSettings();
+  const { settings, setSetting, loaded } = useSettings();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [folderToDelete, setFolderToDelete] = useState<Folder | null>(null);
+  const [view, setView] = useState<'editor' | 'dashboard'>('editor');
+  const [dashEdit, setDashEdit] = useState(false);
+  const [stats, setStats] = useState<Stats | null>(null);
+  const initView = useRef(false);
+  const selectNote = (id: string) => { setSelectedId(id); setView('editor'); };
 
   // Auto-select the first note on load
   useEffect(() => {
@@ -28,15 +34,21 @@ export default function App() {
   }, [notes, selectedId]);
 
   useEffect(() => {
+    if (loaded && !initView.current) {
+      initView.current = true;
+      if (settings.startView === 'dashboard') setView('dashboard');
+    }
+  }, [loaded, settings.startView]);
+
+  useEffect(() => { api.stats().then(setStats); }, [notes]);
+
+  useEffect(() => {
     return api.onTrayEvent({
       newNote: async () => {
         const id = await createNote();
-        setSelectedId(id);
+        selectNote(id);
       },
-      openNote: (id: string) => {
-        setShowSettings(false);
-        setSelectedId(id);
-      },
+      openNote: (id: string) => { setShowSettings(false); selectNote(id); },
       openSettings: () => setShowSettings(true),
     });
   }, [createNote]);
@@ -58,6 +70,7 @@ export default function App() {
   const handleCreate = async () => {
     const id = await createNote();
     setSelectedId(id);
+    setView('editor');
   };
 
   const handleDelete = (id: string) => {
@@ -96,10 +109,11 @@ export default function App() {
         notes={notes}
         folders={folders}
         selectedId={selectedId}
-        onSelect={setSelectedId}
+        onSelect={selectNote}
         onCreate={handleCreate}
         onDelete={handleDelete}
         onOpenSettings={() => setShowSettings(true)}
+        onOpenDashboard={() => setView('dashboard')}
         onTogglePin={setPinned}
         onArchive={setArchived}
         onSetColor={setColor}
@@ -116,7 +130,17 @@ export default function App() {
         folderColorStyle={settings.folderColorStyle}
       />
       <main className="flex-1 overflow-hidden">
-        {selectedNote ? (
+        {view === 'dashboard' ? (
+          <Dashboard
+            notes={notes}
+            stats={stats}
+            layout={settings.dashboardLayout}
+            editMode={dashEdit}
+            onSelectNote={selectNote}
+            onChangeLayout={l => setSetting('dashboardLayout', l)}
+            onToggleEdit={() => setDashEdit(v => !v)}
+          />
+        ) : selectedNote ? (
           <NoteEditor note={selectedNote} onChange={updateNote} onSetDue={setDue} autosaveDelay={settings.autosaveDelay} />
         ) : (
           <div className="flex h-full items-center justify-center" style={{ background: '#fef9c3' }}>

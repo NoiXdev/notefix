@@ -23,6 +23,7 @@ interface Props {
   onCreate: () => void;
   onDelete: (id: string) => void;
   onOpenSettings: () => void;
+  onOpenDashboard?: () => void;
   onTogglePin?: (id: string, pinned: boolean) => void;
   onArchive?: (id: string, archived: boolean) => void;
   onSetColor?: (id: string, color: string) => void;
@@ -43,7 +44,7 @@ const sortNotes = (a: Note, b: Note) => Number(b.pinned) - Number(a.pinned) || a
 
 export default function NoteList(props: Props) {
   const {
-    notes, folders, selectedId, onSelect, onCreate, onDelete, onOpenSettings,
+    notes, folders, selectedId, onSelect, onCreate, onDelete, onOpenSettings, onOpenDashboard,
     onTogglePin, onArchive, onSetColor, onMoveNote, onCreateFolder, onRenameFolder, onDeleteFolder,
     onReorderNotes, onReorderFolders, onSetFolderIcon, onSetFolderColor,
     dateFormat = 'auto', pinnedScope = 'perFolder', folderColorStyle = 'icon',
@@ -184,6 +185,11 @@ export default function NoteList(props: Props) {
           <span className="text-gray-200 text-xs font-semibold uppercase tracking-widest">{showArchived ? 'Archiv' : 'Notefix'}</span>
         </div>
         <div className="flex items-center gap-1">
+          {onOpenDashboard && (
+            <button onClick={onOpenDashboard} className="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 rounded" title="Dashboard">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /></svg>
+            </button>
+          )}
           {!showArchived && onCreateFolder && (
             <button onClick={() => createAndEdit(null)} className="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 rounded" title="Neuer Ordner">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><line x1="12" y1="11" x2="12" y2="17" /><line x1="9" y1="14" x2="15" y2="14" /></svg>
