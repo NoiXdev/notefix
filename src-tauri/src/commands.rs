@@ -178,3 +178,49 @@ pub fn note_stats(store: State<'_, Mutex<Store>>) -> Result<crate::stats::Stats,
     };
     Ok(crate::stats::compute(&notes))
 }
+
+#[tauri::command]
+pub fn folders_load(store: State<'_, Mutex<Store>>) -> Result<Vec<crate::folders::Folder>, String> {
+    let store = store.lock().map_err(|e| e.to_string())?;
+    crate::folders::load_folders(&store.conn).map_err(|e| e.to_string())
+}
+
+fn notify(app: &AppHandle, webview: &WebviewWindow) {
+    broadcast_changed(app, webview.label());
+    crate::tray::rebuild_menu(app);
+}
+
+#[tauri::command]
+pub fn folder_create(app: AppHandle, webview: WebviewWindow, store: State<'_, Mutex<Store>>, id: String, name: String, parent_id: Option<String>) -> Result<(), String> {
+    { let store = store.lock().map_err(|e| e.to_string())?; crate::folders::create_folder(&store.conn, &id, &name, parent_id.as_deref()).map_err(|e| e.to_string())?; }
+    notify(&app, &webview);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn folder_rename(app: AppHandle, webview: WebviewWindow, store: State<'_, Mutex<Store>>, id: String, name: String) -> Result<(), String> {
+    { let store = store.lock().map_err(|e| e.to_string())?; crate::folders::rename_folder(&store.conn, &id, &name).map_err(|e| e.to_string())?; }
+    notify(&app, &webview);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn folder_move(app: AppHandle, webview: WebviewWindow, store: State<'_, Mutex<Store>>, id: String, parent_id: Option<String>) -> Result<(), String> {
+    { let store = store.lock().map_err(|e| e.to_string())?; crate::folders::move_folder(&store.conn, &id, parent_id.as_deref()).map_err(|e| e.to_string())?; }
+    notify(&app, &webview);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn folder_delete(app: AppHandle, webview: WebviewWindow, store: State<'_, Mutex<Store>>, id: String, mode: String) -> Result<(), String> {
+    { let store = store.lock().map_err(|e| e.to_string())?; crate::folders::delete_folder(&store.conn, &id, crate::folders::DeleteMode::from_str(&mode)).map_err(|e| e.to_string())?; }
+    notify(&app, &webview);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn notes_set_folder(app: AppHandle, webview: WebviewWindow, store: State<'_, Mutex<Store>>, id: String, folder_id: Option<String>) -> Result<(), String> {
+    { let store = store.lock().map_err(|e| e.to_string())?; store.set_folder(&id, folder_id.as_deref()).map_err(|e| e.to_string())?; }
+    notify(&app, &webview);
+    Ok(())
+}
