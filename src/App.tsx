@@ -15,7 +15,7 @@ const windowNoteId = new URLSearchParams(window.location.search).get('windowNote
 
 export default function App() {
   const { notes, loading, createNote, updateNote, deleteNote, setPinned, setArchived, setColor, setDue, setFolder, reorderNotes } = useNotes();
-  const { folders, createFolder, renameFolder, deleteFolder, reorderFolders, setFolderIcon, setFolderColor } = useFolders();
+  const { folders, createFolder, renameFolder, deleteFolder, reorderFolders, setFolderIcon, setFolderColor, setFolderSort } = useFolders();
   const { settings, setSetting, loaded } = useSettings();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -125,6 +125,7 @@ export default function App() {
         onReorderFolders={reorderFolders}
         onSetFolderIcon={setFolderIcon}
         onSetFolderColor={setFolderColor}
+        onSetFolderSort={setFolderSort}
         dateFormat={settings.dateFormat}
         pinnedScope={settings.pinnedScope}
         folderColorStyle={settings.folderColorStyle}

@@ -188,6 +188,13 @@ describe("NoteList — folders", () => {
     const { container } = render(<NoteList {...defaultProps} folders={folders} />);
     expect(container.querySelector('[data-icon="star"]')).toBeTruthy();
   });
+
+  it("folder context menu offers Sortierung", () => {
+    const folders = [{ id: 'f1', name: 'Arbeit', parentId: null, position: 1, icon: '', color: '', sort: 'manual' }];
+    render(<NoteList {...defaultProps} folders={folders} onSetFolderSort={vi.fn()} />);
+    fireEvent.contextMenu(screen.getByText('Arbeit'));
+    expect(screen.getByText('Sortierung')).toBeInTheDocument();
+  });
 });
 
 describe("NoteList — drag and drop", () => {

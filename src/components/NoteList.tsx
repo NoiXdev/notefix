@@ -13,6 +13,7 @@ import FolderRow from './FolderRow';
 import RootDropZone from './RootDropZone';
 import { NOTE_COLORS } from '../colors';
 import { exportSelected } from '../export';
+import { sortNotesBy } from '../sortNotes';
 import type { DateFormat } from '../dates';
 
 interface Props {
@@ -35,6 +36,7 @@ interface Props {
   onReorderFolders?: (parentId: string | null, ids: string[]) => void;
   onSetFolderIcon?: (id: string, icon: string) => void;
   onSetFolderColor?: (id: string, color: string) => void;
+  onSetFolderSort?: (id: string, sort: string) => void;
   dateFormat?: DateFormat;
   pinnedScope?: PinnedScope;
   folderColorStyle?: FolderColorStyle;
@@ -42,11 +44,20 @@ interface Props {
 
 const sortNotes = (a: Note, b: Note) => Number(b.pinned) - Number(a.pinned) || a.position - b.position;
 
+const SORT_OPTIONS: { value: string; label: string }[] = [
+  { value: 'manual', label: 'Manuell' },
+  { value: 'titleAsc', label: 'Titel A–Z' },
+  { value: 'titleDesc', label: 'Titel Z–A' },
+  { value: 'updatedDesc', label: 'Geändert (neu zuerst)' },
+  { value: 'updatedAsc', label: 'Geändert (alt zuerst)' },
+  { value: 'dueAsc', label: 'Fällig zuerst' },
+];
+
 export default function NoteList(props: Props) {
   const {
     notes, folders, selectedId, onSelect, onCreate, onDelete, onOpenSettings, onOpenDashboard,
     onTogglePin, onArchive, onSetColor, onMoveNote, onCreateFolder, onRenameFolder, onDeleteFolder,
-    onReorderNotes, onReorderFolders, onSetFolderIcon, onSetFolderColor,
+    onReorderNotes, onReorderFolders, onSetFolderIcon, onSetFolderColor, onSetFolderSort,
     dateFormat = 'auto', pinnedScope = 'perFolder', folderColorStyle = 'icon',
   } = props;
 
@@ -129,8 +140,13 @@ export default function NoteList(props: Props) {
   const activeNotes = notes.filter(n => !n.archived);
   const archivedNotes = notes.filter(n => n.archived);
 
-  const treeNotesIn = (fid: string | null) =>
-    activeNotes.filter(n => (n.folderId ?? null) === fid && (pinnedScope === 'global' ? !n.pinned : true)).sort(sortNotes);
+  const treeNotesIn = (fid: string | null) => {
+    const sort = folders.find(f => f.id === fid)?.sort ?? 'manual';
+    return sortNotesBy(
+      activeNotes.filter(n => (n.folderId ?? null) === fid && (pinnedScope === 'global' ? !n.pinned : true)),
+      sort,
+    );
+  };
 
   const childFolders = (pid: string | null) => folders.filter(f => (f.parentId ?? null) === pid).sort((a, b) => a.position - b.position || a.name.localeCompare(b.name));
 
@@ -245,6 +261,7 @@ export default function NoteList(props: Props) {
           x={folderMenu.x} y={folderMenu.y}
           items={[
             ...((onSetFolderIcon && onSetFolderColor) ? [{ label: 'Anpassen…', onClick: () => setCustomizer({ x: folderMenu.x, y: folderMenu.y, folderId: folderMenu.folder.id }) }] : []),
+            ...(onSetFolderSort ? [{ label: 'Sortierung', submenu: SORT_OPTIONS.map(o => ({ label: (folderMenu.folder.sort === o.value ? '✓ ' : '') + o.label, onClick: () => onSetFolderSort(folderMenu.folder.id, o.value) })) }] : []),
             { label: 'Neuer Unterordner', onClick: () => createAndEdit(folderMenu.folder.id) },
             { label: 'Umbenennen', onClick: () => setEditingFolder(folderMenu.folder.id) },
             { label: 'Löschen', onClick: () => onDeleteFolder?.(folderMenu.folder) },
