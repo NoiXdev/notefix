@@ -224,3 +224,17 @@ pub fn notes_set_folder(app: AppHandle, webview: WebviewWindow, store: State<'_,
     notify(&app, &webview);
     Ok(())
 }
+
+#[tauri::command]
+pub fn notes_reorder(app: AppHandle, webview: WebviewWindow, store: State<'_, Mutex<Store>>, folder_id: Option<String>, ids: Vec<String>) -> Result<(), String> {
+    { let store = store.lock().map_err(|e| e.to_string())?; store.reorder_notes(folder_id.as_deref(), &ids).map_err(|e| e.to_string())?; }
+    notify(&app, &webview);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn folders_reorder(app: AppHandle, webview: WebviewWindow, store: State<'_, Mutex<Store>>, parent_id: Option<String>, ids: Vec<String>) -> Result<(), String> {
+    { let store = store.lock().map_err(|e| e.to_string())?; crate::folders::reorder_folders(&store.conn, parent_id.as_deref(), &ids).map_err(|e| e.to_string())?; }
+    notify(&app, &webview);
+    Ok(())
+}

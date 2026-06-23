@@ -101,6 +101,21 @@ pub fn delete_folder(conn: &Connection, id: &str, mode: DeleteMode) -> rusqlite:
     Ok(())
 }
 
+/// Set parent + position for each id in order. Rejects moving a folder under its own descendant.
+pub fn reorder_folders(conn: &Connection, parent_id: Option<&str>, ids: &[String]) -> rusqlite::Result<()> {
+    if let Some(p) = parent_id {
+        for id in ids {
+            if p == id || descendants(conn, id)?.iter().any(|d| d == p) {
+                return Err(rusqlite::Error::InvalidQuery);
+            }
+        }
+    }
+    for (i, id) in ids.iter().enumerate() {
+        conn.execute("UPDATE folders SET parent_id = ?2, position = ?3 WHERE id = ?1", (id, parent_id, i as i64))?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,6 +170,22 @@ mod tests {
         assert!(folders.iter().all(|f| f.id != "c"));
         assert_eq!(folders.iter().find(|f| f.id == "g").unwrap().parent_id.as_deref(), Some("p"));
         assert_eq!(s.load_notes().unwrap()[0].folder_id.as_deref(), Some("p"));
+    }
+
+    #[test]
+    fn reorder_folders_sets_parent_and_position_and_blocks_cycles() {
+        let s = store();
+        create_folder(&s.conn, "a", "A", None).unwrap();
+        create_folder(&s.conn, "b", "B", None).unwrap();
+        create_folder(&s.conn, "c", "C", Some("a")).unwrap();
+        // move b under a, ordered [c, b]
+        reorder_folders(&s.conn, Some("a"), &["c".to_string(), "b".to_string()]).unwrap();
+        let f = load_folders(&s.conn).unwrap();
+        let b = f.iter().find(|x| x.id == "b").unwrap();
+        assert_eq!(b.parent_id.as_deref(), Some("a"));
+        assert_eq!(b.position, 1);
+        // cycle: move a under its descendant c
+        assert!(reorder_folders(&s.conn, Some("c"), &["a".to_string()]).is_err());
     }
 
     #[test]

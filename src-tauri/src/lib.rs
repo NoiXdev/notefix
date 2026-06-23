@@ -75,6 +75,8 @@ pub fn run() {
             commands::folder_move,
             commands::folder_delete,
             commands::notes_set_folder,
+            commands::notes_reorder,
+            commands::folders_reorder,
             commands::open_note_window,
             commands::settings_load,
             commands::settings_set,
