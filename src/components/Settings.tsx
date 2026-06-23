@@ -59,6 +59,12 @@ const START_VIEWS: { value: import("../hooks/useSettings").StartView; label: str
   { value: "dashboard", label: "Dashboard" },
 ];
 
+const CLOSE_ACTIONS: { value: import("../hooks/useSettings").CloseAction; label: string }[] = [
+  { value: "ask", label: "Fragen" },
+  { value: "minimize", label: "In Menüleiste minimieren" },
+  { value: "quit", label: "Beenden" },
+];
+
 export default function Settings({ onClose, settings, onSetSetting }: Props) {
   const [page, setPage] = useState<Page>("about");
   const [info, setInfo] = useState<AppInfo | null>(null);
@@ -226,6 +232,8 @@ export default function Settings({ onClose, settings, onSetSetting }: Props) {
                 <span>Automatisch leeren nach (Tagen)</span>
                 <input type="number" min={1} value={settings.trashRetentionDays ?? 30} onChange={e => onSetSetting("trashRetentionDays", Math.max(1, Number(e.target.value) || 30))} className="w-24 bg-white border rounded px-2 py-1" style={{ borderColor: "#e7d27a" }} />
               </label>
+              <h2 className="text-sm font-semibold text-gray-800 mt-6 mb-1">Beim Schließen des Fensters</h2>
+              <div className="w-64"><Select value={settings.closeAction ?? "ask"} options={CLOSE_ACTIONS} onChange={v => onSetSetting("closeAction", v as import("../hooks/useSettings").CloseAction)} /></div>
             </div>
           </div>
         )}

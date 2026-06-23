@@ -8,6 +8,7 @@ import NoteEditor from './components/NoteEditor';
 import Logo from './components/Logo';
 import Settings from './components/Settings';
 import DeleteFolderModal from './components/DeleteFolderModal';
+import CloseDialog from './components/CloseDialog';
 import Dashboard from './components/Dashboard';
 import type { Folder, Stats } from './types';
 
@@ -20,6 +21,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [folderToDelete, setFolderToDelete] = useState<Folder | null>(null);
+  const [closePrompt, setClosePrompt] = useState(false);
   const [view, setView] = useState<'editor' | 'dashboard'>('editor');
   const [dashEdit, setDashEdit] = useState(false);
   const [stats, setStats] = useState<Stats | null>(null);
@@ -41,6 +43,7 @@ export default function App() {
   }, [loaded, settings.startView]);
 
   useEffect(() => { api.stats().then(setStats); }, [notes]);
+  useEffect(() => api.onCloseRequested(() => setClosePrompt(true)), []);
 
   useEffect(() => {
     return api.onTrayEvent({
@@ -189,6 +192,13 @@ export default function App() {
           onReparent={() => { deleteFolder(folderToDelete.id, 'reparent'); setFolderToDelete(null); }}
           onRecursive={() => { deleteFolder(folderToDelete.id, 'recursive'); setFolderToDelete(null); }}
           onCancel={() => setFolderToDelete(null)}
+        />
+      )}
+      {closePrompt && (
+        <CloseDialog
+          onMinimize={remember => { if (remember) setSetting('closeAction', 'minimize'); api.hideMain(); setClosePrompt(false); }}
+          onQuit={remember => { if (remember) setSetting('closeAction', 'quit'); api.quitApp(); }}
+          onCancel={() => setClosePrompt(false)}
         />
       )}
     </div>
