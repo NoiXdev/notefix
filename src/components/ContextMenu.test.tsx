@@ -43,3 +43,20 @@ describe("ContextMenu — swatches", () => {
     expect(onPick).toHaveBeenCalledWith("");
   });
 });
+
+describe("ContextMenu — submenu", () => {
+  it("renders submenu entries and clicking one fires its handler + onClose", () => {
+    const onPick = vi.fn();
+    const onClose = vi.fn();
+    render(
+      <ContextMenu
+        x={10} y={10} onClose={onClose}
+        items={[{ label: "Verschieben nach", submenu: [{ label: "Ordner A", onClick: onPick }] }]}
+      />
+    );
+    expect(screen.getByText("Verschieben nach")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Ordner A"));
+    expect(onPick).toHaveBeenCalledOnce();
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+});

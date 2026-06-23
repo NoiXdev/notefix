@@ -2,7 +2,8 @@ import { useEffect } from 'react';
 
 export interface ContextMenuItem {
   label: string;
-  onClick: () => void;
+  onClick?: () => void;
+  submenu?: ContextMenuItem[];
 }
 
 export interface ContextMenuSwatches {
@@ -56,15 +57,26 @@ export default function ContextMenu({ x, y, items, swatches, onClose }: Props) {
           >×</button>
         </div>
       )}
-      {items.map((item, i) => (
-        <button
-          key={i}
-          onClick={() => { item.onClick(); onClose(); }}
-          className="w-full text-left px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-800 transition-colors"
-        >
-          {item.label}
-        </button>
-      ))}
+      {items.map((item, i) =>
+        item.submenu ? (
+          <div key={i} className="relative group/sub">
+            <button className="w-full text-left px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-800 flex items-center justify-between">
+              <span>{item.label}</span><span className="text-gray-500">▸</span>
+            </button>
+            <div className="absolute left-full top-0 ml-0.5 min-w-40 py-1 rounded-md bg-gray-900 border border-gray-700 shadow-lg hidden group-hover/sub:block max-h-72 overflow-y-auto">
+              {item.submenu.map((sub, j) => (
+                <button key={j} onClick={() => { sub.onClick?.(); onClose(); }} className="w-full text-left px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-800">
+                  {sub.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <button key={i} onClick={() => { item.onClick?.(); onClose(); }} className="w-full text-left px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-800 transition-colors">
+            {item.label}
+          </button>
+        )
+      )}
     </div>
   );
 }
