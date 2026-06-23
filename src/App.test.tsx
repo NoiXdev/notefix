@@ -103,3 +103,12 @@ describe("App — deleting notes", () => {
     await waitFor(() => expect(screen.getByText(/select a note/i)).toBeInTheDocument());
   });
 });
+
+describe("App — shortcuts", () => {
+  it("Cmd+N creates a note", async () => {
+    render(<App />);
+    await waitFor(() => screen.getByTitle("New note"));
+    fireEvent.keyDown(document.body, { key: "n", metaKey: true });
+    await waitFor(() => expect(screen.getByTitle("Bold")).toBeInTheDocument());
+  });
+});

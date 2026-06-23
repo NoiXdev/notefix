@@ -53,6 +53,36 @@ export default function App() {
     });
   }, [createNote]);
 
+  const selectedNote = notes.find(n => n.id === selectedId) ?? null;
+
+  const handleCreate = async () => {
+    const id = await createNote();
+    setSelectedId(id);
+    setView('editor');
+  };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (showSettings) return;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && e.shiftKey && e.key.toLowerCase() === 'n') { e.preventDefault(); void createFolder('Neuer Ordner', null); return; }
+      if (mod && e.key.toLowerCase() === 'n') { e.preventDefault(); void handleCreate(); return; }
+      if (mod && e.key.toLowerCase() === 'e' && selectedNote) { e.preventDefault(); setArchived(selectedNote.id, !selectedNote.archived); return; }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        const list = notes.filter(n => !n.archived && !n.deletedAt);
+        if (!list.length) return;
+        e.preventDefault();
+        const idx = list.findIndex(n => n.id === selectedId);
+        const next = idx === -1 ? list[0] : list[e.key === 'ArrowDown' ? Math.min(list.length - 1, idx + 1) : Math.max(0, idx - 1)];
+        if (next) selectNote(next.id);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [notes, selectedId, selectedNote, showSettings, createFolder, handleCreate, setArchived]);
+
   if (windowNoteId) {
     if (loading) {
       return (
@@ -64,14 +94,6 @@ export default function App() {
       ? <div className="h-screen"><NoteEditor note={note} onChange={updateNote} isWindow onSetDue={setDue} autosaveDelay={settings.autosaveDelay} /></div>
       : <div className="flex h-screen items-center justify-center text-gray-400 text-sm">Note not found.</div>;
   }
-
-  const selectedNote = notes.find(n => n.id === selectedId) ?? null;
-
-  const handleCreate = async () => {
-    const id = await createNote();
-    setSelectedId(id);
-    setView('editor');
-  };
 
   const handleDelete = (id: string) => {
     if (selectedId === id) {
