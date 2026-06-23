@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import EmojiPicker, { Theme } from 'emoji-picker-react';
 import IconCombobox from './IconCombobox';
 import { NOTE_COLORS } from '../colors';
@@ -29,15 +29,24 @@ const MODES: { value: Mode; label: string }[] = [
 export default function FolderCustomizer({ x, y, folder, onSetIcon, onSetColor, onClose }: Props) {
   const [mode, setMode] = useState<Mode>(modeOf(folder.icon));
 
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('click', onClose);
+    const close = () => onCloseRef.current();
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
+    const id = setTimeout(() => {
+      window.addEventListener('click', close);
+      window.addEventListener('contextmenu', close);
+    }, 0);
     window.addEventListener('keydown', onKey);
     return () => {
-      window.removeEventListener('click', onClose);
+      clearTimeout(id);
+      window.removeEventListener('click', close);
+      window.removeEventListener('contextmenu', close);
       window.removeEventListener('keydown', onKey);
     };
-  }, [onClose]);
+  }, []);
 
   const selectMode = (m: Mode) => {
     setMode(m);

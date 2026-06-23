@@ -55,6 +55,8 @@ describe("ContextMenu — submenu", () => {
       />
     );
     expect(screen.getByText("Verschieben nach")).toBeInTheDocument();
+    // Submenus open on click now (previously CSS hover), so open it first.
+    fireEvent.click(screen.getByText("Verschieben nach"));
     fireEvent.click(screen.getByText("Ordner A"));
     expect(onPick).toHaveBeenCalledOnce();
     expect(onClose).toHaveBeenCalledOnce();

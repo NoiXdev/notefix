@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 export interface ContextMenuItem {
   label: string;
@@ -21,15 +21,31 @@ interface Props {
 }
 
 export default function ContextMenu({ x, y, items, swatches, onClose }: Props) {
+  const [openSub, setOpenSub] = useState<number | null>(null);
+
+  // Keep a stable reference to onClose so the dismiss listeners are attached
+  // exactly once on mount and survive re-renders (otherwise a re-render between
+  // opening this menu and the dismissing event would detach the listener).
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('click', onClose);
+    const close = () => onCloseRef.current();
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
+    // Defer the dismiss listeners by a tick so the click/contextmenu that
+    // opened this menu doesn't immediately close it again.
+    const id = setTimeout(() => {
+      window.addEventListener('click', close);
+      window.addEventListener('contextmenu', close);
+    }, 0);
     window.addEventListener('keydown', onKey);
     return () => {
-      window.removeEventListener('click', onClose);
+      clearTimeout(id);
+      window.removeEventListener('click', close);
+      window.removeEventListener('contextmenu', close);
       window.removeEventListener('keydown', onKey);
     };
-  }, [onClose]);
+  }, []);
 
   return (
     <div
@@ -59,17 +75,22 @@ export default function ContextMenu({ x, y, items, swatches, onClose }: Props) {
       )}
       {items.map((item, i) =>
         item.submenu ? (
-          <div key={i} className="relative group/sub">
-            <button className="w-full text-left px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-800 flex items-center justify-between">
+          <div key={i} className="relative" onMouseEnter={() => setOpenSub(i)}>
+            <button
+              onClick={() => setOpenSub(openSub === i ? null : i)}
+              className="w-full text-left px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-800 flex items-center justify-between"
+            >
               <span>{item.label}</span><span className="text-gray-500">▸</span>
             </button>
-            <div className="absolute left-full top-0 ml-0.5 min-w-40 py-1 rounded-md bg-gray-900 border border-gray-700 shadow-lg hidden group-hover/sub:block max-h-72 overflow-y-auto">
-              {item.submenu.map((sub, j) => (
-                <button key={j} onClick={() => { sub.onClick?.(); onClose(); }} className="w-full text-left px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-800">
-                  {sub.label}
-                </button>
-              ))}
-            </div>
+            {openSub === i && (
+              <div className="absolute left-full top-0 ml-0.5 min-w-40 py-1 rounded-md bg-gray-900 border border-gray-700 shadow-lg max-h-72 overflow-y-auto" style={{ right: x > window.innerWidth - 360 ? '100%' : undefined, left: x > window.innerWidth - 360 ? 'auto' : '100%' }}>
+                {item.submenu.map((sub, j) => (
+                  <button key={j} onClick={() => { sub.onClick?.(); onClose(); }} className="w-full text-left px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-800 whitespace-nowrap">
+                    {sub.label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         ) : (
           <button key={i} onClick={() => { item.onClick?.(); onClose(); }} className="w-full text-left px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-800 transition-colors">
