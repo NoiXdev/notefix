@@ -1,24 +1,25 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import NoteList from './NoteList';
-import type { Note } from '../types';
+import type { Note, Folder } from '../types';
 
 vi.mock('../export', () => ({ exportSelected: vi.fn() }));
 
-const note = (id: string, content: string, updatedAt = Date.now(), pinned = false, archived = false, color = '', dueAt: number | null = null): Note =>
-  ({ id, content, updatedAt, pinned, archived, color, dueAt });
+const note = (id: string, content: string, updatedAt = Date.now(), pinned = false, archived = false, color = '', dueAt: number | null = null, folderId: string | null = null): Note =>
+  ({ id, content, updatedAt, pinned, archived, color, dueAt, folderId });
 
 const defaultProps = {
   notes: [],
+  folders: [] as Folder[],
   selectedId: null,
   onSelect: vi.fn(),
   onCreate: vi.fn(),
   onDelete: vi.fn(),
   onOpenSettings: vi.fn(),
-  displayMode: 'flat' as const,
   onTogglePin: vi.fn(),
   onArchive: vi.fn(),
   onSetColor: vi.fn(),
+  onMoveNote: vi.fn(),
 };
 
 beforeEach(() => vi.clearAllMocks());
@@ -97,19 +98,6 @@ describe('NoteList — interactions', () => {
 });
 
 describe("NoteList — pinning", () => {
-  it("flat mode shows a divider between pinned and unpinned", () => {
-    const notes = [note('p', '<p>Pinned</p>', 2000, true), note('u', '<p>Unpinned</p>', 1000, false)];
-    render(<NoteList {...defaultProps} notes={notes} />);
-    expect(screen.getByTestId('pin-divider')).toBeInTheDocument();
-  });
-
-  it("sections mode shows group headers", () => {
-    const notes = [note('p', '<p>Pinned</p>', 2000, true), note('u', '<p>Unpinned</p>', 1000, false)];
-    render(<NoteList {...defaultProps} notes={notes} displayMode="sections" />);
-    expect(screen.getByText('Angepinnt')).toBeInTheDocument();
-    expect(screen.getByText('Weitere')).toBeInTheDocument();
-  });
-
   it("right-click opens the menu and Anpinnen calls onTogglePin", () => {
     const onTogglePin = vi.fn();
     render(<NoteList {...defaultProps} notes={[note('a', '<p>Note</p>', 1000, false)]} onTogglePin={onTogglePin} />);
@@ -164,5 +152,24 @@ describe("NoteList — due date & format", () => {
     const ts = new Date(2026, 0, 2).getTime();
     render(<NoteList {...defaultProps} notes={[note('a', '<p>X</p>', ts)]} dateFormat="iso" />);
     expect(screen.getByText('2026-01-02')).toBeInTheDocument();
+  });
+});
+
+describe("NoteList — folders", () => {
+  it("renders a folder and reveals its notes when expanded", () => {
+    const folders = [{ id: 'f1', name: 'Arbeit', parentId: null, position: 1 }];
+    const notes = [note('a', '<p>InFolder</p>', 1, false, false, '', null, 'f1')];
+    render(<NoteList {...defaultProps} folders={folders} notes={notes} />);
+    expect(screen.getByText('Arbeit')).toBeInTheDocument();
+    expect(screen.queryByText('InFolder')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('Arbeit'));
+    expect(screen.getByText('InFolder')).toBeInTheDocument();
+  });
+
+  it("note context menu offers 'Verschieben nach' with the folder", () => {
+    const folders = [{ id: 'f1', name: 'Arbeit', parentId: null, position: 1 }];
+    render(<NoteList {...defaultProps} folders={folders} notes={[note('a', '<p>Root</p>')]} />);
+    fireEvent.contextMenu(screen.getByText('Root'));
+    expect(screen.getByText('Verschieben nach')).toBeInTheDocument();
   });
 });
