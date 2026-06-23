@@ -28,7 +28,7 @@ pub fn add_revision(conn: &Connection, note_id: &str, content: &str, limit: i64)
             |r| r.get(0),
         )
         .optional()?;
-    if latest.as_deref() == Some(content) {
+    if latest.as_deref().map(str::trim) == Some(trimmed) {
         return Ok(());
     }
     conn.execute(

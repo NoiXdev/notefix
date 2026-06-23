@@ -222,11 +222,11 @@ export default function Settings({ onClose, settings, onSetSetting }: Props) {
               <h2 className="text-sm font-semibold text-gray-800 mt-6 mb-1">Editor &amp; Verlauf</h2>
               <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
                 <span>Auto-Save-Verzögerung (ms)</span>
-                <input type="number" min={100} step={50} value={settings.autosaveDelay ?? 400} onChange={e => onSetSetting("autosaveDelay", Number(e.target.value))} className="w-24 bg-white border rounded px-2 py-1" style={{ borderColor: "#e7d27a" }} />
+                <input type="number" min={100} step={50} value={settings.autosaveDelay ?? 400} onChange={e => onSetSetting("autosaveDelay", Math.max(100, Number(e.target.value) || 400))} className="w-24 bg-white border rounded px-2 py-1" style={{ borderColor: "#e7d27a" }} />
               </label>
               <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
                 <span>Versionen pro Notiz</span>
-                <input type="number" min={1} value={settings.revisionLimit ?? 50} onChange={e => onSetSetting("revisionLimit", Number(e.target.value))} className="w-24 bg-white border rounded px-2 py-1" style={{ borderColor: "#e7d27a" }} />
+                <input type="number" min={1} value={settings.revisionLimit ?? 50} onChange={e => onSetSetting("revisionLimit", Math.max(1, Number(e.target.value) || 50))} className="w-24 bg-white border rounded px-2 py-1" style={{ borderColor: "#e7d27a" }} />
               </label>
               <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
                 <span>Startansicht</span>

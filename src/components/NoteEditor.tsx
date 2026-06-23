@@ -173,6 +173,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
     skipNextUpdate.current = true;
     editor.commands.setContent(content);
     onChange(note.id, content);
+    setMdMode(false);
     setHistoryOpen(false);
   };
 
