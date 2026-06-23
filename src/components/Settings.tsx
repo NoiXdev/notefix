@@ -127,7 +127,7 @@ export default function Settings({ onClose, settings, onSetSetting }: Props) {
         </nav>
       </aside>
 
-      <main className="flex-1 overflow-auto px-10 py-10" style={{ background: "#fef9c3" }}>
+      <main className="settings-scroll flex-1 overflow-auto px-10 py-10" style={{ background: "#fef9c3" }}>
         {page === "about" && info && (
           <div>
             <Logo size={56} className="mb-4" />
@@ -176,6 +176,10 @@ export default function Settings({ onClose, settings, onSetSetting }: Props) {
               <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
                 <span>Minimiert starten (nur Menüleiste)</span>
                 <Toggle checked={settings.startMinimized} onChange={() => onSetSetting("startMinimized", !settings.startMinimized)} label="Minimiert starten (nur Menüleiste)" />
+              </label>
+              <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
+                <span>Beim Schließen des Fensters</span>
+                <div className="w-56"><Select value={settings.closeAction ?? "ask"} options={CLOSE_ACTIONS} onChange={v => onSetSetting("closeAction", v as import("../hooks/useSettings").CloseAction)} /></div>
               </label>
               <button
                 onClick={() => exportSelected([], "notefix-export.json")}
@@ -232,8 +236,6 @@ export default function Settings({ onClose, settings, onSetSetting }: Props) {
                 <span>Automatisch leeren nach (Tagen)</span>
                 <input type="number" min={1} value={settings.trashRetentionDays ?? 30} onChange={e => onSetSetting("trashRetentionDays", Math.max(1, Number(e.target.value) || 30))} className="w-24 bg-white border rounded px-2 py-1" style={{ borderColor: "#e7d27a" }} />
               </label>
-              <h2 className="text-sm font-semibold text-gray-800 mt-6 mb-1">Beim Schließen des Fensters</h2>
-              <div className="w-64"><Select value={settings.closeAction ?? "ask"} options={CLOSE_ACTIONS} onChange={v => onSetSetting("closeAction", v as import("../hooks/useSettings").CloseAction)} /></div>
             </div>
           </div>
         )}

@@ -19,7 +19,13 @@ export async function installTauriMock(page: Page, data: MockData = {}): Promise
       note_revisions: [],
     };
     let cbId = 0;
-    const w = window as unknown as { __TAURI_INTERNALS__: Record<string, unknown> };
+    const w = window as unknown as {
+      __TAURI_INTERNALS__: Record<string, unknown>;
+      __TAURI_EVENT_PLUGIN_INTERNALS__: Record<string, unknown>;
+    };
+    // The event API calls this on unlisten/cleanup; without it the app throws
+    // "Cannot read properties of undefined (reading 'unregisterListener')".
+    w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
     w.__TAURI_INTERNALS__ = {
       invoke: async (cmd: string) => {
         if (cmd in responses) return responses[cmd];
