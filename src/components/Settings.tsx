@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type AppInfo } from "../api";
 import type { AppSettings, PinnedDisplayMode } from "../hooks/useSettings";
+import { exportSelected } from "../export";
 
 type Page = "about" | "appearance" | "system";
 
@@ -128,6 +129,13 @@ export default function Settings({ onClose, settings, onSetSetting }: Props) {
                   onChange={() => onSetSetting("startMinimized", !settings.startMinimized)}
                 />
               </label>
+              <button
+                onClick={() => exportSelected([], "notefix-export.json")}
+                className="mt-2 self-start px-4 py-1.5 rounded text-sm font-medium"
+                style={{ background: "#fde047", color: "#1c1917" }}
+              >
+                Alle als JSON exportieren
+              </button>
             </div>
           </div>
         )}

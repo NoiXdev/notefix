@@ -1,10 +1,11 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockIsEnabled, mockEnable, mockDisable } = vi.hoisted(() => ({
+const { mockIsEnabled, mockEnable, mockDisable, mockExportSelected } = vi.hoisted(() => ({
   mockIsEnabled: vi.fn(() => Promise.resolve(false)),
   mockEnable: vi.fn(() => Promise.resolve()),
   mockDisable: vi.fn(() => Promise.resolve()),
+  mockExportSelected: vi.fn(),
 }));
 
 vi.mock("../api", () => ({
@@ -13,6 +14,7 @@ vi.mock("../api", () => ({
     autostart: { isEnabled: mockIsEnabled, enable: mockEnable, disable: mockDisable },
   },
 }));
+vi.mock("../export", () => ({ exportSelected: mockExportSelected }));
 
 import Settings from "./Settings";
 
@@ -47,5 +49,12 @@ describe("Settings — System", () => {
     fireEvent.click(screen.getByText("System"));
     fireEvent.click(screen.getByLabelText(/Bei Anmeldung starten/));
     expect(mockEnable).toHaveBeenCalledOnce();
+  });
+
+  it("'export all' calls exportSelected with empty ids", () => {
+    render(<Settings onClose={vi.fn()} settings={{ pinnedDisplayMode: "flat", startMinimized: false }} onSetSetting={vi.fn()} />);
+    fireEvent.click(screen.getByText("System"));
+    fireEvent.click(screen.getByText("Alle als JSON exportieren"));
+    expect(mockExportSelected).toHaveBeenCalledWith([], "notefix-export.json");
   });
 });
