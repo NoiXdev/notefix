@@ -4,6 +4,7 @@ import type { Stats } from "../types";
 import type { DateFormat } from "../dates";
 import type { AppSettings } from "../hooks/useSettings";
 import { exportSelected } from "../export";
+import Logo from "./Logo";
 
 type Page = "about" | "appearance" | "system" | "stats";
 
@@ -114,6 +115,7 @@ export default function Settings({ onClose, settings, onSetSetting }: Props) {
       <main className="flex-1 overflow-auto px-10 py-10" style={{ background: "#fef9c3" }}>
         {page === "about" && info && (
           <div>
+            <Logo size={56} className="mb-4" />
             <h1 className="text-2xl font-bold text-gray-900 mb-1">{info.name}</h1>
             <p className="text-sm text-gray-500 mb-8">Version {info.version}</p>
             <p className="text-sm text-gray-600">{info.description}</p>

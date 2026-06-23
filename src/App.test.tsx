@@ -67,7 +67,7 @@ describe("App — empty state", () => {
   it("renders the sidebar", async () => {
     render(<App />);
     await waitFor(() => {
-      expect(screen.getByText("Notes")).toBeInTheDocument();
+      expect(screen.getByText("Notefix")).toBeInTheDocument();
       expect(screen.getByTitle("New note")).toBeInTheDocument();
     });
   });

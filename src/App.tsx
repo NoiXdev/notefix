@@ -5,6 +5,7 @@ import { useFolders } from './hooks/useFolders';
 import { useSettings } from './hooks/useSettings';
 import NoteList from './components/NoteList';
 import NoteEditor from './components/NoteEditor';
+import Logo from './components/Logo';
 import Settings from './components/Settings';
 import DeleteFolderModal from './components/DeleteFolderModal';
 import type { Folder } from './types';
@@ -120,10 +121,7 @@ export default function App() {
         ) : (
           <div className="flex h-full items-center justify-center" style={{ background: '#fef9c3' }}>
             <div className="text-center" style={{ color: '#b59f3b' }}>
-              <svg className="mx-auto mb-3 opacity-40" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <polyline points="14 2 14 8 20 8" />
-              </svg>
+              <Logo size={64} className="mx-auto mb-3 opacity-40" />
               <p className="text-sm">Select a note or create a new one</p>
             </div>
           </div>

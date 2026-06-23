@@ -40,8 +40,13 @@ beforeEach(() => vi.clearAllMocks());
 
 describe("Settings — Darstellung", () => {
   it("shows the About page by default", async () => {
-    render(<Settings onClose={vi.fn()} settings={{ startMinimized: false, dateFormat: "auto", pinnedScope: "perFolder" }} onSetSetting={vi.fn()} />);
+    render(<Settings onClose={vi.fn()} settings={{ startMinimized: false, dateFormat: "auto", pinnedScope: "perFolder", folderColorStyle: "icon" }} onSetSetting={vi.fn()} />);
     await waitFor(() => expect(screen.getByText("Notefix")).toBeInTheDocument());
+  });
+
+  it("shows the logo on the About page", async () => {
+    render(<Settings onClose={vi.fn()} settings={{ startMinimized: false, dateFormat: "auto", pinnedScope: "perFolder", folderColorStyle: "icon" }} onSetSetting={vi.fn()} />);
+    expect(await screen.findByAltText("Notefix")).toBeInTheDocument();
   });
 });
 

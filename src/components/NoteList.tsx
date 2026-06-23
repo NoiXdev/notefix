@@ -5,6 +5,7 @@ import type { PinnedScope, FolderColorStyle } from '../hooks/useSettings';
 import ContextMenu, { type ContextMenuItem } from './ContextMenu';
 import FolderIcon from './FolderIcon';
 import FolderCustomizer from './FolderCustomizer';
+import Logo from './Logo';
 import { NOTE_COLORS, DEFAULT_MARKER } from '../colors';
 import { exportSelected } from '../export';
 import { formatDate, type DateFormat } from '../dates';
@@ -231,7 +232,10 @@ export default function NoteList(props: Props) {
   return (
     <aside className="w-60 shrink-0 bg-gray-950 flex flex-col h-full select-none">
       <div className="px-4 py-3 flex items-center justify-between border-b border-gray-800">
-        <span className="text-gray-400 text-xs font-semibold uppercase tracking-widest">{showArchived ? 'Archiv' : 'Notes'}</span>
+        <div className="flex items-center gap-1.5">
+          <Logo size={18} />
+          <span className="text-gray-200 text-xs font-semibold uppercase tracking-widest">{showArchived ? 'Archiv' : 'Notefix'}</span>
+        </div>
         <div className="flex items-center gap-1">
           {!showArchived && onCreateFolder && (
             <button onClick={() => createAndEdit(null)} className="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 rounded" title="Neuer Ordner">
