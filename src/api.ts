@@ -42,6 +42,8 @@ export const api = {
     delete: (id: string, mode: "reparent" | "recursive"): Promise<void> => invoke("folder_delete", { id, mode }),
     reorder: (parentId: string | null, ids: string[]): Promise<void> =>
       invoke("folders_reorder", { parentId, ids }),
+    setIcon: (id: string, icon: string): Promise<void> => invoke("folder_set_icon", { id, icon }),
+    setColor: (id: string, color: string): Promise<void> => invoke("folder_set_color", { id, color }),
   },
 
   settings: {

@@ -43,5 +43,15 @@ export function useFolders() {
     await reload();
   }, [reload]);
 
-  return { folders, createFolder, renameFolder, moveFolder, deleteFolder, reorderFolders };
+  const setFolderIcon = useCallback(async (id: string, icon: string) => {
+    await api.folders.setIcon(id, icon);
+    await reload();
+  }, [reload]);
+
+  const setFolderColor = useCallback(async (id: string, color: string) => {
+    await api.folders.setColor(id, color);
+    await reload();
+  }, [reload]);
+
+  return { folders, createFolder, renameFolder, moveFolder, deleteFolder, reorderFolders, setFolderIcon, setFolderColor };
 }

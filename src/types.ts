@@ -15,6 +15,8 @@ export interface Folder {
   name: string;
   parentId: string | null;
   position: number;
+  icon: string;
+  color: string;
 }
 
 export interface Stats {

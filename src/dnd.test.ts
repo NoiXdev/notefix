@@ -4,7 +4,7 @@ import type { Note, Folder } from "./types";
 
 const n = (id: string, folderId: string | null, position: number): Note =>
   ({ id, content: `<p>${id}</p>`, updatedAt: 1, pinned: false, archived: false, color: "", dueAt: null, folderId, position });
-const f = (id: string, parentId: string | null, position: number): Folder => ({ id, name: id, parentId, position });
+const f = (id: string, parentId: string | null, position: number): Folder => ({ id, name: id, parentId, position, icon: '', color: '' });
 
 describe("computeDrop — notes", () => {
   it("drops a note into a folder (appended)", () => {
