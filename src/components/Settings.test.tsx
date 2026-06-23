@@ -22,16 +22,8 @@ import Settings from "./Settings";
 beforeEach(() => vi.clearAllMocks());
 
 describe("Settings — Darstellung", () => {
-  it("switching to sections calls onSetSetting", async () => {
-    const onSetSetting = vi.fn();
-    render(<Settings onClose={vi.fn()} settings={{ pinnedDisplayMode: "flat", startMinimized: false, dateFormat: "auto", pinnedScope: "perFolder" }} onSetSetting={onSetSetting} />);
-    fireEvent.click(screen.getByText("Darstellung"));
-    fireEvent.click(screen.getByText(/Sektionen/));
-    expect(onSetSetting).toHaveBeenCalledWith("pinnedDisplayMode", "sections");
-  });
-
   it("shows the About page by default", async () => {
-    render(<Settings onClose={vi.fn()} settings={{ pinnedDisplayMode: "flat", startMinimized: false, dateFormat: "auto", pinnedScope: "perFolder" }} onSetSetting={vi.fn()} />);
+    render(<Settings onClose={vi.fn()} settings={{ startMinimized: false, dateFormat: "auto", pinnedScope: "perFolder" }} onSetSetting={vi.fn()} />);
     await waitFor(() => expect(screen.getByText("Notefix")).toBeInTheDocument());
   });
 });
@@ -39,21 +31,21 @@ describe("Settings — Darstellung", () => {
 describe("Settings — System", () => {
   it("toggling start-minimized calls onSetSetting", async () => {
     const onSetSetting = vi.fn();
-    render(<Settings onClose={vi.fn()} settings={{ pinnedDisplayMode: "flat", startMinimized: false, dateFormat: "auto", pinnedScope: "perFolder" }} onSetSetting={onSetSetting} />);
+    render(<Settings onClose={vi.fn()} settings={{ startMinimized: false, dateFormat: "auto", pinnedScope: "perFolder" }} onSetSetting={onSetSetting} />);
     fireEvent.click(screen.getByText("System"));
     fireEvent.click(screen.getByLabelText(/Minimiert starten/));
     expect(onSetSetting).toHaveBeenCalledWith("startMinimized", true);
   });
 
   it("enabling start-on-boot calls autostart.enable", async () => {
-    render(<Settings onClose={vi.fn()} settings={{ pinnedDisplayMode: "flat", startMinimized: false, dateFormat: "auto", pinnedScope: "perFolder" }} onSetSetting={vi.fn()} />);
+    render(<Settings onClose={vi.fn()} settings={{ startMinimized: false, dateFormat: "auto", pinnedScope: "perFolder" }} onSetSetting={vi.fn()} />);
     fireEvent.click(screen.getByText("System"));
     fireEvent.click(screen.getByLabelText(/Bei Anmeldung starten/));
     expect(mockEnable).toHaveBeenCalledOnce();
   });
 
   it("'export all' calls exportSelected with empty ids", () => {
-    render(<Settings onClose={vi.fn()} settings={{ pinnedDisplayMode: "flat", startMinimized: false, dateFormat: "auto", pinnedScope: "perFolder" }} onSetSetting={vi.fn()} />);
+    render(<Settings onClose={vi.fn()} settings={{ startMinimized: false, dateFormat: "auto", pinnedScope: "perFolder" }} onSetSetting={vi.fn()} />);
     fireEvent.click(screen.getByText("System"));
     fireEvent.click(screen.getByText("Alle als JSON exportieren"));
     expect(mockExportSelected).toHaveBeenCalledWith([], "notefix-export.json");
@@ -63,14 +55,14 @@ describe("Settings — System", () => {
 describe("Settings — date format & stats", () => {
   it("selecting a date format calls onSetSetting", () => {
     const onSetSetting = vi.fn();
-    render(<Settings onClose={vi.fn()} settings={{ pinnedDisplayMode: "flat", startMinimized: false, dateFormat: "auto", pinnedScope: "perFolder" }} onSetSetting={onSetSetting} />);
+    render(<Settings onClose={vi.fn()} settings={{ startMinimized: false, dateFormat: "auto", pinnedScope: "perFolder" }} onSetSetting={onSetSetting} />);
     fireEvent.click(screen.getByText("Darstellung"));
     fireEvent.click(screen.getByText("JJJJ-MM-TT"));
     expect(onSetSetting).toHaveBeenCalledWith("dateFormat", "iso");
   });
 
   it("stats page shows the counts", async () => {
-    render(<Settings onClose={vi.fn()} settings={{ pinnedDisplayMode: "flat", startMinimized: false, dateFormat: "auto", pinnedScope: "perFolder" }} onSetSetting={vi.fn()} />);
+    render(<Settings onClose={vi.fn()} settings={{ startMinimized: false, dateFormat: "auto", pinnedScope: "perFolder" }} onSetSetting={vi.fn()} />);
     fireEvent.click(screen.getByText("Statistik"));
     await waitFor(() => expect(screen.getByText("42")).toBeInTheDocument());
   });
@@ -79,7 +71,7 @@ describe("Settings — date format & stats", () => {
 describe("Settings — pinnedScope", () => {
   it("selecting global calls onSetSetting", () => {
     const onSetSetting = vi.fn();
-    render(<Settings onClose={vi.fn()} settings={{ pinnedDisplayMode: "flat", startMinimized: false, dateFormat: "auto", pinnedScope: "perFolder" }} onSetSetting={onSetSetting} />);
+    render(<Settings onClose={vi.fn()} settings={{ startMinimized: false, dateFormat: "auto", pinnedScope: "perFolder" }} onSetSetting={onSetSetting} />);
     fireEvent.click(screen.getByText("Darstellung"));
     fireEvent.click(screen.getByText(/Globale/));
     expect(onSetSetting).toHaveBeenCalledWith("pinnedScope", "global");

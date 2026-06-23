@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type AppInfo } from "../api";
 import type { Stats } from "../types";
 import type { DateFormat } from "../dates";
-import type { AppSettings, PinnedDisplayMode } from "../hooks/useSettings";
+import type { AppSettings } from "../hooks/useSettings";
 import { exportSelected } from "../export";
 
 type Page = "about" | "appearance" | "system" | "stats";
@@ -31,11 +31,6 @@ interface Props {
   settings: AppSettings;
   onSetSetting: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void;
 }
-
-const MODES: { value: PinnedDisplayMode; label: string }[] = [
-  { value: "flat", label: "Flach (Pin-Icon + Trennlinie)" },
-  { value: "sections", label: "Sektionen (Überschriften)" },
-];
 
 const DATE_FORMATS: { value: DateFormat; label: string }[] = [
   { value: "auto", label: "Auto (relativ)" },
@@ -110,27 +105,7 @@ export default function Settings({ onClose, settings, onSetSetting }: Props) {
           <div>
             <h1 className="text-2xl font-bold text-gray-900 mb-1">Darstellung</h1>
             <p className="text-sm text-gray-500 mb-6">Wie angepinnte Notizen in der Liste erscheinen.</p>
-            <div className="flex flex-col gap-2 max-w-sm">
-              {MODES.map(mode => {
-                const active = settings.pinnedDisplayMode === mode.value;
-                return (
-                  <button
-                    key={mode.value}
-                    onClick={() => onSetSetting("pinnedDisplayMode", mode.value)}
-                    className="text-left px-4 py-2.5 rounded text-sm transition-colors border"
-                    style={{
-                      background: active ? "#fde047" : "transparent",
-                      borderColor: active ? "#eab308" : "#e7d27a",
-                      color: "#1c1917",
-                    }}
-                  >
-                    {mode.label}
-                  </button>
-                );
-              })}
-            </div>
-
-            <h2 className="text-sm font-semibold text-gray-800 mt-8 mb-2">Datumsformat</h2>
+            <h2 className="text-sm font-semibold text-gray-800 mb-2">Datumsformat</h2>
             <div className="flex flex-col gap-2 max-w-sm">
               {DATE_FORMATS.map(f => {
                 const active = settings.dateFormat === f.value;
