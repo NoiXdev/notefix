@@ -21,7 +21,7 @@ export function useNotes() {
   const createNote = useCallback(async (): Promise<string> => {
     const note: Note = {
       id: crypto.randomUUID(), content: '', updatedAt: Date.now(),
-      pinned: false, archived: false, color: '', dueAt: null,
+      pinned: false, archived: false, color: '', dueAt: null, folderId: null,
     };
     await api.notes.save(note);
     setNotes(prev => [note, ...prev]);
@@ -34,7 +34,7 @@ export function useNotes() {
       prev.map(n => (n.id === id ? { ...n, content, updatedAt } : n)).sort(sortNotes),
     );
     // backend's save_note preserves pinned/archived/color on conflict.
-    await api.notes.save({ id, content, updatedAt, pinned: false, archived: false, color: '', dueAt: null });
+    await api.notes.save({ id, content, updatedAt, pinned: false, archived: false, color: '', dueAt: null, folderId: null });
   }, []);
 
   const deleteNote = useCallback(async (id: string) => {
@@ -62,5 +62,10 @@ export function useNotes() {
     await api.notes.setDue(id, dueAt);
   }, []);
 
-  return { notes, loading, createNote, updateNote, deleteNote, setPinned, setArchived, setColor, setDue };
+  const setFolder = useCallback(async (id: string, folderId: string | null) => {
+    setNotes(prev => prev.map(n => (n.id === id ? { ...n, folderId } : n)));
+    await api.notes.setFolder(id, folderId);
+  }, []);
+
+  return { notes, loading, createNote, updateNote, deleteNote, setPinned, setArchived, setColor, setDue, setFolder };
 }

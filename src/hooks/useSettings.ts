@@ -3,14 +3,16 @@ import { api } from '../api';
 import type { DateFormat } from '../dates';
 
 export type PinnedDisplayMode = 'flat' | 'sections';
+export type PinnedScope = 'perFolder' | 'global';
 
 export interface AppSettings {
   pinnedDisplayMode: PinnedDisplayMode;
   startMinimized: boolean;
   dateFormat: DateFormat;
+  pinnedScope: PinnedScope;
 }
 
-const DEFAULTS: AppSettings = { pinnedDisplayMode: 'flat', startMinimized: false, dateFormat: 'auto' };
+const DEFAULTS: AppSettings = { pinnedDisplayMode: 'flat', startMinimized: false, dateFormat: 'auto', pinnedScope: 'perFolder' };
 
 export function useSettings() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULTS);
@@ -21,6 +23,7 @@ export function useSettings() {
         pinnedDisplayMode: raw.pinnedDisplayMode === 'sections' ? 'sections' : 'flat',
         startMinimized: raw.startMinimized === 'true',
         dateFormat: (['de', 'iso', 'us'].includes(raw.dateFormat) ? raw.dateFormat : 'auto') as DateFormat,
+        pinnedScope: raw.pinnedScope === 'global' ? 'global' : 'perFolder',
       });
     });
   }, []);

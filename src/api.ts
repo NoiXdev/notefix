@@ -25,6 +25,17 @@ export const api = {
       invoke("notes_set_color", { id, color }),
     setDue: (id: string, dueAt: number | null): Promise<void> =>
       invoke("notes_set_due", { id, dueAt }),
+    setFolder: (id: string, folderId: string | null): Promise<void> =>
+      invoke("notes_set_folder", { id, folderId }),
+  },
+
+  folders: {
+    load: (): Promise<import("./types").Folder[]> => invoke("folders_load"),
+    create: (id: string, name: string, parentId: string | null): Promise<void> =>
+      invoke("folder_create", { id, name, parentId }),
+    rename: (id: string, name: string): Promise<void> => invoke("folder_rename", { id, name }),
+    move: (id: string, parentId: string | null): Promise<void> => invoke("folder_move", { id, parentId }),
+    delete: (id: string, mode: "reparent" | "recursive"): Promise<void> => invoke("folder_delete", { id, mode }),
   },
 
   settings: {

@@ -62,3 +62,11 @@ describe("useSettings — dateFormat", () => {
     await waitFor(() => expect(result.current.settings.dateFormat).toBe("de"));
   });
 });
+
+describe("useSettings — pinnedScope", () => {
+  it("defaults to perFolder and loads global", async () => {
+    mockLoad.mockResolvedValue({ pinnedScope: "global" });
+    const { result } = renderHook(() => useSettings());
+    await waitFor(() => expect(result.current.settings.pinnedScope).toBe("global"));
+  });
+});

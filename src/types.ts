@@ -6,6 +6,14 @@ export interface Note {
   archived: boolean;
   color: string;
   dueAt: number | null;
+  folderId: string | null;
+}
+
+export interface Folder {
+  id: string;
+  name: string;
+  parentId: string | null;
+  position: number;
 }
 
 export interface Stats {
