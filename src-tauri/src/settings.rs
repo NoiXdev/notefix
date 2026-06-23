@@ -24,6 +24,13 @@ pub fn get_int(conn: &Connection, key: &str, default: i64) -> i64 {
         .unwrap_or(default)
 }
 
+pub fn get_bool_default(conn: &Connection, key: &str, default: bool) -> bool {
+    load_settings(conn)
+        .ok()
+        .and_then(|all| all.into_iter().find(|(k, _)| k == key).map(|(_, v)| v == "true"))
+        .unwrap_or(default)
+}
+
 /// Read a setting as a bool ("true" => true, anything else / missing => false).
 pub fn get_bool(conn: &Connection, key: &str) -> bool {
     load_settings(conn)

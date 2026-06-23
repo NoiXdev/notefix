@@ -149,7 +149,7 @@ mod tests {
     }
 
     fn note_in(id: &str, folder: &str) -> Note {
-        Note { id: id.into(), content: "<p>x</p>".into(), updated_at: 1, pinned: false, archived: false, color: String::new(), due_at: None, folder_id: Some(folder.into()), position: 0 }
+        Note { id: id.into(), content: "<p>x</p>".into(), updated_at: 1, pinned: false, archived: false, color: String::new(), due_at: None, folder_id: Some(folder.into()), position: 0, deleted_at: None }
     }
 
     #[test]

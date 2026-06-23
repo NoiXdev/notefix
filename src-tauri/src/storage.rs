@@ -21,19 +21,21 @@ pub struct Note {
     pub folder_id: Option<String>,
     #[serde(default)]
     pub position: i64,
+    #[serde(default)]
+    pub deleted_at: Option<i64>,
 }
 
 pub struct Store {
     pub conn: Connection,
 }
 
-const COLS: &str = "id, content, updated_at, pinned, archived, color, due_at, folder_id, position";
+const COLS: &str = "id, content, updated_at, pinned, archived, color, due_at, folder_id, position, deleted_at";
 
 fn row_to_note(r: &rusqlite::Row) -> rusqlite::Result<Note> {
     Ok(Note {
         id: r.get(0)?, content: r.get(1)?, updated_at: r.get(2)?,
         pinned: r.get(3)?, archived: r.get(4)?, color: r.get(5)?, due_at: r.get(6)?,
-        folder_id: r.get(7)?, position: r.get(8)?,
+        folder_id: r.get(7)?, position: r.get(8)?, deleted_at: r.get(9)?,
     })
 }
 
@@ -48,7 +50,7 @@ impl Store {
     }
 
     pub fn load_notes(&self) -> rusqlite::Result<Vec<Note>> {
-        let sql = format!("SELECT {COLS} FROM notes ORDER BY pinned DESC, position ASC");
+        let sql = format!("SELECT {COLS} FROM notes WHERE deleted_at IS NULL ORDER BY pinned DESC, position ASC");
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map([], row_to_note)?;
         rows.collect()
@@ -106,10 +108,41 @@ impl Store {
 
     /// The `limit` most-recently-updated NON-archived notes (newest first).
     pub fn recent_notes(&self, limit: i64) -> rusqlite::Result<Vec<Note>> {
-        let sql = format!("SELECT {COLS} FROM notes WHERE archived = 0 ORDER BY updated_at DESC LIMIT ?1");
+        let sql = format!("SELECT {COLS} FROM notes WHERE archived = 0 AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT ?1");
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map([limit], row_to_note)?;
         rows.collect()
+    }
+
+    pub fn trash_note(&self, id: &str, ts: i64) -> rusqlite::Result<()> {
+        self.conn.execute("UPDATE notes SET deleted_at = ?2 WHERE id = ?1", (id, ts))?;
+        Ok(())
+    }
+
+    pub fn restore_note(&self, id: &str) -> rusqlite::Result<()> {
+        self.conn.execute("UPDATE notes SET deleted_at = NULL WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    pub fn load_trashed(&self) -> rusqlite::Result<Vec<Note>> {
+        let sql = format!("SELECT {COLS} FROM notes WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC");
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map([], row_to_note)?;
+        rows.collect()
+    }
+
+    pub fn purge_trashed(&self, before: Option<i64>) -> rusqlite::Result<()> {
+        match before {
+            Some(t) => {
+                self.conn.execute("DELETE FROM note_revisions WHERE note_id IN (SELECT id FROM notes WHERE deleted_at IS NOT NULL AND deleted_at < ?1)", [t])?;
+                self.conn.execute("DELETE FROM notes WHERE deleted_at IS NOT NULL AND deleted_at < ?1", [t])?;
+            }
+            None => {
+                self.conn.execute("DELETE FROM note_revisions WHERE note_id IN (SELECT id FROM notes WHERE deleted_at IS NOT NULL)", [])?;
+                self.conn.execute("DELETE FROM notes WHERE deleted_at IS NOT NULL", [])?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -125,7 +158,7 @@ mod tests {
     }
 
     fn note(id: &str, content: &str, updated_at: i64) -> Note {
-        Note { id: id.into(), content: content.into(), updated_at, pinned: false, archived: false, color: String::new(), due_at: None, folder_id: None, position: 0 }
+        Note { id: id.into(), content: content.into(), updated_at, pinned: false, archived: false, color: String::new(), due_at: None, folder_id: None, position: 0, deleted_at: None }
     }
 
     #[test]
@@ -214,5 +247,34 @@ mod tests {
         s.set_archived("b", true).unwrap();
         let ids: Vec<String> = s.recent_notes(5).unwrap().into_iter().map(|n| n.id).collect();
         assert_eq!(ids, vec!["a"]);
+    }
+
+    #[test]
+    fn trash_hides_from_load_and_shows_in_trashed() {
+        let s = store();
+        s.save_note(&note("a", "<p>a</p>", 1)).unwrap();
+        s.trash_note("a", 1000).unwrap();
+        assert!(s.load_notes().unwrap().is_empty());
+        let t = s.load_trashed().unwrap();
+        assert_eq!(t.len(), 1);
+        assert_eq!(t[0].deleted_at, Some(1000));
+        s.restore_note("a").unwrap();
+        assert_eq!(s.load_notes().unwrap().len(), 1);
+        assert!(s.load_trashed().unwrap().is_empty());
+    }
+
+    #[test]
+    fn purge_trashed_respects_threshold_then_all() {
+        let s = store();
+        s.save_note(&note("old", "<p>o</p>", 1)).unwrap();
+        s.save_note(&note("new", "<p>n</p>", 1)).unwrap();
+        s.trash_note("old", 100).unwrap();
+        s.trash_note("new", 1000).unwrap();
+        s.purge_trashed(Some(500)).unwrap();
+        let t = s.load_trashed().unwrap();
+        assert_eq!(t.len(), 1);
+        assert_eq!(t[0].id, "new");
+        s.purge_trashed(None).unwrap();
+        assert!(s.load_trashed().unwrap().is_empty());
     }
 }
