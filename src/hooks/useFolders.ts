@@ -11,15 +11,32 @@ export function useFolders() {
 
   useEffect(() => {
     reload();
-    return api.onNotesChanged(reload); // folder mutations broadcast notes-changed
+    return api.onNotesChanged(reload);
   }, [reload]);
 
-  const createFolder = useCallback(async (name: string, parentId: string | null) => {
-    await api.folders.create(crypto.randomUUID(), name, parentId);
-  }, []);
-  const renameFolder = useCallback((id: string, name: string) => api.folders.rename(id, name), []);
-  const moveFolder = useCallback((id: string, parentId: string | null) => api.folders.move(id, parentId), []);
-  const deleteFolder = useCallback((id: string, mode: 'reparent' | 'recursive') => api.folders.delete(id, mode), []);
+  // The `notes-changed` broadcast skips the sender window, so the window that
+  // performs a folder mutation must refresh its own list explicitly.
+  const createFolder = useCallback(async (name: string, parentId: string | null): Promise<string> => {
+    const id = crypto.randomUUID();
+    await api.folders.create(id, name, parentId);
+    await reload();
+    return id;
+  }, [reload]);
+
+  const renameFolder = useCallback(async (id: string, name: string) => {
+    await api.folders.rename(id, name);
+    await reload();
+  }, [reload]);
+
+  const moveFolder = useCallback(async (id: string, parentId: string | null) => {
+    await api.folders.move(id, parentId);
+    await reload();
+  }, [reload]);
+
+  const deleteFolder = useCallback(async (id: string, mode: 'reparent' | 'recursive') => {
+    await api.folders.delete(id, mode);
+    await reload();
+  }, [reload]);
 
   return { folders, createFolder, renameFolder, moveFolder, deleteFolder };
 }

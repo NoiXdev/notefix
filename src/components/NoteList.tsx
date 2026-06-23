@@ -18,7 +18,7 @@ interface Props {
   onArchive?: (id: string, archived: boolean) => void;
   onSetColor?: (id: string, color: string) => void;
   onMoveNote?: (id: string, folderId: string | null) => void;
-  onCreateFolder?: (name: string, parentId: string | null) => void;
+  onCreateFolder?: (name: string, parentId: string | null) => Promise<string>;
   onRenameFolder?: (id: string, name: string) => void;
   onDeleteFolder?: (folder: Folder) => void;
   dateFormat?: DateFormat;
@@ -55,8 +55,17 @@ export default function NoteList(props: Props) {
   const [showArchived, setShowArchived] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [editingFolder, setEditingFolder] = useState<string | null>(null);
+  const [rootMenu, setRootMenu] = useState<{ x: number; y: number } | null>(null);
 
   const toggle = (id: string) => setExpanded(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  // Create a folder, then immediately put it into inline-rename. createFolder
+  // returns the new id once the list has reloaded, so editing targets a real row.
+  const createAndEdit = (parentId: string | null) => {
+    if (!onCreateFolder) return;
+    if (parentId) setExpanded(prev => { const n = new Set(prev); n.add(parentId); return n; });
+    void onCreateFolder('Neuer Ordner', parentId).then(id => setEditingFolder(id));
+  };
 
   // Move-to submenu: all folders indented by depth + root.
   const moveSubmenu = (note: Note): ContextMenuItem[] => {
@@ -158,7 +167,7 @@ export default function NoteList(props: Props) {
         <span className="text-gray-400 text-xs font-semibold uppercase tracking-widest">{showArchived ? 'Archiv' : 'Notes'}</span>
         <div className="flex items-center gap-1">
           {!showArchived && onCreateFolder && (
-            <button onClick={() => onCreateFolder('Neuer Ordner', null)} className="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 rounded" title="Neuer Ordner">
+            <button onClick={() => createAndEdit(null)} className="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 rounded" title="Neuer Ordner">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><line x1="12" y1="11" x2="12" y2="17" /><line x1="9" y1="14" x2="15" y2="14" /></svg>
             </button>
           )}
@@ -176,7 +185,10 @@ export default function NoteList(props: Props) {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div
+        className="flex-1 overflow-y-auto"
+        onContextMenu={e => { if (e.target === e.currentTarget && onCreateFolder && !showArchived) { e.preventDefault(); setRootMenu({ x: e.clientX, y: e.clientY }); } }}
+      >
         {showArchived ? (
           archivedNotes.length === 0
             ? <p className="text-gray-600 text-xs text-center mt-10 px-4">Keine archivierten Notizen.</p>
@@ -208,11 +220,18 @@ export default function NoteList(props: Props) {
         <ContextMenu
           x={folderMenu.x} y={folderMenu.y}
           items={[
-            { label: 'Neuer Unterordner', onClick: () => onCreateFolder?.('Neuer Ordner', folderMenu.folder.id) },
+            { label: 'Neuer Unterordner', onClick: () => createAndEdit(folderMenu.folder.id) },
             { label: 'Umbenennen', onClick: () => setEditingFolder(folderMenu.folder.id) },
             { label: 'Löschen', onClick: () => onDeleteFolder?.(folderMenu.folder) },
           ]}
           onClose={() => setFolderMenu(null)}
+        />
+      )}
+      {rootMenu && onCreateFolder && (
+        <ContextMenu
+          x={rootMenu.x} y={rootMenu.y}
+          items={[{ label: 'Neuer Ordner', onClick: () => createAndEdit(null) }]}
+          onClose={() => setRootMenu(null)}
         />
       )}
     </aside>
