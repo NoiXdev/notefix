@@ -1,8 +1,10 @@
 import { useState, useRef } from 'react';
 import type { Note, Folder } from '../types';
 import { computeDrop, type DragKind, type DropMode } from '../dnd';
-import type { PinnedScope } from '../hooks/useSettings';
+import type { PinnedScope, FolderColorStyle } from '../hooks/useSettings';
 import ContextMenu, { type ContextMenuItem } from './ContextMenu';
+import FolderIcon from './FolderIcon';
+import FolderCustomizer from './FolderCustomizer';
 import { NOTE_COLORS, DEFAULT_MARKER } from '../colors';
 import { exportSelected } from '../export';
 import { formatDate, type DateFormat } from '../dates';
@@ -24,8 +26,11 @@ interface Props {
   onDeleteFolder?: (folder: Folder) => void;
   onReorderNotes?: (folderId: string | null, ids: string[]) => void;
   onReorderFolders?: (parentId: string | null, ids: string[]) => void;
+  onSetFolderIcon?: (id: string, icon: string) => void;
+  onSetFolderColor?: (id: string, color: string) => void;
   dateFormat?: DateFormat;
   pinnedScope?: PinnedScope;
+  folderColorStyle?: FolderColorStyle;
 }
 
 export function getPreview(html: string): string {
@@ -50,8 +55,8 @@ export default function NoteList(props: Props) {
   const {
     notes, folders, selectedId, onSelect, onCreate, onDelete, onOpenSettings,
     onTogglePin, onArchive, onSetColor, onMoveNote, onCreateFolder, onRenameFolder, onDeleteFolder,
-    onReorderNotes, onReorderFolders,
-    dateFormat = 'auto', pinnedScope = 'perFolder',
+    onReorderNotes, onReorderFolders, onSetFolderIcon, onSetFolderColor,
+    dateFormat = 'auto', pinnedScope = 'perFolder', folderColorStyle = 'icon',
   } = props;
 
   const [menu, setMenu] = useState<{ x: number; y: number; note: Note } | null>(null);
@@ -60,6 +65,7 @@ export default function NoteList(props: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [editingFolder, setEditingFolder] = useState<string | null>(null);
   const [rootMenu, setRootMenu] = useState<{ x: number; y: number } | null>(null);
+  const [customizer, setCustomizer] = useState<{ x: number; y: number; folderId: string } | null>(null);
 
   const toggle = (id: string) => setExpanded(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
 
@@ -173,6 +179,14 @@ export default function NoteList(props: Props) {
   const renderFolder = (folder: Folder, depth: number) => {
     const open = expanded.has(folder.id);
     const count = activeNotes.filter(n => (n.folderId ?? null) === folder.id).length;
+    const rowStyle: React.CSSProperties = { paddingLeft: 8 + depth * 14, paddingRight: 12, ...dropLine(folder.id) };
+    let iconTint = folder.color || undefined;
+    if (folderColorStyle === 'row') {
+      iconTint = undefined;
+      if (folder.color) rowStyle.background = folder.color + '22';
+    } else if (folderColorStyle === 'bar' && folder.color) {
+      rowStyle.borderLeft = `3px solid ${folder.color}`;
+    }
     return (
       <div key={folder.id}>
         {editingFolder === folder.id ? (
@@ -194,10 +208,10 @@ export default function NoteList(props: Props) {
             onDragOver={e => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'; setDropHint({ id: folder.id, mode: folderModeAt(e) }); }}
             onDrop={e => { e.preventDefault(); e.stopPropagation(); finishDrop('folder', folder.id, folderModeAt(e)); }}
             className={`flex items-center gap-1 py-2 text-gray-300 hover:bg-gray-900 cursor-pointer select-none ${dropHint?.id === folder.id && dropHint.mode === 'into' ? 'bg-gray-700 ring-1 ring-inset ring-yellow-400' : ''}`}
-            style={{ paddingLeft: 8 + depth * 14, paddingRight: 12, ...dropLine(folder.id) }}
+            style={rowStyle}
           >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ transform: open ? 'rotate(90deg)' : 'none' }}><polyline points="9 6 15 12 9 18" /></svg>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
+            <FolderIcon icon={folder.icon} tint={iconTint} />
             <span className="text-sm font-medium truncate flex-1">{folder.name}</span>
             <span className="text-gray-600 text-xs">{count || ''}</span>
           </div>
@@ -275,6 +289,7 @@ export default function NoteList(props: Props) {
         <ContextMenu
           x={folderMenu.x} y={folderMenu.y}
           items={[
+            ...((onSetFolderIcon && onSetFolderColor) ? [{ label: 'Anpassen…', onClick: () => setCustomizer({ x: folderMenu.x, y: folderMenu.y, folderId: folderMenu.folder.id }) }] : []),
             { label: 'Neuer Unterordner', onClick: () => createAndEdit(folderMenu.folder.id) },
             { label: 'Umbenennen', onClick: () => setEditingFolder(folderMenu.folder.id) },
             { label: 'Löschen', onClick: () => onDeleteFolder?.(folderMenu.folder) },
@@ -289,6 +304,19 @@ export default function NoteList(props: Props) {
           onClose={() => setRootMenu(null)}
         />
       )}
+      {customizer && onSetFolderIcon && onSetFolderColor && (() => {
+        const f = folders.find(x => x.id === customizer.folderId);
+        return f ? (
+          <FolderCustomizer
+            x={customizer.x}
+            y={customizer.y}
+            folder={f}
+            onSetIcon={icon => onSetFolderIcon(f.id, icon)}
+            onSetColor={color => onSetFolderColor(f.id, color)}
+            onClose={() => setCustomizer(null)}
+          />
+        ) : null;
+      })()}
     </aside>
   );
 }

@@ -13,7 +13,7 @@ const windowNoteId = new URLSearchParams(window.location.search).get('windowNote
 
 export default function App() {
   const { notes, loading, createNote, updateNote, deleteNote, setPinned, setArchived, setColor, setDue, setFolder, reorderNotes } = useNotes();
-  const { folders, createFolder, renameFolder, deleteFolder, reorderFolders } = useFolders();
+  const { folders, createFolder, renameFolder, deleteFolder, reorderFolders, setFolderIcon, setFolderColor } = useFolders();
   const { settings, setSetting } = useSettings();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -108,8 +108,11 @@ export default function App() {
         onDeleteFolder={requestDeleteFolder}
         onReorderNotes={reorderNotes}
         onReorderFolders={reorderFolders}
+        onSetFolderIcon={setFolderIcon}
+        onSetFolderColor={setFolderColor}
         dateFormat={settings.dateFormat}
         pinnedScope={settings.pinnedScope}
+        folderColorStyle={settings.folderColorStyle}
       />
       <main className="flex-1 overflow-hidden">
         {selectedNote ? (

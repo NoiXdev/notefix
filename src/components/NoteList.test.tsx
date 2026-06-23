@@ -157,7 +157,7 @@ describe("NoteList — due date & format", () => {
 
 describe("NoteList — folders", () => {
   it("renders a folder and reveals its notes when expanded", () => {
-    const folders = [{ id: 'f1', name: 'Arbeit', parentId: null, position: 1 }];
+    const folders = [{ id: 'f1', name: 'Arbeit', parentId: null, position: 1, icon: '', color: '' }];
     const notes = [note('a', '<p>InFolder</p>', 1, false, false, '', null, 'f1')];
     render(<NoteList {...defaultProps} folders={folders} notes={notes} />);
     expect(screen.getByText('Arbeit')).toBeInTheDocument();
@@ -167,10 +167,24 @@ describe("NoteList — folders", () => {
   });
 
   it("note context menu offers 'Verschieben nach' with the folder", () => {
-    const folders = [{ id: 'f1', name: 'Arbeit', parentId: null, position: 1 }];
+    const folders = [{ id: 'f1', name: 'Arbeit', parentId: null, position: 1, icon: '', color: '' }];
     render(<NoteList {...defaultProps} folders={folders} notes={[note('a', '<p>Root</p>')]} />);
     fireEvent.contextMenu(screen.getByText('Root'));
     expect(screen.getByText('Verschieben nach')).toBeInTheDocument();
+  });
+
+  it("folder context menu offers 'Anpassen…' and opens the customizer", () => {
+    const folders = [{ id: 'f1', name: 'Arbeit', parentId: null, position: 1, icon: '', color: '' }];
+    render(<NoteList {...defaultProps} folders={folders} onSetFolderIcon={vi.fn()} onSetFolderColor={vi.fn()} />);
+    fireEvent.contextMenu(screen.getByText('Arbeit'));
+    fireEvent.click(screen.getByText('Anpassen…'));
+    expect(screen.getByPlaceholderText('Icon suchen…')).toBeInTheDocument();
+  });
+
+  it("renders a custom folder icon", () => {
+    const folders = [{ id: 'f1', name: 'Arbeit', parentId: null, position: 1, icon: 'fa:star', color: '' }];
+    const { container } = render(<NoteList {...defaultProps} folders={folders} />);
+    expect(container.querySelector('[data-icon="star"]')).toBeTruthy();
   });
 });
 
