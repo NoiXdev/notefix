@@ -14,7 +14,7 @@ import type { Folder, Stats } from './types';
 const windowNoteId = new URLSearchParams(window.location.search).get('windowNoteId');
 
 export default function App() {
-  const { notes, loading, createNote, updateNote, deleteNote, setPinned, setArchived, setColor, setDue, setFolder, reorderNotes } = useNotes();
+  const { notes, loading, createNote, updateNote, deleteNote, setPinned, setArchived, setColor, setDue, setFolder, reorderNotes, trashed, restoreNote, purgeNote, emptyTrash } = useNotes();
   const { folders, createFolder, renameFolder, deleteFolder, reorderFolders, setFolderIcon, setFolderColor, setFolderSort } = useFolders();
   const { settings, setSetting, loaded } = useSettings();
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -131,6 +131,11 @@ export default function App() {
         folderColorStyle={settings.folderColorStyle}
         compactTree={settings.compactTree}
         treeProgress={settings.treeProgress}
+        trashed={trashed}
+        trashEnabled={settings.trashEnabled}
+        onRestore={restoreNote}
+        onPurge={purgeNote}
+        onEmptyTrash={emptyTrash}
       />
       <main className="flex-1 overflow-hidden">
         {view === 'dashboard' ? (

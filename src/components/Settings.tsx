@@ -247,6 +247,15 @@ export default function Settings({ onClose, settings, onSetSetting }: Props) {
                   <option value="dashboard">Dashboard</option>
                 </select>
               </label>
+              <h2 className="text-sm font-semibold text-gray-800 mt-6 mb-1">Papierkorb</h2>
+              <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
+                <span>Papierkorb verwenden</span>
+                <input type="checkbox" checked={settings.trashEnabled ?? true} onChange={() => onSetSetting("trashEnabled", !settings.trashEnabled)} />
+              </label>
+              <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
+                <span>Automatisch leeren nach (Tagen)</span>
+                <input type="number" min={1} value={settings.trashRetentionDays ?? 30} onChange={e => onSetSetting("trashRetentionDays", Math.max(1, Number(e.target.value) || 30))} className="w-24 bg-white border rounded px-2 py-1" style={{ borderColor: "#e7d27a" }} />
+              </label>
             </div>
           </div>
         )}

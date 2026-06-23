@@ -144,3 +144,14 @@ describe("Settings — tree view", () => {
     expect(onSetSetting).toHaveBeenCalledWith("compactTree", true);
   });
 });
+
+describe("Settings — trash", () => {
+  const full = { startMinimized: false, dateFormat: "auto" as const, pinnedScope: "perFolder" as const, folderColorStyle: "icon" as const, revisionLimit: 50, autosaveDelay: 400, startView: "lastNote" as const, dashboardLayout: ["recent"], compactTree: false, treeProgress: true, trashEnabled: true, trashRetentionDays: 30 };
+  it("toggling trash calls onSetSetting", () => {
+    const onSetSetting = vi.fn();
+    render(<Settings onClose={vi.fn()} settings={full} onSetSetting={onSetSetting} />);
+    fireEvent.click(screen.getByText("System"));
+    fireEvent.click(screen.getByLabelText(/Papierkorb verwenden/));
+    expect(onSetSetting).toHaveBeenCalledWith("trashEnabled", false);
+  });
+});

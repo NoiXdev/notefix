@@ -32,7 +32,8 @@ const { mockLoad, mockSave, mockDeleteFn, mockSetPinned } = vi.hoisted(() => ({
 
 vi.mock("./api", () => ({
   api: {
-    notes: { load: mockLoad, save: mockSave, delete: mockDeleteFn, setPinned: mockSetPinned, setArchived: vi.fn(), setColor: vi.fn(), setDue: vi.fn(), setFolder: vi.fn(), reorder: vi.fn() },
+    notes: { load: mockLoad, save: mockSave, delete: mockDeleteFn, setPinned: mockSetPinned, setArchived: vi.fn(), setColor: vi.fn(), setDue: vi.fn(), setFolder: vi.fn(), reorder: vi.fn(), restore: vi.fn(() => Promise.resolve()), purge: vi.fn(() => Promise.resolve()) },
+    trash: { load: vi.fn(() => Promise.resolve([])), empty: vi.fn(() => Promise.resolve()) },
     folders: { load: () => Promise.resolve([]), create: vi.fn(), rename: vi.fn(), move: vi.fn(), delete: vi.fn(), reorder: vi.fn() },
     exportNotes: vi.fn(),
     stats: vi.fn(() => Promise.resolve({ notes: 0, archived: 0, characters: 0, words: 0 })),
@@ -97,6 +98,8 @@ describe("App — deleting notes", () => {
     fireEvent.click(screen.getByTitle("New note"));
     await waitFor(() => screen.getByTitle("Delete note"));
     fireEvent.click(screen.getByTitle("Delete note"));
+    await waitFor(() => screen.getByText(/Endgültig löschen|In Papierkorb/));
+    fireEvent.click(screen.getByText(/Endgültig löschen|In Papierkorb/));
     await waitFor(() => expect(screen.getByText(/select a note/i)).toBeInTheDocument());
   });
 });
