@@ -11,6 +11,7 @@ import { ResizableImage } from './ResizableImage';
 import type { Note } from '../types';
 import { api } from '../api';
 import { toDateInputValue, fromDateInputValue } from '../dates';
+import { htmlToMarkdown, markdownToHtml } from '../markdown';
 import HistoryModal from './HistoryModal';
 
 function readFileAsDataUrl(file: File): Promise<string> {
@@ -88,6 +89,8 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
   const skipNextUpdate = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [mdMode, setMdMode] = useState(false);
+  const [mdText, setMdText] = useState('');
   const delayRef = useRef(autosaveDelay);
   delayRef.current = autosaveDelay;
 
@@ -150,6 +153,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
     setProgress(countTasks(note.content || ''));
     editor.commands.focus('end');
     if (isWindow) api.setWindowTitle(getTitleFromHtml(note.content || ''));
+    setMdMode(false);
   }, [note.id, editor]);
 
   // Apply external content changes (e.g. edits from a note window) without
@@ -170,6 +174,26 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
     editor.commands.setContent(content);
     onChange(note.id, content);
     setHistoryOpen(false);
+  };
+
+  const toggleMd = () => {
+    if (mdMode) {
+      skipNextUpdate.current = true;
+      editor.commands.setContent(markdownToHtml(mdText));
+      setMdMode(false);
+    } else {
+      setMdText(htmlToMarkdown(editor.getHTML()));
+      setMdMode(true);
+    }
+  };
+
+  const onMdChange = (value: string) => {
+    setMdText(value);
+    if (pendingSave.current) clearTimeout(pendingSave.current);
+    pendingSave.current = setTimeout(() => {
+      pendingSave.current = null;
+      onChange(note.id, markdownToHtml(value));
+    }, delayRef.current);
   };
 
   const openInWindow = () => api.openNoteWindow(note.id);
@@ -250,7 +274,9 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
 
       {/* Scrollable content area */}
       <div className="flex-1 overflow-auto px-7 py-6">
-        <EditorContent editor={editor} className="h-full" />
+        {mdMode
+          ? <textarea value={mdText} onChange={e => onMdChange(e.target.value)} className="w-full h-full bg-transparent outline-none resize-none font-mono text-sm text-gray-900" spellCheck={false} />
+          : <EditorContent editor={editor} className="h-full" />}
       </div>
 
       {/* Bottom toolbar */}
@@ -322,6 +348,9 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M3 3v5h5" /><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8" /><path d="M12 7v5l3 2" />
           </svg>
+        </ToolbarBtn>
+        <ToolbarBtn onClick={toggleMd} active={mdMode} title="Markdown">
+          <span className="font-mono text-xs">&lt;/&gt;</span>
         </ToolbarBtn>
 
         {!isWindow && (
