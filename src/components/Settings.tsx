@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { api, type AppInfo } from "../api";
+import type { Stats } from "../types";
+import type { DateFormat } from "../dates";
 import type { AppSettings, PinnedDisplayMode } from "../hooks/useSettings";
 import { exportSelected } from "../export";
 
-type Page = "about" | "appearance" | "system";
+type Page = "about" | "appearance" | "system" | "stats";
 
 interface NavItemProps {
   label: string;
@@ -35,6 +37,13 @@ const MODES: { value: PinnedDisplayMode; label: string }[] = [
   { value: "sections", label: "Sektionen (Überschriften)" },
 ];
 
+const DATE_FORMATS: { value: DateFormat; label: string }[] = [
+  { value: "auto", label: "Auto (relativ)" },
+  { value: "de", label: "TT.MM.JJJJ" },
+  { value: "iso", label: "JJJJ-MM-TT" },
+  { value: "us", label: "MM/TT/JJJJ" },
+];
+
 export default function Settings({ onClose, settings, onSetSetting }: Props) {
   const [page, setPage] = useState<Page>("about");
   const [info, setInfo] = useState<AppInfo | null>(null);
@@ -46,6 +55,11 @@ export default function Settings({ onClose, settings, onSetSetting }: Props) {
   const [bootEnabled, setBootEnabled] = useState(false);
   useEffect(() => {
     api.autostart.isEnabled().then(setBootEnabled);
+  }, []);
+
+  const [stats, setStats] = useState<Stats | null>(null);
+  useEffect(() => {
+    api.stats().then(setStats);
   }, []);
 
   const toggleBoot = async () => {
@@ -74,6 +88,7 @@ export default function Settings({ onClose, settings, onSetSetting }: Props) {
           <NavItem label="About" active={page === "about"} onClick={() => setPage("about")} />
           <NavItem label="Darstellung" active={page === "appearance"} onClick={() => setPage("appearance")} />
           <NavItem label="System" active={page === "system"} onClick={() => setPage("system")} />
+          <NavItem label="Statistik" active={page === "stats"} onClick={() => setPage("stats")} />
         </nav>
       </aside>
 
@@ -109,6 +124,23 @@ export default function Settings({ onClose, settings, onSetSetting }: Props) {
                 );
               })}
             </div>
+
+            <h2 className="text-sm font-semibold text-gray-800 mt-8 mb-2">Datumsformat</h2>
+            <div className="flex flex-col gap-2 max-w-sm">
+              {DATE_FORMATS.map(f => {
+                const active = settings.dateFormat === f.value;
+                return (
+                  <button
+                    key={f.value}
+                    onClick={() => onSetSetting("dateFormat", f.value)}
+                    className="text-left px-4 py-2.5 rounded text-sm transition-colors border"
+                    style={{ background: active ? "#fde047" : "transparent", borderColor: active ? "#eab308" : "#e7d27a", color: "#1c1917" }}
+                  >
+                    {f.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         )}
 
@@ -137,6 +169,20 @@ export default function Settings({ onClose, settings, onSetSetting }: Props) {
                 Alle als JSON exportieren
               </button>
             </div>
+          </div>
+        )}
+
+        {page === "stats" && (
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900 mb-6">Statistik</h1>
+            {stats && (
+              <dl className="grid grid-cols-2 gap-4 max-w-md text-gray-800">
+                <div><dt className="text-xs text-gray-500">Notizen</dt><dd className="text-2xl font-bold">{stats.notes}</dd></div>
+                <div><dt className="text-xs text-gray-500">Archiviert</dt><dd className="text-2xl font-bold">{stats.archived}</dd></div>
+                <div><dt className="text-xs text-gray-500">Zeichen</dt><dd className="text-2xl font-bold">{stats.characters}</dd></div>
+                <div><dt className="text-xs text-gray-500">Wörter</dt><dd className="text-2xl font-bold">{stats.words}</dd></div>
+              </dl>
+            )}
           </div>
         )}
       </main>
