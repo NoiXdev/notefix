@@ -5,8 +5,8 @@ import type { Note } from '../types';
 
 vi.mock('../export', () => ({ exportSelected: vi.fn() }));
 
-const note = (id: string, content: string, updatedAt = Date.now(), pinned = false, archived = false, color = ''): Note =>
-  ({ id, content, updatedAt, pinned, archived, color });
+const note = (id: string, content: string, updatedAt = Date.now(), pinned = false, archived = false, color = '', dueAt: number | null = null): Note =>
+  ({ id, content, updatedAt, pinned, archived, color, dueAt });
 
 const defaultProps = {
   notes: [],
@@ -150,5 +150,19 @@ describe("NoteList — color & archive", () => {
     expect(screen.getByText('Exportieren')).toBeInTheDocument();
     fireEvent.click(screen.getByLabelText('Farbe #22c55e'));
     expect(onSetColor).toHaveBeenCalledWith('a', '#22c55e');
+  });
+});
+
+describe("NoteList — due date & format", () => {
+  it("renders an overdue chip in red", () => {
+    render(<NoteList {...defaultProps} notes={[note('a', '<p>X</p>', Date.now(), false, false, '', 1000)]} />);
+    const chip = document.querySelector('[style*="rgb(185, 28, 28)"]');
+    expect(chip).toBeTruthy();
+  });
+
+  it("formats the row date with the dateFormat prop", () => {
+    const ts = new Date(2026, 0, 2).getTime();
+    render(<NoteList {...defaultProps} notes={[note('a', '<p>X</p>', ts)]} dateFormat="iso" />);
+    expect(screen.getByText('2026-01-02')).toBeInTheDocument();
   });
 });

@@ -79,6 +79,7 @@ export default function App() {
         onTogglePin={setPinned}
         onArchive={setArchived}
         onSetColor={setColor}
+        dateFormat={settings.dateFormat}
       />
       <main className="flex-1 overflow-hidden">
         {selectedNote ? (

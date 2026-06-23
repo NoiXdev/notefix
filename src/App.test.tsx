@@ -32,8 +32,9 @@ const { mockLoad, mockSave, mockDeleteFn, mockSetPinned } = vi.hoisted(() => ({
 
 vi.mock("./api", () => ({
   api: {
-    notes: { load: mockLoad, save: mockSave, delete: mockDeleteFn, setPinned: mockSetPinned, setArchived: vi.fn(), setColor: vi.fn() },
+    notes: { load: mockLoad, save: mockSave, delete: mockDeleteFn, setPinned: mockSetPinned, setArchived: vi.fn(), setColor: vi.fn(), setDue: vi.fn() },
     exportNotes: vi.fn(),
+    stats: vi.fn(() => Promise.resolve({ notes: 0, archived: 0, characters: 0, words: 0 })),
     settings: { load: () => Promise.resolve({}), set: vi.fn() },
     autostart: { isEnabled: () => Promise.resolve(false), enable: vi.fn(), disable: vi.fn() },
     onTrayEvent: () => () => {},
