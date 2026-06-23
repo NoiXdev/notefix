@@ -40,6 +40,11 @@ pub fn run() {
             }
             let store = Store::open(&db_path)?;
             migrate::run_migrations(&store.conn)?;
+            {
+                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
+                let days = settings::get_int(&store.conn, "trashRetentionDays", 30);
+                let _ = store.purge_trashed(Some(now - days * 86_400_000));
+            }
             if let Some(legacy) = legacy_notes_dir() {
                 let _ = migrate::import_legacy_if_needed(&store, &legacy);
             }
@@ -68,6 +73,10 @@ pub fn run() {
             commands::notes_load,
             commands::notes_save,
             commands::notes_delete,
+            commands::notes_restore,
+            commands::notes_purge,
+            commands::trash_load,
+            commands::trash_empty,
             commands::notes_set_pinned,
             commands::notes_set_archived,
             commands::notes_set_color,

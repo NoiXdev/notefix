@@ -4,6 +4,11 @@ use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindow, Webvi
 
 use crate::storage::{Note, Store};
 
+fn now_ms() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+}
+
 /// Emit `notes-changed` to every window except the one that triggered the change,
 /// mirroring the original Electron broadcast that excluded the sender.
 fn broadcast_changed(app: &AppHandle, sender_label: &str) {
@@ -40,16 +45,45 @@ pub fn notes_save(
 }
 
 #[tauri::command]
-pub fn notes_delete(
-    app: AppHandle,
-    webview: WebviewWindow,
-    store: State<'_, Mutex<Store>>,
-    id: String,
-) -> Result<(), String> {
+pub fn notes_delete(app: AppHandle, webview: WebviewWindow, store: State<'_, Mutex<Store>>, id: String) -> Result<(), String> {
     {
         let store = store.lock().map_err(|e| e.to_string())?;
-        store.delete_note(&id).map_err(|e| e.to_string())?;
+        if crate::settings::get_bool_default(&store.conn, "trashEnabled", true) {
+            store.trash_note(&id, now_ms()).map_err(|e| e.to_string())?;
+        } else {
+            store.delete_note(&id).map_err(|e| e.to_string())?;
+        }
     }
+    broadcast_changed(&app, webview.label());
+    crate::tray::rebuild_menu(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn notes_restore(app: AppHandle, webview: WebviewWindow, store: State<'_, Mutex<Store>>, id: String) -> Result<(), String> {
+    { let store = store.lock().map_err(|e| e.to_string())?; store.restore_note(&id).map_err(|e| e.to_string())?; }
+    broadcast_changed(&app, webview.label());
+    crate::tray::rebuild_menu(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn notes_purge(app: AppHandle, webview: WebviewWindow, store: State<'_, Mutex<Store>>, id: String) -> Result<(), String> {
+    { let store = store.lock().map_err(|e| e.to_string())?; store.delete_note(&id).map_err(|e| e.to_string())?; }
+    broadcast_changed(&app, webview.label());
+    crate::tray::rebuild_menu(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn trash_load(store: State<'_, Mutex<Store>>) -> Result<Vec<Note>, String> {
+    let store = store.lock().map_err(|e| e.to_string())?;
+    store.load_trashed().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn trash_empty(app: AppHandle, webview: WebviewWindow, store: State<'_, Mutex<Store>>) -> Result<(), String> {
+    { let store = store.lock().map_err(|e| e.to_string())?; store.purge_trashed(None).map_err(|e| e.to_string())?; }
     broadcast_changed(&app, webview.label());
     crate::tray::rebuild_menu(&app);
     Ok(())
