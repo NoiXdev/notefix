@@ -9,7 +9,7 @@ import Settings from './components/Settings';
 const windowNoteId = new URLSearchParams(window.location.search).get('windowNoteId');
 
 export default function App() {
-  const { notes, loading, createNote, updateNote, deleteNote, setPinned } = useNotes();
+  const { notes, loading, createNote, updateNote, deleteNote, setPinned, setArchived, setColor } = useNotes();
   const { settings, setSetting } = useSettings();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -77,6 +77,8 @@ export default function App() {
         onOpenSettings={() => setShowSettings(true)}
         displayMode={settings.pinnedDisplayMode}
         onTogglePin={setPinned}
+        onArchive={setArchived}
+        onSetColor={setColor}
       />
       <main className="flex-1 overflow-hidden">
         {selectedNote ? (

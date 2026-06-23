@@ -3,7 +3,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import NoteList from './NoteList';
 import type { Note } from '../types';
 
-const note = (id: string, content: string, updatedAt = Date.now(), pinned = false): Note => ({ id, content, updatedAt, pinned });
+vi.mock('../export', () => ({ exportSelected: vi.fn() }));
+
+const note = (id: string, content: string, updatedAt = Date.now(), pinned = false, archived = false, color = ''): Note =>
+  ({ id, content, updatedAt, pinned, archived, color });
 
 const defaultProps = {
   notes: [],
@@ -14,6 +17,8 @@ const defaultProps = {
   onOpenSettings: vi.fn(),
   displayMode: 'flat' as const,
   onTogglePin: vi.fn(),
+  onArchive: vi.fn(),
+  onSetColor: vi.fn(),
 };
 
 beforeEach(() => vi.clearAllMocks());
@@ -117,5 +122,33 @@ describe("NoteList — pinning", () => {
     render(<NoteList {...defaultProps} notes={[note('a', '<p>Note</p>', 1000, true)]} />);
     fireEvent.contextMenu(screen.getByText('Note'));
     expect(screen.getByText('Lösen')).toBeInTheDocument();
+  });
+});
+
+describe("NoteList — color & archive", () => {
+  it("uses the note color for the marker", () => {
+    render(<NoteList {...defaultProps} notes={[note('a', '<p>X</p>', 1, false, false, '#ef4444')]} />);
+    const dot = document.querySelector('[style*="rgb(239, 68, 68)"]');
+    expect(dot).toBeTruthy();
+  });
+
+  it("archive toggle switches the list to archived notes", () => {
+    const notes = [note('a', '<p>Active</p>', 2, false, false), note('b', '<p>Gone</p>', 1, false, true)];
+    render(<NoteList {...defaultProps} notes={notes} />);
+    expect(screen.getByText('Active')).toBeInTheDocument();
+    expect(screen.queryByText('Gone')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTitle('Archiv anzeigen'));
+    expect(screen.getByText('Gone')).toBeInTheDocument();
+    expect(screen.queryByText('Active')).not.toBeInTheDocument();
+  });
+
+  it("context menu offers Archivieren and Exportieren and swatches call onSetColor", () => {
+    const onSetColor = vi.fn();
+    render(<NoteList {...defaultProps} notes={[note('a', '<p>Note</p>', 1)]} onSetColor={onSetColor} />);
+    fireEvent.contextMenu(screen.getByText('Note'));
+    expect(screen.getByText('Archivieren')).toBeInTheDocument();
+    expect(screen.getByText('Exportieren')).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText('Farbe #22c55e'));
+    expect(onSetColor).toHaveBeenCalledWith('a', '#22c55e');
   });
 });

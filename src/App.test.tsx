@@ -21,6 +21,7 @@ vi.mock("@tiptap/extension-task-item", () => ({ default: { configure: () => ({})
 vi.mock("./components/ResizableImage", () => ({
   ResizableImage: { configure: () => ({}) },
 }));
+vi.mock("./export", () => ({ exportSelected: vi.fn() }));
 
 const { mockLoad, mockSave, mockDeleteFn, mockSetPinned } = vi.hoisted(() => ({
   mockLoad: vi.fn(() => Promise.resolve([] as unknown[])),
@@ -31,7 +32,8 @@ const { mockLoad, mockSave, mockDeleteFn, mockSetPinned } = vi.hoisted(() => ({
 
 vi.mock("./api", () => ({
   api: {
-    notes: { load: mockLoad, save: mockSave, delete: mockDeleteFn, setPinned: mockSetPinned },
+    notes: { load: mockLoad, save: mockSave, delete: mockDeleteFn, setPinned: mockSetPinned, setArchived: vi.fn(), setColor: vi.fn() },
+    exportNotes: vi.fn(),
     settings: { load: () => Promise.resolve({}), set: vi.fn() },
     autostart: { isEnabled: () => Promise.resolve(false), enable: vi.fn(), disable: vi.fn() },
     onTrayEvent: () => () => {},
