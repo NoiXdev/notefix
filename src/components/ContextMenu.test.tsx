@@ -24,3 +24,22 @@ describe("ContextMenu", () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 });
+
+describe("ContextMenu — swatches", () => {
+  it("renders swatches and a clear button; picking calls onPick", () => {
+    const onPick = vi.fn();
+    render(
+      <ContextMenu
+        x={10}
+        y={10}
+        items={[]}
+        swatches={{ colors: ["#ef4444", "#22c55e"], current: "", onPick }}
+        onClose={vi.fn()}
+      />
+    );
+    fireEvent.click(screen.getByLabelText("Farbe #ef4444"));
+    expect(onPick).toHaveBeenCalledWith("#ef4444");
+    fireEvent.click(screen.getByLabelText("Keine Farbe"));
+    expect(onPick).toHaveBeenCalledWith("");
+  });
+});
