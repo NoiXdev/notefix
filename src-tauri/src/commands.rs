@@ -384,3 +384,11 @@ pub fn hide_main(app: AppHandle) {
         let _ = w.hide();
     }
 }
+
+#[tauri::command]
+pub fn save_image(app: AppHandle, name: String, bytes: Vec<u8>) -> Result<String, String> {
+    let name = crate::images::sanitize_name(&name).ok_or_else(|| "invalid name".to_string())?;
+    let dir = crate::images::images_dir(&app);
+    std::fs::write(dir.join(&name), &bytes).map_err(|e| e.to_string())?;
+    Ok(format!("noteimg://localhost/{name}"))
+}

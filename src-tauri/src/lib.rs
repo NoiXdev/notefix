@@ -2,6 +2,7 @@ mod commands;
 mod config;
 mod export;
 mod folders;
+mod images;
 mod migrate;
 mod revisions;
 mod settings;
@@ -23,6 +24,19 @@ fn legacy_notes_dir() -> Option<std::path::PathBuf> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .register_uri_scheme_protocol("noteimg", |ctx, request| {
+            let app = ctx.app_handle();
+            let name = request.uri().path().trim_start_matches('/').to_string();
+            let body = images::sanitize_name(&name)
+                .and_then(|n| std::fs::read(images::images_dir(app).join(n)).ok());
+            match body {
+                Some(bytes) => tauri::http::Response::builder()
+                    .header("Content-Type", images::mime_for(&name))
+                    .body(bytes)
+                    .unwrap(),
+                None => tauri::http::Response::builder().status(404).body(Vec::new()).unwrap(),
+            }
+        })
         // single-instance MUST be registered first.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             tray::show_main(app);
@@ -112,6 +126,7 @@ pub fn run() {
             commands::note_revision_content,
             commands::quit_app,
             commands::hide_main,
+            commands::save_image,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
