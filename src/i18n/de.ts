@@ -24,6 +24,12 @@ export const de = {
       treeView: 'Baum-Ansicht',
       compactTree: 'Kompakte Ansicht (nur Titel)',
       treeProgress: 'Fortschritt im Baum zeigen',
+      linkPreview: 'Link-Vorschau',
+      linkPreviewModes: {
+        url: 'Nur Link',
+        inline: 'Inline',
+        card: 'Karte',
+      },
       dateFormats: {
         auto: 'Auto (relativ)',
         de: 'TT.MM.JJJJ',

@@ -24,6 +24,12 @@ export const fr = {
       treeView: 'Vue arborescente',
       compactTree: 'Vue compacte (titre seulement)',
       treeProgress: 'Afficher la progression dans l’arborescence',
+      linkPreview: 'Aperçu des liens',
+      linkPreviewModes: {
+        url: 'Lien simple',
+        inline: 'Inline',
+        card: 'Carte',
+      },
       dateFormats: {
         auto: 'Auto (relatif)',
         de: 'JJ.MM.AAAA',

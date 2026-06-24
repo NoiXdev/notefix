@@ -57,6 +57,12 @@ const FOLDER_COLOR_STYLES: { value: import("../hooks/useSettings").FolderColorSt
   { value: "row", labelKey: "settings.appearance.folderColorStyles.row" },
 ];
 
+const LINK_PREVIEW_MODES: { value: "url" | "inline" | "card"; labelKey: string }[] = [
+  { value: "url", labelKey: "settings.appearance.linkPreviewModes.url" },
+  { value: "inline", labelKey: "settings.appearance.linkPreviewModes.inline" },
+  { value: "card", labelKey: "settings.appearance.linkPreviewModes.card" },
+];
+
 const START_VIEWS: { value: import("../hooks/useSettings").StartView; labelKey: string }[] = [
   { value: "lastNote", labelKey: "settings.system.startViews.lastNote" },
   { value: "dashboard", labelKey: "settings.system.startViews.dashboard" },
@@ -175,6 +181,15 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
                 <span>{t("settings.appearance.treeProgress")}</span>
                 <Toggle checked={settings.treeProgress ?? true} onChange={() => onSetSetting("treeProgress", !settings.treeProgress)} label={t("settings.appearance.treeProgress")} />
               </label>
+            </div>
+
+            <h2 className="text-sm font-semibold text-gray-800 mt-8 mb-2">{t("settings.appearance.linkPreview")}</h2>
+            <div className="flex flex-col gap-3 max-w-sm">
+              <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
+                <span>{t("settings.appearance.linkPreview")}</span>
+                <Toggle checked={settings.linkPreviewEnabled ?? true} onChange={() => onSetSetting("linkPreviewEnabled", !settings.linkPreviewEnabled)} label={t("settings.appearance.linkPreview")} />
+              </label>
+              <Select value={settings.linkPreviewMode ?? "card"} options={LINK_PREVIEW_MODES.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("linkPreviewMode", v as "url" | "inline" | "card")} />
             </div>
           </div>
         )}

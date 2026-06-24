@@ -9,6 +9,8 @@ import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
 import { countTasks } from '../tasks';
 import { ResizableImage } from './ResizableImage';
+import { LinkPreview, LinkPreviewCtx, type LinkDisplay } from './LinkPreviewNode';
+import { isBareUrl } from '../linkMeta';
 import type { Note } from '../types';
 import { api } from '../api';
 import { saveImageFile } from '../saveImage';
@@ -51,6 +53,8 @@ interface Props {
   isWindow?: boolean;
   onSetDue?: (id: string, dueAt: number | null) => void;
   autosaveDelay?: number;
+  linkPreviewEnabled?: boolean;
+  linkPreviewMode?: LinkDisplay;
 }
 
 interface ToolbarBtnProps {
@@ -76,7 +80,7 @@ function ToolbarBtn({ onClick, active, title, children }: ToolbarBtnProps) {
   );
 }
 
-export default function NoteEditor({ note, onChange, isWindow = false, onSetDue, autosaveDelay = 400 }: Props) {
+export default function NoteEditor({ note, onChange, isWindow = false, onSetDue, autosaveDelay = 400, linkPreviewEnabled = true, linkPreviewMode = 'card' }: Props) {
   const { t } = useTranslation();
   const [pinned, setPinned] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
@@ -92,6 +96,8 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
   const [rich, setRich] = useState({ words: 0, chars: 0, sel: 0 });
   const delayRef = useRef(autosaveDelay);
   delayRef.current = autosaveDelay;
+  const lpRef = useRef({ enabled: linkPreviewEnabled, mode: linkPreviewMode });
+  lpRef.current = { enabled: linkPreviewEnabled ?? true, mode: linkPreviewMode ?? 'card' };
 
   const editor = useEditor({
     extensions: [
@@ -101,6 +107,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
       TaskList,
       TaskItem.configure({ nested: true }),
       ResizableImage.configure({ inline: false, allowBase64: true }),
+      LinkPreview,
     ],
     content: note.content || '<p></p>',
     onUpdate: ({ editor: e }) => {
@@ -125,6 +132,14 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
         class: 'h-full text-gray-900 text-[15px] leading-relaxed',
       },
       handlePaste: (view, event) => {
+        const text = event.clipboardData?.getData('text/plain') ?? '';
+        if (lpRef.current.enabled && isBareUrl(text)) {
+          event.preventDefault();
+          view.dispatch(view.state.tr.replaceSelectionWith(
+            view.state.schema.nodes.linkPreview.create({ href: text.trim(), display: lpRef.current.mode })
+          ).scrollIntoView());
+          return true;
+        }
         const files = Array.from(event.clipboardData?.files ?? []);
         if (!files.some(f => f.type.startsWith('image/'))) return false;
         event.preventDefault();
@@ -347,7 +362,9 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
               className="w-full h-full bg-transparent outline-none resize-none font-mono text-sm text-gray-900"
               spellCheck={false}
             />
-          : <EditorContent editor={editor} className="h-full" />}
+          : <LinkPreviewCtx.Provider value={{ enabled: linkPreviewEnabled ?? true, mode: linkPreviewMode ?? 'card' }}>
+              <EditorContent editor={editor} className="h-full" />
+            </LinkPreviewCtx.Provider>}
       </div>
 
       {/* Bottom toolbar */}

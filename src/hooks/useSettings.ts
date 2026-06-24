@@ -29,6 +29,8 @@ export interface AppSettings {
   closeAction: CloseAction;
   shortcuts: Record<string, string>;
   language: LangSetting;
+  linkPreviewEnabled: boolean;
+  linkPreviewMode: 'url' | 'inline' | 'card';
 }
 
 const DEFAULT_LAYOUT: DashboardWidget[] = [
@@ -54,6 +56,8 @@ const DEFAULTS: AppSettings = {
   closeAction: 'ask',
   shortcuts: {},
   language: 'system',
+  linkPreviewEnabled: true,
+  linkPreviewMode: 'card',
 };
 
 function isGridWidget(x: unknown): x is DashboardWidget {
@@ -108,6 +112,8 @@ export function useSettings() {
         closeAction: (['minimize', 'quit'].includes(raw.closeAction) ? raw.closeAction : 'ask') as CloseAction,
         shortcuts: parseShortcuts(raw.shortcuts),
         language: (['en', 'de', 'fr'].includes(raw.language) ? raw.language : 'system') as LangSetting,
+        linkPreviewEnabled: raw.linkPreviewEnabled !== 'false',
+        linkPreviewMode: (['url', 'inline', 'card'].includes(raw.linkPreviewMode) ? raw.linkPreviewMode : 'card') as 'url' | 'inline' | 'card',
       });
       setLoaded(true);
     });
