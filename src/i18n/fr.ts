@@ -34,6 +34,13 @@ export const fr = {
         inline: 'Inline',
         card: 'Carte',
       },
+      copyFormat: 'Format de copie',
+      copyFormats: {
+        richtext: 'Texte enrichi',
+        html: 'HTML',
+        md: 'Markdown',
+        text: 'Texte brut',
+      },
       dateFormats: {
         auto: 'Auto (relatif)',
         de: 'JJ.MM.AAAA',

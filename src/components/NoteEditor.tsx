@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import CodeEditor from 'react-simple-code-editor';
 import { useEditor, EditorContent, type Editor } from '@tiptap/react';
 import type { EditorView } from '@tiptap/pm/view';
+import { DOMSerializer } from '@tiptap/pm/model';
+import { highlightMarkdown } from '../mdHighlight';
+import { selectionToCopy, type CopyFormat } from '../copyFormat';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
 import Placeholder from '@tiptap/extension-placeholder';
@@ -55,6 +59,7 @@ interface Props {
   autosaveDelay?: number;
   linkPreviewEnabled?: boolean;
   linkPreviewMode?: LinkDisplay;
+  copyFormat?: CopyFormat;
 }
 
 interface ToolbarBtnProps {
@@ -80,7 +85,7 @@ function ToolbarBtn({ onClick, active, title, children }: ToolbarBtnProps) {
   );
 }
 
-export default function NoteEditor({ note, onChange, isWindow = false, onSetDue, autosaveDelay = 400, linkPreviewEnabled = true, linkPreviewMode = 'card' }: Props) {
+export default function NoteEditor({ note, onChange, isWindow = false, onSetDue, autosaveDelay = 400, linkPreviewEnabled = true, linkPreviewMode = 'card', copyFormat = 'md' }: Props) {
   const { t } = useTranslation();
   const [pinned, setPinned] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
@@ -98,6 +103,11 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
   delayRef.current = autosaveDelay;
   const lpRef = useRef({ enabled: linkPreviewEnabled, mode: linkPreviewMode });
   lpRef.current = { enabled: linkPreviewEnabled ?? true, mode: linkPreviewMode ?? 'card' };
+  const copyRef = useRef<CopyFormat>(copyFormat ?? 'md');
+  copyRef.current = copyFormat ?? 'md';
+  // handleDOMEvents is created once in the useEditor config, so it reads the
+  // copy/cut handler via this ref to always pick up the current copyFormat.
+  const doCopyRef = useRef<(view: EditorView, event: ClipboardEvent, cut: boolean) => boolean>(() => false);
 
   const editor = useEditor({
     extensions: [
@@ -155,6 +165,10 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
         void insertImageFilesIntoView(view, files, note.id, coords?.pos);
         return true;
       },
+      handleDOMEvents: {
+        copy: (view, event) => doCopyRef.current(view, event as ClipboardEvent, false),
+        cut: (view, event) => doCopyRef.current(view, event as ClipboardEvent, true),
+      },
     },
   });
 
@@ -202,6 +216,22 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
   }, [editor]);
 
   if (!editor) return null;
+
+  // Cursor tracking for the md-mode status bar.
+  const onCur = (e: { target: EventTarget | null }) => setSelStart((e.target as HTMLTextAreaElement).selectionStart ?? 0);
+
+  function doCopy(view: EditorView, event: ClipboardEvent, cut: boolean): boolean {
+    if (copyRef.current === 'richtext') return false;
+    const sel = view.state.selection;
+    if (sel.empty) return false;
+    const div = document.createElement('div');
+    div.appendChild(DOMSerializer.fromSchema(view.state.schema).serializeFragment(view.state.doc.slice(sel.from, sel.to).content));
+    event.clipboardData?.setData('text/plain', selectionToCopy(div.innerHTML, copyRef.current));
+    event.preventDefault();
+    if (cut) view.dispatch(view.state.tr.deleteSelection());
+    return true;
+  }
+  doCopyRef.current = doCopy;
 
   const flushSave = () => {
     if (!pendingSave.current) return;
@@ -353,14 +383,16 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
       {/* Scrollable content area */}
       <div className="flex-1 overflow-auto px-7 py-6">
         {mdMode
-          ? <textarea
+          ? <CodeEditor
               value={mdText}
-              onChange={e => { onMdChange(e.target.value); setSelStart(e.target.selectionStart ?? 0); }}
-              onSelect={e => setSelStart((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
-              onKeyUp={e => setSelStart((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
-              onClick={e => setSelStart((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
-              className="w-full h-full bg-transparent outline-none resize-none font-mono text-sm text-gray-900"
-              spellCheck={false}
+              onValueChange={onMdChange}
+              highlight={highlightMarkdown}
+              onKeyUp={onCur}
+              onClick={onCur}
+              padding={0}
+              textareaClassName="outline-none"
+              className="w-full h-full font-mono text-sm text-gray-900"
+              style={{ fontFamily: 'monospace', fontSize: 14, minHeight: '100%' }}
             />
           : <LinkPreviewCtx.Provider value={{ enabled: linkPreviewEnabled ?? true, mode: linkPreviewMode ?? 'card' }}>
               <EditorContent editor={editor} className="h-full" />

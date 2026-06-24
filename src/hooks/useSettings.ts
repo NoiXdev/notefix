@@ -31,6 +31,7 @@ export interface AppSettings {
   language: LangSetting;
   linkPreviewEnabled: boolean;
   linkPreviewMode: 'url' | 'inline' | 'card';
+  copyFormat: import('../copyFormat').CopyFormat;
 }
 
 const DEFAULT_LAYOUT: DashboardWidget[] = [
@@ -58,6 +59,7 @@ const DEFAULTS: AppSettings = {
   language: 'system',
   linkPreviewEnabled: true,
   linkPreviewMode: 'card',
+  copyFormat: 'md',
 };
 
 function isGridWidget(x: unknown): x is DashboardWidget {
@@ -114,6 +116,7 @@ export function useSettings() {
         language: (['en', 'de', 'fr'].includes(raw.language) ? raw.language : 'system') as LangSetting,
         linkPreviewEnabled: raw.linkPreviewEnabled !== 'false',
         linkPreviewMode: (['url', 'inline', 'card'].includes(raw.linkPreviewMode) ? raw.linkPreviewMode : 'card') as 'url' | 'inline' | 'card',
+        copyFormat: (['richtext', 'html', 'md', 'text'].includes(raw.copyFormat) ? raw.copyFormat : 'md') as import('../copyFormat').CopyFormat,
       });
       setLoaded(true);
     });

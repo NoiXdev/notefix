@@ -129,7 +129,7 @@ export default function App() {
     }
     const note = notes.find(n => n.id === windowNoteId);
     return note
-      ? <div className="h-screen"><NoteEditor note={note} onChange={updateNote} isWindow onSetDue={setDue} autosaveDelay={settings.autosaveDelay} linkPreviewEnabled={settings.linkPreviewEnabled} linkPreviewMode={settings.linkPreviewMode} /></div>
+      ? <div className="h-screen"><NoteEditor note={note} onChange={updateNote} isWindow onSetDue={setDue} autosaveDelay={settings.autosaveDelay} linkPreviewEnabled={settings.linkPreviewEnabled} linkPreviewMode={settings.linkPreviewMode} copyFormat={settings.copyFormat} /></div>
       : <div className="flex h-screen items-center justify-center text-gray-400 text-sm">{t('common.noteNotFound')}</div>;
   }
 
@@ -213,7 +213,7 @@ export default function App() {
             onToggleEdit={() => setDashEdit(v => !v)}
           />
         ) : selectedNote ? (
-          <NoteEditor note={selectedNote} onChange={updateNote} onSetDue={setDue} autosaveDelay={settings.autosaveDelay} linkPreviewEnabled={settings.linkPreviewEnabled} linkPreviewMode={settings.linkPreviewMode} />
+          <NoteEditor note={selectedNote} onChange={updateNote} onSetDue={setDue} autosaveDelay={settings.autosaveDelay} linkPreviewEnabled={settings.linkPreviewEnabled} linkPreviewMode={settings.linkPreviewMode} copyFormat={settings.copyFormat} />
         ) : (
           <div className="flex h-full items-center justify-center" style={{ background: '#fef9c3' }}>
             <div className="text-center" style={{ color: '#b59f3b' }}>

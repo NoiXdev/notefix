@@ -63,6 +63,13 @@ const LINK_PREVIEW_MODES: { value: "url" | "inline" | "card"; labelKey: string }
   { value: "card", labelKey: "settings.appearance.linkPreviewModes.card" },
 ];
 
+const COPY_FORMATS: { value: import("../copyFormat").CopyFormat; labelKey: string }[] = [
+  { value: "richtext", labelKey: "settings.appearance.copyFormats.richtext" },
+  { value: "html", labelKey: "settings.appearance.copyFormats.html" },
+  { value: "md", labelKey: "settings.appearance.copyFormats.md" },
+  { value: "text", labelKey: "settings.appearance.copyFormats.text" },
+];
+
 const START_VIEWS: { value: import("../hooks/useSettings").StartView; labelKey: string }[] = [
   { value: "lastNote", labelKey: "settings.system.startViews.lastNote" },
   { value: "dashboard", labelKey: "settings.system.startViews.dashboard" },
@@ -197,6 +204,9 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
               </label>
               <Select value={settings.linkPreviewMode ?? "card"} options={LINK_PREVIEW_MODES.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("linkPreviewMode", v as "url" | "inline" | "card")} />
             </div>
+
+            <h2 className="text-sm font-semibold text-gray-800 mt-8 mb-2">{t("settings.appearance.copyFormat")}</h2>
+            <div className="max-w-sm"><Select value={settings.copyFormat ?? "md"} options={COPY_FORMATS.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("copyFormat", v as import("../copyFormat").CopyFormat)} /></div>
           </div>
         )}
 

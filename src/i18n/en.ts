@@ -34,6 +34,13 @@ export const en = {
         inline: 'Inline',
         card: 'Card',
       },
+      copyFormat: 'Copy format',
+      copyFormats: {
+        richtext: 'Rich text',
+        html: 'HTML',
+        md: 'Markdown',
+        text: 'Plain text',
+      },
       dateFormats: {
         auto: 'Auto (relative)',
         de: 'DD.MM.YYYY',
