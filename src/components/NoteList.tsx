@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import { DndContext, DragOverlay, PointerSensor, useSensor, useSensors, pointerWithin, type DragStartEvent, type DragOverEvent, type DragEndEvent } from '@dnd-kit/core';
 import type { Note, Folder } from '../types';
 import { computeDrop, type DragKind, type DropMode } from '../dnd';
@@ -58,16 +59,17 @@ const sortNotes = (a: Note, b: Note) => Number(b.pinned) - Number(a.pinned) || a
 
 const fa = (icon: IconDefinition) => <FontAwesomeIcon icon={icon} />;
 
-const SORT_OPTIONS: { value: string; label: string }[] = [
-  { value: 'manual', label: 'Manuell' },
-  { value: 'titleAsc', label: 'Titel A–Z' },
-  { value: 'titleDesc', label: 'Titel Z–A' },
-  { value: 'updatedDesc', label: 'Geändert (neu zuerst)' },
-  { value: 'updatedAsc', label: 'Geändert (alt zuerst)' },
-  { value: 'dueAsc', label: 'Fällig zuerst' },
+const SORT_OPTIONS: { value: string; labelKey: string }[] = [
+  { value: 'manual', labelKey: 'noteList.sort.manual' },
+  { value: 'titleAsc', labelKey: 'noteList.sort.titleAsc' },
+  { value: 'titleDesc', labelKey: 'noteList.sort.titleDesc' },
+  { value: 'updatedDesc', labelKey: 'noteList.sort.updatedDesc' },
+  { value: 'updatedAsc', labelKey: 'noteList.sort.updatedAsc' },
+  { value: 'dueAsc', labelKey: 'noteList.sort.dueAsc' },
 ];
 
 export default function NoteList(props: Props) {
+  const { t } = useTranslation();
   const {
     notes, folders, selectedId, onSelect, onCreate, onDelete, onOpenSettings, onOpenDashboard,
     onTogglePin, onArchive, onSetColor, onMoveNote, onCreateFolder, onRenameFolder, onDeleteFolder,
@@ -105,7 +107,7 @@ export default function NoteList(props: Props) {
   const createAndEdit = (parentId: string | null) => {
     if (!onCreateFolder) return;
     if (parentId) setExpanded(prev => { const n = new Set(prev); n.add(parentId); return n; });
-    void onCreateFolder('Neuer Ordner', parentId).then(id => setEditingFolder(id));
+    void onCreateFolder(t('noteList.newFolderName'), parentId).then(id => setEditingFolder(id));
   };
 
   const [dropHint, setDropHint] = useState<{ id: string; mode: DropMode } | null>(null);
@@ -139,7 +141,7 @@ export default function NoteList(props: Props) {
   // Move-to submenu: all folders indented by depth + root.
   const moveSubmenu = (note: Note): ContextMenuItem[] => {
     const byParent = (pid: string | null): Folder[] => folders.filter(f => (f.parentId ?? null) === pid).sort((a, b) => a.position - b.position);
-    const items: ContextMenuItem[] = [{ label: '— Root —', icon: fa(faFolder), onClick: () => onMoveNote?.(note.id, null) }];
+    const items: ContextMenuItem[] = [{ label: t('noteList.moveRoot'), icon: fa(faFolder), onClick: () => onMoveNote?.(note.id, null) }];
     const walk = (pid: string | null, depth: number) => {
       for (const f of byParent(pid)) {
         items.push({ label: `${'  '.repeat(depth)}${f.name}`, icon: fa(faFolder), onClick: () => onMoveNote?.(note.id, f.id) });
@@ -229,15 +231,15 @@ export default function NoteList(props: Props) {
       <div className="px-4 py-3 flex items-center justify-between border-b border-gray-800">
         <div className="flex items-center gap-1.5">
           <button onClick={onLogoClick} className="flex items-center" aria-label="Notefix" title="Notefix"><Logo size={18} /></button>
-          <span className="text-gray-200 text-xs font-semibold uppercase tracking-widest">{view === 'archived' ? 'Archiv' : view === 'trash' ? 'Papierkorb' : 'Notefix'}</span>
+          <span className="text-gray-200 text-xs font-semibold uppercase tracking-widest">{view === 'archived' ? t('noteList.headerArchive') : view === 'trash' ? t('noteList.headerTrash') : 'Notefix'}</span>
         </div>
         <div className="flex items-center gap-1">
           {view === 'active' && (
-            <button onClick={onCreate} className="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 rounded" title="New note">
+            <button onClick={onCreate} className="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 rounded" title={t('noteList.newNote')}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
             </button>
           )}
-          <button onClick={e => setHeaderMenu({ x: e.clientX, y: e.clientY })} className="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 rounded" title="Mehr">
+          <button onClick={e => setHeaderMenu({ x: e.clientX, y: e.clientY })} className="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 rounded" title={t('noteList.more')}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="19" cy="12" r="1.6" /></svg>
           </button>
         </div>
@@ -251,14 +253,14 @@ export default function NoteList(props: Props) {
         >
           {showArchived ? (
             archivedNotes.length === 0
-              ? <p className="text-gray-600 text-xs text-center mt-10 px-4">Keine archivierten Notizen.</p>
+              ? <p className="text-gray-600 text-xs text-center mt-10 px-4">{t('noteList.noArchivedNotes')}</p>
               : archivedNotes.sort(sortNotes).map(n => renderRow(n, 0))
           ) : (
             <>
-              {globalPinned.length > 0 && (<><div className="px-4 pt-3 pb-1 text-gray-600 text-[10px] font-semibold uppercase tracking-widest">Angepinnt</div>{globalPinned.map(n => renderRow(n, 0))}</>)}
+              {globalPinned.length > 0 && (<><div className="px-4 pt-3 pb-1 text-gray-600 text-[10px] font-semibold uppercase tracking-widest">{t('noteList.pinned')}</div>{globalPinned.map(n => renderRow(n, 0))}</>)}
               {childFolders(null).map(f => renderFolder(f, 0))}
               {treeNotesIn(null).map(n => renderRow(n, 0))}
-              {notes.length === 0 && folders.length === 0 && <p className="text-gray-600 text-xs text-center mt-10 px-4">No notes yet.<br />Click + to create one.</p>}
+              {notes.length === 0 && folders.length === 0 && <p className="text-gray-600 text-xs text-center mt-10 px-4">{t('noteList.emptyTitle')}<br />{t('noteList.emptyHint')}</p>}
               {(onReorderNotes || onReorderFolders) && <RootDropZone />}
             </>
           )}
@@ -278,16 +280,16 @@ export default function NoteList(props: Props) {
       {view === 'trash' && (
         <div className="flex-1 overflow-y-auto">
           <div className="flex items-center justify-between px-4 py-2 border-b border-gray-800">
-            <span className="text-gray-500 text-xs">{trashed.length} im Papierkorb</span>
-            {trashed.length > 0 && <button onClick={() => setPendingEmpty(true)} className="text-xs text-red-400 hover:text-red-300">Papierkorb leeren</button>}
+            <span className="text-gray-500 text-xs">{t('noteList.trashCount', { count: trashed.length })}</span>
+            {trashed.length > 0 && <button onClick={() => setPendingEmpty(true)} className="text-xs text-red-400 hover:text-red-300">{t('noteList.emptyTrash')}</button>}
           </div>
-          {trashed.length === 0 && <p className="text-gray-600 text-xs text-center mt-10 px-4">Papierkorb ist leer.</p>}
+          {trashed.length === 0 && <p className="text-gray-600 text-xs text-center mt-10 px-4">{t('noteList.trashIsEmpty')}</p>}
           {trashed.map(n => (
             <div key={n.id} className="px-4 py-2 border-b border-gray-900 flex items-center justify-between gap-2">
               <span className="text-gray-300 text-sm truncate">{getPreview(n.content)}</span>
               <div className="flex items-center gap-3 shrink-0">
-                <button onClick={() => onRestore?.(n.id)} className="text-xs text-gray-400 hover:text-white" title="Wiederherstellen">Wiederherstellen</button>
-                <button onClick={() => setPendingPurge(n.id)} className="text-xs text-gray-500 hover:text-red-400" title="Endgültig löschen">Löschen</button>
+                <button onClick={() => onRestore?.(n.id)} className="text-xs text-gray-400 hover:text-white" title={t('noteList.restore')}>{t('noteList.restore')}</button>
+                <button onClick={() => setPendingPurge(n.id)} className="text-xs text-gray-500 hover:text-red-400" title={t('noteList.confirm.deletePermanent')}>{t('noteList.delete')}</button>
               </div>
             </div>
           ))}
@@ -299,11 +301,11 @@ export default function NoteList(props: Props) {
           x={menu.x} y={menu.y}
           swatches={onSetColor ? { colors: NOTE_COLORS, current: menu.note.color, onPick: c => onSetColor(menu.note.id, c) } : undefined}
           items={[
-            ...(onTogglePin ? [{ label: menu.note.pinned ? 'Lösen' : 'Anpinnen', icon: fa(faThumbtack), onClick: () => onTogglePin(menu.note.id, !menu.note.pinned) }] : []),
-            ...(onArchive ? [{ label: menu.note.archived ? 'Wiederherstellen' : 'Archivieren', icon: fa(faBoxArchive), onClick: () => onArchive(menu.note.id, !menu.note.archived) }] : []),
-            ...(onMoveNote ? [{ label: 'Verschieben nach', icon: fa(faRightLong), submenu: moveSubmenu(menu.note) }] : []),
-            { label: 'Löschen', icon: fa(faTrash), onClick: () => setPendingDelete(menu.note.id) },
-            { label: 'Exportieren', icon: fa(faFileExport), onClick: () => onExport([menu.note.id], `${(getPreview(menu.note.content).slice(0, 40) || 'notiz').replace(/[/\\:]/g, '-')}.json`) },
+            ...(onTogglePin ? [{ label: menu.note.pinned ? t('noteList.menu.unpin') : t('noteList.menu.pin'), icon: fa(faThumbtack), onClick: () => onTogglePin(menu.note.id, !menu.note.pinned) }] : []),
+            ...(onArchive ? [{ label: menu.note.archived ? t('noteList.menu.restore') : t('noteList.menu.archive'), icon: fa(faBoxArchive), onClick: () => onArchive(menu.note.id, !menu.note.archived) }] : []),
+            ...(onMoveNote ? [{ label: t('noteList.menu.moveTo'), icon: fa(faRightLong), submenu: moveSubmenu(menu.note) }] : []),
+            { label: t('noteList.menu.delete'), icon: fa(faTrash), onClick: () => setPendingDelete(menu.note.id) },
+            { label: t('noteList.menu.export'), icon: fa(faFileExport), onClick: () => onExport([menu.note.id], `${(getPreview(menu.note.content).slice(0, 40) || t('noteList.exportFallbackName')).replace(/[/\\:]/g, '-')}.json`) },
           ]}
           onClose={() => setMenu(null)}
         />
@@ -312,11 +314,11 @@ export default function NoteList(props: Props) {
         <ContextMenu
           x={folderMenu.x} y={folderMenu.y}
           items={[
-            ...((onSetFolderIcon && onSetFolderColor) ? [{ label: 'Anpassen…', icon: fa(faPalette), onClick: () => setCustomizer({ x: folderMenu.x, y: folderMenu.y, folderId: folderMenu.folder.id }) }] : []),
-            ...(onSetFolderSort ? [{ label: 'Sortierung', icon: fa(faArrowDownAZ), submenu: SORT_OPTIONS.map(o => ({ label: o.label, icon: fa(folderMenu.folder.sort === o.value ? faCheck : faArrowDownAZ), onClick: () => onSetFolderSort(folderMenu.folder.id, o.value) })) }] : []),
-            { label: 'Neuer Unterordner', icon: fa(faFolderPlus), onClick: () => createAndEdit(folderMenu.folder.id) },
-            { label: 'Umbenennen', icon: fa(faPen), onClick: () => setEditingFolder(folderMenu.folder.id) },
-            { label: 'Löschen', icon: fa(faTrash), onClick: () => onDeleteFolder?.(folderMenu.folder) },
+            ...((onSetFolderIcon && onSetFolderColor) ? [{ label: t('noteList.menu.customize'), icon: fa(faPalette), onClick: () => setCustomizer({ x: folderMenu.x, y: folderMenu.y, folderId: folderMenu.folder.id }) }] : []),
+            ...(onSetFolderSort ? [{ label: t('noteList.menu.sortBy'), icon: fa(faArrowDownAZ), submenu: SORT_OPTIONS.map(o => ({ label: t(o.labelKey), icon: fa(folderMenu.folder.sort === o.value ? faCheck : faArrowDownAZ), onClick: () => onSetFolderSort(folderMenu.folder.id, o.value) })) }] : []),
+            { label: t('noteList.menu.newSubfolder'), icon: fa(faFolderPlus), onClick: () => createAndEdit(folderMenu.folder.id) },
+            { label: t('noteList.menu.rename'), icon: fa(faPen), onClick: () => setEditingFolder(folderMenu.folder.id) },
+            { label: t('noteList.menu.delete'), icon: fa(faTrash), onClick: () => onDeleteFolder?.(folderMenu.folder) },
           ]}
           onClose={() => setFolderMenu(null)}
         />
@@ -324,7 +326,7 @@ export default function NoteList(props: Props) {
       {rootMenu && onCreateFolder && (
         <ContextMenu
           x={rootMenu.x} y={rootMenu.y}
-          items={[{ label: 'Neuer Ordner', icon: fa(faFolderPlus), onClick: () => createAndEdit(null) }]}
+          items={[{ label: t('noteList.menu.newFolder'), icon: fa(faFolderPlus), onClick: () => createAndEdit(null) }]}
           onClose={() => setRootMenu(null)}
         />
       )}
@@ -332,12 +334,12 @@ export default function NoteList(props: Props) {
         <ContextMenu
           x={headerMenu.x} y={headerMenu.y}
           items={[
-            ...(onOpenDashboard ? [{ label: 'Dashboard', icon: fa(faTableColumns), onClick: onOpenDashboard }] : []),
-            ...((onCreateFolder && view === 'active') ? [{ label: 'Neuer Ordner', icon: fa(faFolderPlus), onClick: () => createAndEdit(null) }] : []),
-            ...(view !== 'active' ? [{ label: 'Aktive Notizen', icon: fa(faNoteSticky), onClick: () => setView('active') }] : []),
-            ...(view !== 'archived' ? [{ label: 'Archiv anzeigen', icon: fa(faBoxArchive), onClick: () => setView('archived') }] : []),
-            ...(view !== 'trash' ? [{ label: 'Papierkorb', icon: fa(faTrashCan), onClick: () => setView('trash') }] : []),
-            { label: 'Einstellungen', icon: fa(faGear), onClick: onOpenSettings },
+            ...(onOpenDashboard ? [{ label: t('noteList.menu.dashboard'), icon: fa(faTableColumns), onClick: onOpenDashboard }] : []),
+            ...((onCreateFolder && view === 'active') ? [{ label: t('noteList.menu.newFolder'), icon: fa(faFolderPlus), onClick: () => createAndEdit(null) }] : []),
+            ...(view !== 'active' ? [{ label: t('noteList.menu.activeNotes'), icon: fa(faNoteSticky), onClick: () => setView('active') }] : []),
+            ...(view !== 'archived' ? [{ label: t('noteList.menu.showArchive'), icon: fa(faBoxArchive), onClick: () => setView('archived') }] : []),
+            ...(view !== 'trash' ? [{ label: t('noteList.menu.trash'), icon: fa(faTrashCan), onClick: () => setView('trash') }] : []),
+            { label: t('noteList.menu.settings'), icon: fa(faGear), onClick: onOpenSettings },
           ]}
           onClose={() => setHeaderMenu(null)}
         />
@@ -357,9 +359,9 @@ export default function NoteList(props: Props) {
       })()}
       {pendingDelete && (
         <ConfirmDialog
-          title="Notiz löschen"
-          message={trashEnabled ? 'In den Papierkorb verschieben?' : 'Diese Notiz endgültig löschen?'}
-          confirmLabel={trashEnabled ? 'In Papierkorb' : 'Endgültig löschen'}
+          title={t('noteList.confirm.deleteTitle')}
+          message={trashEnabled ? t('noteList.confirm.deleteTrashMessage') : t('noteList.confirm.deletePermanentMessage')}
+          confirmLabel={trashEnabled ? t('noteList.confirm.moveToTrash') : t('noteList.confirm.deletePermanent')}
           danger={!trashEnabled}
           onConfirm={() => { onDelete(pendingDelete); setPendingDelete(null); }}
           onCancel={() => setPendingDelete(null)}
@@ -367,18 +369,18 @@ export default function NoteList(props: Props) {
       )}
       {pendingPurge && (
         <ConfirmDialog
-          title="Endgültig löschen"
-          message="Diese Notiz endgültig löschen? Das kann nicht rückgängig gemacht werden."
-          confirmLabel="Endgültig löschen" danger
+          title={t('noteList.confirm.purgeTitle')}
+          message={t('noteList.confirm.purgeMessage')}
+          confirmLabel={t('noteList.confirm.deletePermanent')} danger
           onConfirm={() => { onPurge?.(pendingPurge); setPendingPurge(null); }}
           onCancel={() => setPendingPurge(null)}
         />
       )}
       {pendingEmpty && (
         <ConfirmDialog
-          title="Papierkorb leeren"
-          message="Alle Notizen im Papierkorb endgültig löschen?"
-          confirmLabel="Leeren" danger
+          title={t('noteList.confirm.emptyTitle')}
+          message={t('noteList.confirm.emptyMessage')}
+          confirmLabel={t('noteList.confirm.empty')} danger
           onConfirm={() => { onEmptyTrash?.(); setPendingEmpty(false); }}
           onCancel={() => setPendingEmpty(false)}
         />
