@@ -155,4 +155,6 @@ export const api = {
 
   /** Open an http/https link in the OS default browser. */
   openExternal: (url: string): Promise<void> => openUrl(url),
+
+  fetchLinkMeta: (url: string): Promise<import("./linkMeta").LinkMeta> => invoke("fetch_link_meta", { url }),
 };
