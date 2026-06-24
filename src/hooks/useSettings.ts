@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '../api';
 import type { DateFormat } from '../dates';
+import { parseShortcuts } from '../shortcuts';
 
 export type CloseAction = 'ask' | 'minimize' | 'quit';
 export type PinnedScope = 'perFolder' | 'global';
@@ -23,6 +24,7 @@ export interface AppSettings {
   trashEnabled: boolean;
   trashRetentionDays: number;
   closeAction: CloseAction;
+  shortcuts: Record<string, string>;
 }
 
 const DEFAULT_LAYOUT: DashboardWidget[] = [
@@ -46,6 +48,7 @@ const DEFAULTS: AppSettings = {
   trashEnabled: true,
   trashRetentionDays: 30,
   closeAction: 'ask',
+  shortcuts: {},
 };
 
 function isGridWidget(x: unknown): x is DashboardWidget {
@@ -98,6 +101,7 @@ export function useSettings() {
         trashEnabled: raw.trashEnabled !== 'false',
         trashRetentionDays: Number(raw.trashRetentionDays) > 0 ? Number(raw.trashRetentionDays) : 30,
         closeAction: (['minimize', 'quit'].includes(raw.closeAction) ? raw.closeAction : 'ask') as CloseAction,
+        shortcuts: parseShortcuts(raw.shortcuts),
       });
       setLoaded(true);
     });
@@ -106,7 +110,7 @@ export function useSettings() {
   const setSetting = useCallback(
     async <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
       setSettings(prev => ({ ...prev, [key]: value }));
-      const serialized = Array.isArray(value) ? JSON.stringify(value) : String(value);
+      const serialized = value !== null && typeof value === 'object' ? JSON.stringify(value) : String(value);
       await api.settings.set(key, serialized);
     },
     [],
