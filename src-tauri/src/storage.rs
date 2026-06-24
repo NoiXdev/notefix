@@ -56,6 +56,20 @@ impl Store {
         rows.collect()
     }
 
+    /// Alle Notizen inkl. Papierkorb (für Migration/GC-Referenzscan).
+    pub fn load_all_notes(&self) -> rusqlite::Result<Vec<Note>> {
+        let sql = format!("SELECT {COLS} FROM notes");
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map([], row_to_note)?;
+        rows.collect()
+    }
+
+    /// Nur den Content setzen — ohne `updated_at`-Bump und ohne Revision.
+    pub fn set_content_silent(&self, id: &str, content: &str) -> rusqlite::Result<()> {
+        self.conn.execute("UPDATE notes SET content = ?2 WHERE id = ?1", (id, content))?;
+        Ok(())
+    }
+
     pub fn save_note(&self, note: &Note) -> rusqlite::Result<()> {
         self.conn.execute(
             "INSERT INTO notes (id, content, updated_at, pinned, archived, color, due_at, folder_id, position) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
@@ -261,6 +275,18 @@ mod tests {
         s.restore_note("a").unwrap();
         assert_eq!(s.load_notes().unwrap().len(), 1);
         assert!(s.load_trashed().unwrap().is_empty());
+    }
+
+    #[test]
+    fn set_content_silent_keeps_updated_at_and_load_all_includes_trashed() {
+        let s = store();
+        s.save_note(&note("a", "<p>v1</p>", 1000)).unwrap();
+        s.trash_note("a", 1).unwrap();
+        s.set_content_silent("a", "<p>v2</p>").unwrap();
+        let all = s.load_all_notes().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].content, "<p>v2</p>");
+        assert_eq!(all[0].updated_at, 1000);
     }
 
     #[test]

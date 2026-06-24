@@ -60,6 +60,10 @@ pub fn run() {
                 let days = settings::get_int(&store.conn, "trashRetentionDays", 30);
                 let _ = store.purge_trashed(Some(now - days * 86_400_000));
             }
+            if !settings::get_bool(&store.conn, "imagesMigrated") {
+                let _ = images::migrate_inline_images(&store, &images::images_dir(app.handle()));
+                let _ = settings::set_setting(&store.conn, "imagesMigrated", "true");
+            }
             if let Some(legacy) = legacy_notes_dir() {
                 let _ = migrate::import_legacy_if_needed(&store, &legacy);
             }
