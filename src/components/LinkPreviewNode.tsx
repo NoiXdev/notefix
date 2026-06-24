@@ -90,13 +90,26 @@ export const LinkPreview = Node.create({
   selectable: true,
   addStorage() { return { enabled: true as boolean, mode: 'card' as LinkDisplay }; },
   addAttributes() {
+    // renderHTML is overridden below to emit data-* attributes; suppress the
+    // auto-rendered plain attrs (display="", title="" …) so the stored HTML
+    // stays clean. href is still auto-parsed/rendered via the node's parseHTML.
+    const noRender = { renderHTML: () => ({}) };
     return {
-      href: { default: '' }, display: { default: 'card' },
-      title: { default: '' }, description: { default: '' }, image: { default: '' }, site: { default: '' },
+      href: { default: '' },
+      display: { default: 'card', ...noRender },
+      title: { default: '', ...noRender },
+      description: { default: '', ...noRender },
+      image: { default: '', ...noRender },
+      site: { default: '', ...noRender },
     };
   },
   parseHTML() {
-    return [{ tag: 'a[data-link-preview]', getAttrs: el => {
+    // priority must beat StarterKit's Link mark (1000 at the extension level,
+    // but 50 at the ProseMirror rule level since Tiptap does not propagate it).
+    // ProseMirror inserts mark rules before node rules at equal priority, so
+    // without this an <a data-link-preview> round-tripped through markdown is
+    // parsed as a plain link mark and the preview node is lost.
+    return [{ tag: 'a[data-link-preview]', priority: 100, getAttrs: el => {
       const e = el as HTMLElement;
       return {
         href: e.getAttribute('href') || '', display: (e.getAttribute('data-display') as LinkDisplay) || 'card',
