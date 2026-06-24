@@ -53,7 +53,15 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
-            let db_path = config::read_db_path(app.handle());
+            // Seed a registry from the existing single-DB path so existing
+            // users keep their database, then open the active context's DB.
+            let default_db = config::read_db_path(app.handle());
+            let prof_path = config::profiles_path(app.handle());
+            let reg = profiles::load(&prof_path, &default_db.to_string_lossy());
+            // First run / upgrade: persist the seeded registry so the file exists.
+            let _ = profiles::save(&prof_path, &reg);
+
+            let db_path = std::path::PathBuf::from(&reg.active().expect("active context").path);
             if let Some(parent) = db_path.parent() {
                 std::fs::create_dir_all(parent)?;
             }

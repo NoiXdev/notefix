@@ -27,6 +27,14 @@ pub fn default_db_path(app: &AppHandle) -> PathBuf {
     app_data(app).join("notefix.db")
 }
 
+pub fn profiles_path(app: &AppHandle) -> PathBuf {
+    app_data(app).join("profiles.json")
+}
+
+pub fn contexts_dir(app: &AppHandle) -> PathBuf {
+    app_data(app).join("contexts")
+}
+
 pub fn read_db_path(app: &AppHandle) -> PathBuf {
     let default = default_db_path(app);
     match std::fs::read_to_string(config_path(app)) {
