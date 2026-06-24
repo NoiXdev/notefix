@@ -6,7 +6,11 @@ const note = { id: 'n1', content: '<p>Hallo Welt</p>', updatedAt: 1, pinned: fal
 test('note context menu → export opens the format modal', async ({ page }) => {
   await installTauriMock(page, { notes: [note] });
   await page.goto('/');
-  await page.getByText('Hallo Welt').click({ button: 'right' });
+  // "Hallo Welt" appears in both the note row and the auto-opened editor;
+  // target the note row (first match) to right-click its context menu.
+  const row = page.getByText('Hallo Welt').first();
+  await expect(row).toBeVisible();
+  await row.click({ button: 'right' });
   await page.getByText('Exportieren').click();
   await expect(page.getByText('Notiz exportieren')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Markdown' })).toBeVisible();
