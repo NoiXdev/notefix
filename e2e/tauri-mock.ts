@@ -5,6 +5,7 @@ export interface MockData {
   folders?: unknown[];
   trashed?: unknown[];
   settings?: [string, string][];
+  responses?: Record<string, unknown>;
 }
 
 export async function installTauriMock(page: Page, data: MockData = {}): Promise<void> {
@@ -17,6 +18,7 @@ export async function installTauriMock(page: Page, data: MockData = {}): Promise
       note_stats: { notes: 0, archived: 0, characters: 0, words: 0 },
       get_db_path: '/x/notefix.db',
       note_revisions: [],
+      check_paths: d.responses?.check_paths ?? { dbWritable: true, imagesWritable: true, dbPath: '/x', imagesPath: '/x/images' },
     };
     let cbId = 0;
     // Registry so tests can drive Tauri events (e.g. window "close-requested").
@@ -31,6 +33,11 @@ export async function installTauriMock(page: Page, data: MockData = {}): Promise
     // "Cannot read properties of undefined (reading 'unregisterListener')".
     w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
     w.__TAURI_INTERNALS__ = {
+      // getCurrentWindow()/getCurrentWebview() read these; without them they throw.
+      metadata: {
+        currentWindow: { label: 'main' },
+        currentWebview: { windowLabel: 'main', label: 'main' },
+      },
       invoke: async (cmd: string, args?: unknown) => {
         if (cmd in responses) return responses[cmd];
         if (cmd.startsWith('plugin:autostart')) return false;
