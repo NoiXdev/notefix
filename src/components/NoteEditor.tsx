@@ -440,6 +440,9 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
             <path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1" stroke="currentColor" strokeWidth="1.8" fill="none" />
           </svg>
         </ToolbarBtn>
+        <ToolbarBtn onClick={() => editor.chain().focus().toggleCodeBlock().run()} active={editor.isActive('codeBlock')} title={t('editor.codeBlock')}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="8 9 5 12 8 15" /><polyline points="16 9 19 12 16 15" /><line x1="13" y1="7" x2="11" y2="17" /></svg>
+        </ToolbarBtn>
 
         <div className="w-px h-5 bg-yellow-400 mx-1" />
 

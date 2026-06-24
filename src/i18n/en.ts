@@ -206,6 +206,7 @@ export const en = {
     taskList: 'Task list',
     bulletList: 'Bullet list',
     numberedList: 'Numbered list',
+    codeBlock: 'Code block',
     insertImage: 'Insert image',
     history: 'History',
     markdown: 'Markdown',

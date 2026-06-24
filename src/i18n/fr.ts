@@ -206,6 +206,7 @@ export const fr = {
     taskList: 'Liste de tâches',
     bulletList: 'Liste à puces',
     numberedList: 'Liste numérotée',
+    codeBlock: 'Bloc de code',
     insertImage: 'Insérer une image',
     history: 'Historique',
     markdown: 'Markdown',

@@ -35,3 +35,25 @@ describe('markdown task lists', () => {
     expect(markdownToHtml(md)).toContain('data-checked="true"');
   });
 });
+
+describe('markdown link-preview + code block', () => {
+  it('a[data-link-preview] becomes the bare url in markdown', () => {
+    const html = '<p><a data-link-preview href="https://ex.com/a" data-display="card">Titel</a></p>';
+    expect(htmlToMarkdown(html)).toContain('https://ex.com/a');
+    expect(htmlToMarkdown(html)).not.toContain('[Titel]');
+  });
+  it('markdownToHtml restores a bare-url autolink to a link-preview node', () => {
+    const out = markdownToHtml('https://ex.com/a');
+    expect(out).toContain('data-link-preview');
+    expect(out).toContain('https://ex.com/a');
+  });
+  it('keeps a labelled markdown link as a plain link', () => {
+    const out = markdownToHtml('[click](https://ex.com/a)');
+    expect(out).not.toContain('data-link-preview');
+  });
+  it('round-trips a fenced code block', () => {
+    const md = htmlToMarkdown('<pre><code>const a = 1;</code></pre>');
+    expect(md).toContain('```');
+    expect(markdownToHtml(md)).toContain('<code');
+  });
+});

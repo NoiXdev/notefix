@@ -206,6 +206,7 @@ export const de = {
     taskList: 'Aufgabenliste',
     bulletList: 'Aufzählung',
     numberedList: 'Nummerierte Liste',
+    codeBlock: 'Code-Block',
     insertImage: 'Bild einfügen',
     history: 'Verlauf',
     markdown: 'Markdown',
