@@ -1,13 +1,13 @@
 export type ShortcutContext = 'main' | 'window';
-export interface ShortcutAction { id: string; label: string; defaultCombo: string; context: ShortcutContext; }
+export interface ShortcutAction { id: string; labelKey: string; defaultCombo: string; context: ShortcutContext; }
 
 export const SHORTCUT_ACTIONS: ShortcutAction[] = [
-  { id: 'navPrev', label: 'Vorherige Notiz', defaultCombo: 'ArrowUp', context: 'main' },
-  { id: 'navNext', label: 'Nächste Notiz', defaultCombo: 'ArrowDown', context: 'main' },
-  { id: 'newNote', label: 'Neue Notiz', defaultCombo: 'Mod+N', context: 'main' },
-  { id: 'newFolder', label: 'Neuer Ordner', defaultCombo: 'Mod+Shift+N', context: 'main' },
-  { id: 'archive', label: 'Notiz archivieren / wiederherstellen', defaultCombo: 'Mod+E', context: 'main' },
-  { id: 'closeWindow', label: 'Losgelöstes Fenster schließen', defaultCombo: 'Escape', context: 'window' },
+  { id: 'navPrev', labelKey: 'shortcuts.actions.navPrev', defaultCombo: 'ArrowUp', context: 'main' },
+  { id: 'navNext', labelKey: 'shortcuts.actions.navNext', defaultCombo: 'ArrowDown', context: 'main' },
+  { id: 'newNote', labelKey: 'shortcuts.actions.newNote', defaultCombo: 'Mod+N', context: 'main' },
+  { id: 'newFolder', labelKey: 'shortcuts.actions.newFolder', defaultCombo: 'Mod+Shift+N', context: 'main' },
+  { id: 'archive', labelKey: 'shortcuts.actions.archive', defaultCombo: 'Mod+E', context: 'main' },
+  { id: 'closeWindow', labelKey: 'shortcuts.actions.closeWindow', defaultCombo: 'Escape', context: 'window' },
 ];
 
 const ACTION_IDS = new Set(SHORTCUT_ACTIONS.map(a => a.id));
