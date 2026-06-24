@@ -15,6 +15,8 @@ import { saveImageFile } from '../saveImage';
 import { toDateInputValue, fromDateInputValue } from '../dates';
 import { htmlToMarkdown, markdownToHtml } from '../markdown';
 import HistoryModal from './HistoryModal';
+import StatusBar from './StatusBar';
+import { mdCursor, richCounts } from '../editorStatus';
 
 async function insertImageFilesIntoView(view: EditorView, files: File[], noteId: string, pos?: number): Promise<void> {
   const images = files.filter(f => f.type.startsWith('image/'));
@@ -87,6 +89,8 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
   const [mdText, setMdText] = useState('');
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('saved');
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
+  const [selStart, setSelStart] = useState(0);
+  const [rich, setRich] = useState({ words: 0, chars: 0, sel: 0 });
   const delayRef = useRef(autosaveDelay);
   delayRef.current = autosaveDelay;
 
@@ -168,6 +172,19 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
     editor.commands.setContent(incoming);
   }, [note.content, editor]);
 
+  // Track Tiptap selection/content to drive the rich-mode status bar.
+  useEffect(() => {
+    if (!editor) return;
+    const update = () => {
+      const sel = editor.state.selection;
+      setRich(richCounts(editor.state.doc.textContent, sel.to - sel.from));
+    };
+    update();
+    editor.on('update', update);
+    editor.on('selectionUpdate', update);
+    return () => { editor.off('update', update); editor.off('selectionUpdate', update); };
+  }, [editor]);
+
   if (!editor) return null;
 
   const flushSave = () => {
@@ -216,6 +233,12 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
     const next = await api.toggleAlwaysOnTop(pinned);
     setPinned(next);
   };
+
+  const statusText = mdMode
+    ? t('editor.status.md', mdCursor(mdText, selStart))
+    : rich.sel > 0
+      ? t('editor.status.richSel', rich)
+      : t('editor.status.rich', rich);
 
   return (
     <div className="flex flex-col h-full relative" style={{ background: '#fef9c3' }}>
@@ -310,7 +333,15 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
       {/* Scrollable content area */}
       <div className="flex-1 overflow-auto px-7 py-6">
         {mdMode
-          ? <textarea value={mdText} onChange={e => onMdChange(e.target.value)} className="w-full h-full bg-transparent outline-none resize-none font-mono text-sm text-gray-900" spellCheck={false} />
+          ? <textarea
+              value={mdText}
+              onChange={e => { onMdChange(e.target.value); setSelStart(e.target.selectionStart ?? 0); }}
+              onSelect={e => setSelStart((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
+              onKeyUp={e => setSelStart((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
+              onClick={e => setSelStart((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
+              className="w-full h-full bg-transparent outline-none resize-none font-mono text-sm text-gray-900"
+              spellCheck={false}
+            />
           : <EditorContent editor={editor} className="h-full" />}
       </div>
 
@@ -401,6 +432,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
         )}
       </div>
       {historyOpen && <HistoryModal noteId={note.id} onRestore={restore} onClose={() => setHistoryOpen(false)} />}
+      <StatusBar text={statusText} />
     </div>
   );
 }

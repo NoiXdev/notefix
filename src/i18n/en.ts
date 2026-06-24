@@ -193,6 +193,11 @@ export const en = {
     history: 'History',
     markdown: 'Markdown',
     openInWindow: 'Open in new window',
+    status: {
+      md: 'Ln {{ln}}, Col {{col}} | Length: {{length}} | Lines: {{lines}}',
+      rich: 'Words: {{words}} | Characters: {{chars}}',
+      richSel: 'Words: {{words}} | Characters: {{chars}} · Selection: {{sel}}',
+    },
   },
   dashboard: {
     title: 'Dashboard',

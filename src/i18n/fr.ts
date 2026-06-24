@@ -193,6 +193,11 @@ export const fr = {
     history: 'Historique',
     markdown: 'Markdown',
     openInWindow: 'Ouvrir dans une nouvelle fenêtre',
+    status: {
+      md: 'Lgn {{ln}}, Col {{col}} | Longueur : {{length}} | Lignes : {{lines}}',
+      rich: 'Mots : {{words}} | Caractères : {{chars}}',
+      richSel: 'Mots : {{words}} | Caractères : {{chars}} · Sélection : {{sel}}',
+    },
   },
   dashboard: {
     title: 'Tableau de bord',

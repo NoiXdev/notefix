@@ -22,6 +22,9 @@ vi.mock("@tiptap/react", () => {
     commands: { setContent: vi.fn(), focus: vi.fn() },
     getHTML: () => "<p></p>",
     isEditable: true,
+    on: vi.fn(),
+    off: vi.fn(),
+    state: { selection: { from: 0, to: 0 }, doc: { textContent: "" } },
   };
   return { useEditor: () => editor, EditorContent: () => null };
 });
@@ -87,6 +90,11 @@ describe("NoteEditor — main window mode (isWindow=false)", () => {
   it("renders the save indicator", () => {
     render(<NoteEditor note={{ id: 'a', content: '<p>x</p>', updatedAt: 1, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position: 0, deletedAt: null }} onChange={vi.fn()} />);
     expect(screen.getByLabelText('Speichern')).toBeInTheDocument();
+  });
+
+  it("shows a status bar with word/character counts", () => {
+    render(<NoteEditor note={mockNote} onChange={onChange} />);
+    expect(screen.getByText(/Wörter:/)).toBeInTheDocument();
   });
 });
 

@@ -193,6 +193,11 @@ export const de = {
     history: 'Verlauf',
     markdown: 'Markdown',
     openInWindow: 'In neuem Fenster öffnen',
+    status: {
+      md: 'Z {{ln}}, Sp {{col}} | Länge: {{length}} | Zeilen: {{lines}}',
+      rich: 'Wörter: {{words}} | Zeichen: {{chars}}',
+      richSel: 'Wörter: {{words}} | Zeichen: {{chars}} · Auswahl: {{sel}}',
+    },
   },
   dashboard: {
     title: 'Dashboard',
