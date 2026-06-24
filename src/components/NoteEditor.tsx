@@ -176,13 +176,15 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
   useEffect(() => {
     if (!editor) return;
     const update = () => {
-      const sel = editor.state.selection;
-      setRich(richCounts(editor.state.doc.textContent, sel.to - sel.from));
+      const sel = editor.state?.selection;
+      if (!sel || !editor.state?.doc) return;
+      setRich(richCounts(editor.state.doc.textContent ?? '', sel.to - sel.from));
     };
     update();
+    if (typeof editor.on !== 'function') return;
     editor.on('update', update);
     editor.on('selectionUpdate', update);
-    return () => { editor.off('update', update); editor.off('selectionUpdate', update); };
+    return () => { editor.off?.('update', update); editor.off?.('selectionUpdate', update); };
   }, [editor]);
 
   if (!editor) return null;
