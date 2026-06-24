@@ -9,7 +9,9 @@ import Logo from './components/Logo';
 import Settings from './components/Settings';
 import DeleteFolderModal from './components/DeleteFolderModal';
 import CloseDialog from './components/CloseDialog';
+import ExportDialog from './components/ExportDialog';
 import Dashboard from './components/Dashboard';
+import { exportBase64, exportBundle } from './export';
 import type { Folder, Stats } from './types';
 
 const windowNoteId = new URLSearchParams(window.location.search).get('windowNoteId');
@@ -22,6 +24,8 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [folderToDelete, setFolderToDelete] = useState<Folder | null>(null);
   const [closePrompt, setClosePrompt] = useState(false);
+  const [exportReq, setExportReq] = useState<{ ids: string[]; name: string } | null>(null);
+  const requestExport = (ids: string[], name: string) => setExportReq({ ids, name });
   const [view, setView] = useState<'editor' | 'dashboard'>('editor');
   const [dashEdit, setDashEdit] = useState(false);
   const [stats, setStats] = useState<Stats | null>(null);
@@ -127,7 +131,7 @@ export default function App() {
   return (
     <>
       {showSettings && (
-        <Settings onClose={() => setShowSettings(false)} settings={settings} onSetSetting={setSetting} />
+        <Settings onClose={() => setShowSettings(false)} settings={settings} onSetSetting={setSetting} onExport={requestExport} />
       )}
       {!showSettings && (
       <div className="flex h-screen overflow-hidden">
@@ -162,6 +166,7 @@ export default function App() {
         onRestore={restoreNote}
         onPurge={purgeNote}
         onEmptyTrash={emptyTrash}
+        onExport={requestExport}
       />
       <main className="flex-1 overflow-hidden">
         {view === 'dashboard' ? (
@@ -204,6 +209,13 @@ export default function App() {
           onMinimize={remember => { if (remember) setSetting('closeAction', 'minimize'); api.hideMain(); setClosePrompt(false); }}
           onQuit={remember => { if (remember) setSetting('closeAction', 'quit'); api.quitApp(); }}
           onCancel={() => setClosePrompt(false)}
+        />
+      )}
+      {exportReq && (
+        <ExportDialog
+          onBase64={() => { void exportBase64(exportReq.ids, exportReq.name); setExportReq(null); }}
+          onBundle={() => { void exportBundle(exportReq.ids); setExportReq(null); }}
+          onCancel={() => setExportReq(null)}
         />
       )}
     </>

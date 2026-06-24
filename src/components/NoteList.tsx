@@ -17,7 +17,6 @@ import NoteRow from './NoteRow';
 import FolderRow from './FolderRow';
 import RootDropZone from './RootDropZone';
 import { NOTE_COLORS } from '../colors';
-import { exportSelected } from '../export';
 import { sortNotesBy } from '../sortNotes';
 import type { DateFormat } from '../dates';
 
@@ -52,6 +51,7 @@ interface Props {
   onRestore?: (id: string) => void;
   onPurge?: (id: string) => void;
   onEmptyTrash?: () => void;
+  onExport: (ids: string[], name: string) => void;
 }
 
 const sortNotes = (a: Note, b: Note) => Number(b.pinned) - Number(a.pinned) || a.position - b.position;
@@ -74,7 +74,7 @@ export default function NoteList(props: Props) {
     onReorderNotes, onReorderFolders, onSetFolderIcon, onSetFolderColor, onSetFolderSort,
     dateFormat = 'auto', pinnedScope = 'perFolder', folderColorStyle = 'icon',
     compactTree = false, treeProgress = true,
-    trashed = [], trashEnabled = true, onRestore, onPurge, onEmptyTrash,
+    trashed = [], trashEnabled = true, onRestore, onPurge, onEmptyTrash, onExport,
   } = props;
 
   const [showGame, setShowGame] = useState(false);
@@ -303,7 +303,7 @@ export default function NoteList(props: Props) {
             ...(onArchive ? [{ label: menu.note.archived ? 'Wiederherstellen' : 'Archivieren', icon: fa(faBoxArchive), onClick: () => onArchive(menu.note.id, !menu.note.archived) }] : []),
             ...(onMoveNote ? [{ label: 'Verschieben nach', icon: fa(faRightLong), submenu: moveSubmenu(menu.note) }] : []),
             { label: 'Löschen', icon: fa(faTrash), onClick: () => setPendingDelete(menu.note.id) },
-            { label: 'Exportieren', icon: fa(faFileExport), onClick: () => { void exportSelected([menu.note.id], `${(getPreview(menu.note.content).slice(0, 40) || 'notiz').replace(/[/\\:]/g, '-')}.json`); } },
+            { label: 'Exportieren', icon: fa(faFileExport), onClick: () => onExport([menu.note.id], `${(getPreview(menu.note.content).slice(0, 40) || 'notiz').replace(/[/\\:]/g, '-')}.json`) },
           ]}
           onClose={() => setMenu(null)}
         />

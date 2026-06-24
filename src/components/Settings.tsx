@@ -3,7 +3,6 @@ import { api, type AppInfo } from "../api";
 import type { Stats } from "../types";
 import type { DateFormat } from "../dates";
 import type { AppSettings } from "../hooks/useSettings";
-import { exportSelected } from "../export";
 import Logo from "./Logo";
 import Select from "./Select";
 import Toggle from "./Toggle";
@@ -34,6 +33,7 @@ interface Props {
   onClose: () => void;
   settings: AppSettings;
   onSetSetting: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void;
+  onExport: (ids: string[], name: string) => void;
 }
 
 const DATE_FORMATS: { value: DateFormat; label: string }[] = [
@@ -65,7 +65,7 @@ const CLOSE_ACTIONS: { value: import("../hooks/useSettings").CloseAction; label:
   { value: "quit", label: "Beenden" },
 ];
 
-export default function Settings({ onClose, settings, onSetSetting }: Props) {
+export default function Settings({ onClose, settings, onSetSetting, onExport }: Props) {
   const [page, setPage] = useState<Page>("about");
   const [info, setInfo] = useState<AppInfo | null>(null);
 
@@ -182,7 +182,7 @@ export default function Settings({ onClose, settings, onSetSetting }: Props) {
                 <div className="w-56"><Select value={settings.closeAction ?? "ask"} options={CLOSE_ACTIONS} onChange={v => onSetSetting("closeAction", v as import("../hooks/useSettings").CloseAction)} /></div>
               </label>
               <button
-                onClick={() => exportSelected([], "notefix-export.json")}
+                onClick={() => onExport([], "notefix-export.json")}
                 className="mt-2 self-start px-4 py-1.5 rounded text-sm font-medium"
                 style={{ background: "#fde047", color: "#1c1917" }}
               >

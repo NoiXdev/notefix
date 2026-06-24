@@ -67,6 +67,8 @@ export const api = {
 
   exportNotes: (path: string, ids: string[]): Promise<void> =>
     invoke("export_notes", { path, ids }),
+  exportNotesBase64: (path: string, ids: string[]): Promise<void> => invoke("export_notes_base64", { path, ids }),
+  exportNotesBundle: (dir: string, ids: string[]): Promise<void> => invoke("export_notes_bundle", { dir, ids }),
 
   stats: (): Promise<import("./types").Stats> => invoke("note_stats"),
 
