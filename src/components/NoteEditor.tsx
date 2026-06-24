@@ -94,7 +94,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
     extensions: [
       StarterKit,
       Underline,
-      Placeholder.configure({ placeholder: 'Start writing…' }),
+      Placeholder.configure({ placeholder: t('editor.placeholder') }),
       TaskList,
       TaskItem.configure({ nested: true }),
       ResizableImage.configure({ inline: false, allowBase64: true }),

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import { api } from './api';
 import { useNotes } from './hooks/useNotes';
 import { useFolders } from './hooks/useFolders';
@@ -22,6 +23,7 @@ import type { Folder, Stats } from './types';
 const windowNoteId = new URLSearchParams(window.location.search).get('windowNoteId');
 
 export default function App() {
+  const { t } = useTranslation();
   const { notes, loading, createNote, updateNote, deleteNote, setPinned, setArchived, setColor, setDue, setFolder, reorderNotes, trashed, restoreNote, purgeNote, emptyTrash } = useNotes();
   const { folders, createFolder, renameFolder, deleteFolder, reorderFolders, setFolderIcon, setFolderColor, setFolderSort } = useFolders();
   const { settings, setSetting, loaded } = useSettings();
@@ -99,7 +101,7 @@ export default function App() {
       if (showSettings) return;
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
-      if (combo === bindings.newFolder) { e.preventDefault(); void createFolder('Neuer Ordner', null); return; }
+      if (combo === bindings.newFolder) { e.preventDefault(); void createFolder(i18n.t('noteList.newFolderName'), null); return; }
       if (combo === bindings.newNote) { e.preventDefault(); void handleCreate(); return; }
       if (combo === bindings.archive && selectedNote) { e.preventDefault(); setArchived(selectedNote.id, !selectedNote.archived); return; }
       if (combo === bindings.navPrev || combo === bindings.navNext) {
@@ -125,7 +127,7 @@ export default function App() {
     const note = notes.find(n => n.id === windowNoteId);
     return note
       ? <div className="h-screen"><NoteEditor note={note} onChange={updateNote} isWindow onSetDue={setDue} autosaveDelay={settings.autosaveDelay} /></div>
-      : <div className="flex h-screen items-center justify-center text-gray-400 text-sm">Note not found.</div>;
+      : <div className="flex h-screen items-center justify-center text-gray-400 text-sm">{t('common.noteNotFound')}</div>;
   }
 
   const handleDelete = (id: string) => {
@@ -213,7 +215,7 @@ export default function App() {
           <div className="flex h-full items-center justify-center" style={{ background: '#fef9c3' }}>
             <div className="text-center" style={{ color: '#b59f3b' }}>
               <Logo size={64} className="mx-auto mb-3 opacity-40" />
-              <p className="text-sm">Select a note or create a new one</p>
+              <p className="text-sm">{t('common.selectOrCreate')}</p>
             </div>
           </div>
         )}

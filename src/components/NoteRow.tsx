@@ -1,4 +1,5 @@
 import type { MouseEvent } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useDraggable, useDroppable } from '@dnd-kit/core';
 import type { Note } from '../types';
 import type { DropMode } from '../dnd';
@@ -30,6 +31,7 @@ function PinIcon({ color }: { color: string }) {
 }
 
 export default function NoteRow({ note, depth, selected, dropMode, dateFormat, onSelect, onDelete, onContextMenu, compact = false, showProgress = false }: Props) {
+  const { t } = useTranslation();
   const { setNodeRef, listeners, attributes, isDragging } = useDraggable({ id: `note:${note.id}` });
   const before = useDroppable({ id: `note:${note.id}:before` });
   const after = useDroppable({ id: `note:${note.id}:after` });
@@ -54,7 +56,7 @@ export default function NoteRow({ note, depth, selected, dropMode, dateFormat, o
               <div className="text-gray-500 text-xs mt-0.5 flex items-center gap-2">
                 <span>{formatDate(note.updatedAt, dateFormat)}</span>
                 {note.dueAt != null && (
-                  <span className="inline-flex items-center gap-1 px-1.5 rounded" style={note.dueAt < Date.now() ? { background: '#fee2e2', color: '#b91c1c' } : { background: '#1f2937', color: '#9ca3af' }} title="Fällig">
+                  <span className="inline-flex items-center gap-1 px-1.5 rounded" style={note.dueAt < Date.now() ? { background: '#fee2e2', color: '#b91c1c' } : { background: '#1f2937', color: '#9ca3af' }} title={t('noteList.due')}>
                     <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" /><line x1="3" y1="10" x2="21" y2="10" /></svg>
                     {formatDate(note.dueAt, dateFormat)}
                   </span>
@@ -68,7 +70,7 @@ export default function NoteRow({ note, depth, selected, dropMode, dateFormat, o
             )}
           </div>
         </div>
-        <span onClick={e => { e.stopPropagation(); onDelete(note.id); }} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity" title="Delete note">
+        <span onClick={e => { e.stopPropagation(); onDelete(note.id); }} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity" title={t('noteList.deleteNote')}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14H6L5 6" /></svg>
         </span>
         {showProgress && tasks.total > 0 && compact && (

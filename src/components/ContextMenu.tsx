@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 
 export interface ContextMenuItem {
   label: string;
@@ -22,6 +23,7 @@ interface Props {
 }
 
 export default function ContextMenu({ x, y, items, swatches, onClose }: Props) {
+  const { t } = useTranslation();
   const [openSub, setOpenSub] = useState<number | null>(null);
 
   // Keep a stable reference to onClose so the dismiss listeners are attached
@@ -63,14 +65,14 @@ export default function ContextMenu({ x, y, items, swatches, onClose }: Props) {
               onClick={() => { swatches.onPick(c); onClose(); }}
               className="w-4 h-4 rounded-full"
               style={{ background: c, outline: swatches.current === c ? '2px solid #fff' : 'none', outlineOffset: '1px' }}
-              aria-label={`Farbe ${c}`}
+              aria-label={t('folder.colorLabel', { color: c })}
             />
           ))}
           <button
             onClick={() => { swatches.onPick(''); onClose(); }}
             className="w-4 h-4 rounded-full border border-gray-600 text-gray-400 flex items-center justify-center text-[10px] leading-none"
-            aria-label="Keine Farbe"
-            title="Keine"
+            aria-label={t('folder.noColor')}
+            title={t('folder.noColorShort')}
           >×</button>
         </div>
       )}

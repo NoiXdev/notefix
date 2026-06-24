@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { searchIcons } from '../folderIcons';
 import FolderIcon from './FolderIcon';
 
@@ -8,6 +9,7 @@ interface Props {
 }
 
 export default function IconCombobox({ value, onPick }: Props) {
+  const { t } = useTranslation();
   const [query, setQuery] = useState('');
   const results = searchIcons(query);
   return (
@@ -16,7 +18,7 @@ export default function IconCombobox({ value, onPick }: Props) {
         autoFocus
         value={query}
         onChange={e => setQuery(e.target.value)}
-        placeholder="Icon suchen…"
+        placeholder={t('folder.iconSearch')}
         className="w-full bg-gray-800 text-gray-100 text-sm px-2 py-1 rounded outline-none mb-2"
       />
       <div className="max-h-44 overflow-y-auto rounded border border-gray-700 divide-y divide-gray-800">
@@ -34,7 +36,7 @@ export default function IconCombobox({ value, onPick }: Props) {
             </button>
           );
         })}
-        {results.length === 0 && <div className="px-2 py-2 text-xs text-gray-500">Keine Treffer.</div>}
+        {results.length === 0 && <div className="px-2 py-2 text-xs text-gray-500">{t('folder.noResults')}</div>}
       </div>
     </div>
   );
