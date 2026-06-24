@@ -165,11 +165,49 @@
 .lp-switch button { font-size: 10px; padding: 0 4px; border: 1px solid #e7d27a; border-radius: 4px; background: #fff; color: #57534e; }
 .lp-switch button.on { background: #fde047; color: #1c1917; }
 
-.hljs-section { color: #b45309; font-weight: 600; }
-.hljs-strong { font-weight: 700; color: #1c1917; }
-.hljs-emphasis { font-style: italic; color: #57534e; }
-.hljs-link, .hljs-symbol, .hljs-bullet { color: #2563eb; }
-.hljs-code { color: #047857; }
-.hljs-quote { color: #78716c; font-style: italic; }
-.hljs-string { color: #047857; }
-.hljs-comment { color: #a8a29e; }
+/* Dark code surfaces — the markdown source editor and rich-mode code blocks.
+   Explicit colours (no inheritance) so typed text is always visible, and a
+   Dracula-ish highlight.js palette so both read clearly as code. */
+.md-code-editor {
+  background: #282a36;
+  color: #f8f8f2;
+  border-radius: 8px;
+  min-height: 100%;
+  box-shadow: inset 0 0 0 1px #44475a;
+}
+.md-code-editor textarea {
+  caret-color: #f8f8f2;
+}
+.md-code-editor textarea::selection,
+.md-code-editor pre ::selection { background: #44475a; }
+
+.ProseMirror pre {
+  background: #282a36;
+  color: #f8f8f2;
+  border-radius: 8px;
+  padding: 0.7rem 0.9rem;
+  margin: 0.5rem 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  line-height: 1.5;
+  overflow-x: auto;
+  box-shadow: inset 0 0 0 1px #44475a;
+}
+.ProseMirror pre code {
+  background: none;
+  color: inherit;
+  padding: 0;
+  font-size: inherit;
+}
+
+.hljs-section, .hljs-title, .hljs-name { color: #8be9fd; font-weight: 600; }
+.hljs-strong { font-weight: 700; color: #ffb86c; }
+.hljs-emphasis { font-style: italic; color: #f1fa8c; }
+.hljs-link, .hljs-symbol, .hljs-bullet { color: #8be9fd; }
+.hljs-keyword, .hljs-selector-tag, .hljs-built_in, .hljs-tag { color: #ff79c6; }
+.hljs-string, .hljs-attr, .hljs-attribute, .hljs-code { color: #f1fa8c; }
+.hljs-number, .hljs-literal, .hljs-type, .hljs-params { color: #bd93f9; }
+.hljs-function .hljs-title, .hljs-title.function_ { color: #50fa7b; }
+.hljs-quote { color: #6272a4; font-style: italic; }
+.hljs-comment, .hljs-meta { color: #6272a4; }
+.hljs-variable, .hljs-template-variable, .hljs-regexp { color: #ffb86c; }

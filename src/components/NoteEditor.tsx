@@ -383,17 +383,19 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
       {/* Scrollable content area */}
       <div className="flex-1 overflow-auto px-7 py-6">
         {mdMode
-          ? <CodeEditor
-              value={mdText}
-              onValueChange={onMdChange}
-              highlight={highlightMarkdown}
-              onKeyUp={onCur}
-              onClick={onCur}
-              padding={0}
-              textareaClassName="outline-none"
-              className="w-full h-full font-mono text-sm text-gray-900"
-              style={{ fontFamily: 'monospace', fontSize: 14, minHeight: '100%' }}
-            />
+          ? <div className="md-code-editor">
+              <CodeEditor
+                value={mdText}
+                onValueChange={onMdChange}
+                highlight={highlightMarkdown}
+                onKeyUp={onCur}
+                onClick={onCur}
+                padding={14}
+                textareaClassName="outline-none"
+                className="w-full font-mono text-sm"
+                style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize: 13.5, minHeight: '100%' }}
+              />
+            </div>
           : <LinkPreviewCtx.Provider value={{ enabled: linkPreviewEnabled ?? true, mode: linkPreviewMode ?? 'card' }}>
               <EditorContent editor={editor} className="h-full" />
             </LinkPreviewCtx.Provider>}
