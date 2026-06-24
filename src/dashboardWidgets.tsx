@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import type { Note, Stats, Folder } from './types';
 import { getPreview } from './preview';
 import { formatDate } from './dates';
+import i18n from './i18n';
 
 export interface WidgetCtx {
   notes: Note[];
@@ -19,19 +20,19 @@ function NoteLine({ note, onSelectNote }: { note: Note; onSelectNote: (id: strin
   );
 }
 
-export const WIDGETS: Record<string, { label: string; render: (ctx: WidgetCtx) => ReactNode }> = {
+export const WIDGETS: Record<string, { labelKey: string; render: (ctx: WidgetCtx) => ReactNode }> = {
   recent: {
-    label: 'Zuletzt bearbeitet',
+    labelKey: 'dashboard.widgets.recent',
     render: ({ notes, onSelectNote }) => {
       const list = notes.filter(n => !n.archived).slice().sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 8);
-      return <div>{list.length === 0 ? <p className="text-xs text-gray-400 px-2">Keine Notizen.</p> : list.map(n => <NoteLine key={n.id} note={n} onSelectNote={onSelectNote} />)}</div>;
+      return <div>{list.length === 0 ? <p className="text-xs text-gray-400 px-2">{i18n.t('dashboard.noNotes')}</p> : list.map(n => <NoteLine key={n.id} note={n} onSelectNote={onSelectNote} />)}</div>;
     },
   },
   due: {
-    label: 'Anstehende Fälligkeiten',
+    labelKey: 'dashboard.widgets.due',
     render: ({ notes, onSelectNote }) => {
       const list = notes.filter(n => !n.archived && n.dueAt != null).sort((a, b) => a.dueAt! - b.dueAt!).slice(0, 8);
-      return <div>{list.length === 0 ? <p className="text-xs text-gray-400 px-2">Keine Fälligkeiten.</p> : list.map(n => (
+      return <div>{list.length === 0 ? <p className="text-xs text-gray-400 px-2">{i18n.t('dashboard.noDue')}</p> : list.map(n => (
         <button key={n.id} onClick={() => onSelectNote(n.id)} className="w-full text-left px-2 py-1 rounded hover:bg-gray-100 text-sm flex justify-between gap-2 text-gray-800">
           <span className="truncate">{getPreview(n.content)}</span>
           <span className="shrink-0 text-xs" style={{ color: n.dueAt! < Date.now() ? '#b91c1c' : '#92400e' }}>{formatDate(n.dueAt!, 'de')}</span>
@@ -40,29 +41,29 @@ export const WIDGETS: Record<string, { label: string; render: (ctx: WidgetCtx) =
     },
   },
   stats: {
-    label: 'Statistik',
+    labelKey: 'dashboard.widgets.stats',
     render: ({ stats }) => stats ? (
       <div className="grid grid-cols-2 gap-2 text-gray-800">
-        <div><div className="text-xs text-gray-500">Notizen</div><div className="text-xl font-bold">{stats.notes}</div></div>
-        <div><div className="text-xs text-gray-500">Archiviert</div><div className="text-xl font-bold">{stats.archived}</div></div>
-        <div><div className="text-xs text-gray-500">Zeichen</div><div className="text-xl font-bold">{stats.characters}</div></div>
-        <div><div className="text-xs text-gray-500">Wörter</div><div className="text-xl font-bold">{stats.words}</div></div>
+        <div><div className="text-xs text-gray-500">{i18n.t('dashboard.statNotes')}</div><div className="text-xl font-bold">{stats.notes}</div></div>
+        <div><div className="text-xs text-gray-500">{i18n.t('dashboard.statArchived')}</div><div className="text-xl font-bold">{stats.archived}</div></div>
+        <div><div className="text-xs text-gray-500">{i18n.t('dashboard.statCharacters')}</div><div className="text-xl font-bold">{stats.characters}</div></div>
+        <div><div className="text-xs text-gray-500">{i18n.t('dashboard.statWords')}</div><div className="text-xl font-bold">{stats.words}</div></div>
       </div>
     ) : <p className="text-xs text-gray-400 px-2">…</p>,
   },
   pinned: {
-    label: 'Angepinnt',
+    labelKey: 'dashboard.widgets.pinned',
     render: ({ notes, onSelectNote }) => {
       const list = notes.filter(n => !n.archived && n.pinned);
-      return <div>{list.length === 0 ? <p className="text-xs text-gray-400 px-2">Nichts angepinnt.</p> : list.map(n => <NoteLine key={n.id} note={n} onSelectNote={onSelectNote} />)}</div>;
+      return <div>{list.length === 0 ? <p className="text-xs text-gray-400 px-2">{i18n.t('dashboard.nothingPinned')}</p> : list.map(n => <NoteLine key={n.id} note={n} onSelectNote={onSelectNote} />)}</div>;
     },
   },
   folders: {
-    label: 'Ordner-Übersicht',
+    labelKey: 'dashboard.widgets.folders',
     render: ({ folders, notes }) => {
       const count = (fid: string) => notes.filter(n => !n.archived && n.folderId === fid).length;
       const list = folders.slice().sort((a, b) => a.position - b.position);
-      return <div>{list.length === 0 ? <p className="text-xs text-gray-400 px-2">Keine Ordner.</p> : list.map(f => (
+      return <div>{list.length === 0 ? <p className="text-xs text-gray-400 px-2">{i18n.t('dashboard.noFolders')}</p> : list.map(f => (
         <div key={f.id} className="flex items-center justify-between px-2 py-1 text-sm text-gray-800">
           <span className="truncate">{f.name}</span>
           <span className="text-xs text-gray-500">{count(f.id)}</span>
@@ -71,9 +72,9 @@ export const WIDGETS: Record<string, { label: string; render: (ctx: WidgetCtx) =
     },
   },
   quicknote: {
-    label: 'Schnellnotiz',
+    labelKey: 'dashboard.widgets.quicknote',
     render: ({ onCreateNote }) => (
-      <button onClick={onCreateNote} className="w-full py-2 rounded text-sm font-medium" style={{ background: '#fde047', color: '#1c1917' }}>+ Neue Notiz</button>
+      <button onClick={onCreateNote} className="w-full py-2 rounded text-sm font-medium" style={{ background: '#fde047', color: '#1c1917' }}>{i18n.t('dashboard.newNote')}</button>
     ),
   },
 };

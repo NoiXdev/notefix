@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useEditor, EditorContent, type Editor } from '@tiptap/react';
 import type { EditorView } from '@tiptap/pm/view';
 import StarterKit from '@tiptap/starter-kit';
@@ -75,6 +76,7 @@ function ToolbarBtn({ onClick, active, title, children }: ToolbarBtnProps) {
 }
 
 export default function NoteEditor({ note, onChange, isWindow = false, onSetDue, autosaveDelay = 400 }: Props) {
+  const { t } = useTranslation();
   const [pinned, setPinned] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const pendingSave = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -219,9 +221,9 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
     <div className="flex flex-col h-full relative" style={{ background: '#fef9c3' }}>
       <button
         onClick={flushSave}
-        title={saveState === 'saving' ? 'Speichern…' : lastSavedAt ? `Zuletzt gespeichert: ${new Date(lastSavedAt).toLocaleTimeString()}` : 'Gespeichert'}
+        title={saveState === 'saving' ? t('editor.saving') : lastSavedAt ? t('editor.savedAt', { time: new Date(lastSavedAt).toLocaleTimeString() }) : t('editor.saved')}
         className={`absolute right-2 ${isWindow ? 'top-10' : 'top-1'} z-10 w-6 h-6 flex items-center justify-center rounded text-amber-700/70 hover:text-amber-800`}
-        aria-label="Speichern"
+        aria-label={t('editor.save')}
       >
         {saveState === 'saving' ? (
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="animate-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
@@ -243,7 +245,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
             style={{ color: pinned ? '#92400e' : '#78716c', background: pinned ? '#fcd34d' : 'transparent' }}
             onMouseDown={e => e.preventDefault()}
             onClick={togglePin}
-            title={pinned ? 'Unpin window' : 'Keep on top'}
+            title={pinned ? t('editor.unpin') : t('editor.pin')}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill={pinned ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <line x1="12" y1="17" x2="12" y2="22" />
@@ -257,7 +259,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
             style={{ background: '#f87171' }}
             onMouseDown={e => e.preventDefault()}
             onClick={() => api.closeWindow()}
-            title="Close"
+            title={t('editor.close')}
             onMouseEnter={e => (e.currentTarget.style.background = '#ef4444')}
             onMouseLeave={e => (e.currentTarget.style.background = '#f87171')}
           >
@@ -272,7 +274,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
       {isWindow && (
         <div
           onMouseDown={() => { void api.startResize(); }}
-          title="Größe ändern"
+          title={t('editor.resize')}
           style={{ position: 'fixed', right: 0, bottom: 0, width: 18, height: 18, cursor: 'nwse-resize', zIndex: 50 }}
         />
       )}
@@ -282,14 +284,14 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" /><line x1="3" y1="10" x2="21" y2="10" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="16" y1="2" x2="16" y2="6" /></svg>
           <input
             type="date"
-            aria-label="Fälligkeitsdatum"
+            aria-label={t('editor.dueDate')}
             value={toDateInputValue(note.dueAt)}
             onChange={e => onSetDue(note.id, fromDateInputValue(e.target.value))}
             className="bg-transparent outline-none"
             style={{ color: '#92400e' }}
           />
           {note.dueAt != null && (
-            <button onMouseDown={e => e.preventDefault()} onClick={() => onSetDue(note.id, null)} title="Fälligkeit löschen" className="px-1">×</button>
+            <button onMouseDown={e => e.preventDefault()} onClick={() => onSetDue(note.id, null)} title={t('editor.clearDue')} className="px-1">×</button>
           )}
         </div>
       )}
@@ -297,7 +299,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
       {progress.total > 0 && (
         <div className="shrink-0 px-7 pt-4">
           <div className="flex items-center justify-between text-xs mb-1" style={{ color: '#92400e' }}>
-            <span>{progress.done}/{progress.total} erledigt</span>
+            <span>{t('editor.progress', { done: progress.done, total: progress.total })}</span>
           </div>
           <div className="h-1.5 rounded-full overflow-hidden" style={{ background: '#fde68a' }}>
             <div className="h-full rounded-full" style={{ width: `${(progress.done / progress.total) * 100}%`, background: '#ca8a04' }} />
@@ -317,19 +319,19 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
         className="shrink-0 flex items-center gap-0.5 px-3 py-2 border-t"
         style={{ background: '#fef08a', borderColor: '#fde047' }}
       >
-        <ToolbarBtn onClick={() => editor.chain().focus().toggleBold().run()} active={editor.isActive('bold')} title="Bold">
+        <ToolbarBtn onClick={() => editor.chain().focus().toggleBold().run()} active={editor.isActive('bold')} title={t('editor.bold')}>
           <span className="font-bold">B</span>
         </ToolbarBtn>
-        <ToolbarBtn onClick={() => editor.chain().focus().toggleItalic().run()} active={editor.isActive('italic')} title="Italic">
+        <ToolbarBtn onClick={() => editor.chain().focus().toggleItalic().run()} active={editor.isActive('italic')} title={t('editor.italic')}>
           <span className="italic">I</span>
         </ToolbarBtn>
-        <ToolbarBtn onClick={() => editor.chain().focus().toggleUnderline().run()} active={editor.isActive('underline')} title="Underline">
+        <ToolbarBtn onClick={() => editor.chain().focus().toggleUnderline().run()} active={editor.isActive('underline')} title={t('editor.underline')}>
           <span className="underline">U</span>
         </ToolbarBtn>
-        <ToolbarBtn onClick={() => editor.chain().focus().toggleStrike().run()} active={editor.isActive('strike')} title="Strikethrough">
+        <ToolbarBtn onClick={() => editor.chain().focus().toggleStrike().run()} active={editor.isActive('strike')} title={t('editor.strikethrough')}>
           <span className="line-through">S</span>
         </ToolbarBtn>
-        <ToolbarBtn onClick={() => editor.chain().focus().toggleTaskList().run()} active={editor.isActive('taskList')} title="Aufgabenliste">
+        <ToolbarBtn onClick={() => editor.chain().focus().toggleTaskList().run()} active={editor.isActive('taskList')} title={t('editor.taskList')}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <polyline points="3 7 5 9 9 5" /><polyline points="3 17 5 19 9 15" /><line x1="13" y1="7" x2="21" y2="7" /><line x1="13" y1="17" x2="21" y2="17" />
           </svg>
@@ -337,7 +339,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
 
         <div className="w-px h-5 bg-yellow-400 mx-1" />
 
-        <ToolbarBtn onClick={() => editor.chain().focus().toggleBulletList().run()} active={editor.isActive('bulletList')} title="Bullet list">
+        <ToolbarBtn onClick={() => editor.chain().focus().toggleBulletList().run()} active={editor.isActive('bulletList')} title={t('editor.bulletList')}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <line x1="9" y1="6" x2="20" y2="6" /><line x1="9" y1="12" x2="20" y2="12" /><line x1="9" y1="18" x2="20" y2="18" />
             <circle cx="4" cy="6" r="1.5" fill="currentColor" stroke="none" />
@@ -345,7 +347,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
             <circle cx="4" cy="18" r="1.5" fill="currentColor" stroke="none" />
           </svg>
         </ToolbarBtn>
-        <ToolbarBtn onClick={() => editor.chain().focus().toggleOrderedList().run()} active={editor.isActive('orderedList')} title="Numbered list">
+        <ToolbarBtn onClick={() => editor.chain().focus().toggleOrderedList().run()} active={editor.isActive('orderedList')} title={t('editor.numberedList')}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <line x1="10" y1="6" x2="21" y2="6" /><line x1="10" y1="12" x2="21" y2="12" /><line x1="10" y1="18" x2="21" y2="18" />
             <path d="M4 6h1v4" stroke="currentColor" strokeWidth="1.8" fill="none" />
@@ -356,7 +358,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
 
         <div className="w-px h-5 bg-yellow-400 mx-1" />
 
-        <ToolbarBtn onClick={() => fileInputRef.current?.click()} title="Insert image">
+        <ToolbarBtn onClick={() => fileInputRef.current?.click()} title={t('editor.insertImage')}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <rect x="3" y="3" width="18" height="18" rx="2" />
             <circle cx="8.5" cy="9" r="1.5" />
@@ -377,19 +379,19 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
         />
 
         <div className="w-px h-5 bg-yellow-400 mx-1" />
-        <ToolbarBtn onClick={() => setHistoryOpen(true)} title="Verlauf">
+        <ToolbarBtn onClick={() => setHistoryOpen(true)} title={t('editor.history')}>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M3 3v5h5" /><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8" /><path d="M12 7v5l3 2" />
           </svg>
         </ToolbarBtn>
-        <ToolbarBtn onClick={toggleMd} active={mdMode} title="Markdown">
+        <ToolbarBtn onClick={toggleMd} active={mdMode} title={t('editor.markdown')}>
           <span className="font-mono text-xs">&lt;/&gt;</span>
         </ToolbarBtn>
 
         {!isWindow && (
           <>
             <div className="w-px h-5 bg-yellow-400 mx-1" />
-            <ToolbarBtn onClick={openInWindow} title="Open in new window">
+            <ToolbarBtn onClick={openInWindow} title={t('editor.openInWindow')}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="3" y="3" width="10" height="10" rx="1.5" />
                 <rect x="11" y="11" width="10" height="10" rx="1.5" />
