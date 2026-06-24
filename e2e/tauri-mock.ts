@@ -10,6 +10,7 @@ export interface MockData {
 
 export async function installTauriMock(page: Page, data: MockData = {}): Promise<void> {
   await page.addInitScript((d: MockData) => {
+    const singleContext = [{ id: 'local', label: '', kind: 'local', path: '/tmp/notefix.db', active: true }];
     const responses: Record<string, unknown> = {
       notes_load: d.notes ?? [],
       folders_load: d.folders ?? [],
@@ -19,6 +20,12 @@ export async function installTauriMock(page: Page, data: MockData = {}): Promise
       get_db_path: '/x/notefix.db',
       note_revisions: [],
       check_paths: d.responses?.check_paths ?? { dbWritable: true, imagesWritable: true, dbPath: '/x', imagesPath: '/x/images' },
+      // C0 contexts: list the single local context; add/rename/remove echo it; switch resolves void.
+      contexts_list: d.responses?.contexts_list ?? singleContext,
+      context_add: d.responses?.context_add ?? singleContext,
+      context_rename: d.responses?.context_rename ?? singleContext,
+      context_remove: d.responses?.context_remove ?? singleContext,
+      context_switch: d.responses?.context_switch ?? undefined,
     };
     let cbId = 0;
     // Registry so tests can drive Tauri events (e.g. window "close-requested").
