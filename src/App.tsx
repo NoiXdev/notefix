@@ -196,6 +196,7 @@ export default function App() {
         onCreate={handleCreate}
         onDelete={handleDelete}
         onOpenSettings={() => { setSettingsPage(undefined); setShowSettings(true); }}
+        onOpenContexts={() => { setSettingsPage(undefined); setShowSettings(true); }}
         onOpenDashboard={() => setView('dashboard')}
         onTogglePin={setPinned}
         onArchive={setArchived}

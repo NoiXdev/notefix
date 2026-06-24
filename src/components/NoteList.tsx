@@ -13,6 +13,7 @@ import { faThumbtack, faBoxArchive, faRightLong, faTrash, faTrashCan, faFileExpo
 import ConfirmDialog from './ConfirmDialog';
 import FolderCustomizer from './FolderCustomizer';
 import Logo from './Logo';
+import ContextSwitcher from './ContextSwitcher';
 import TicTacToe from './TicTacToe';
 import NoteRow from './NoteRow';
 import FolderRow from './FolderRow';
@@ -53,6 +54,7 @@ interface Props {
   onPurge?: (id: string) => void;
   onEmptyTrash?: () => void;
   onExportNote: (note: Note) => void;
+  onOpenContexts?: () => void;
 }
 
 const sortNotes = (a: Note, b: Note) => Number(b.pinned) - Number(a.pinned) || a.position - b.position;
@@ -77,6 +79,7 @@ export default function NoteList(props: Props) {
     dateFormat = 'auto', pinnedScope = 'perFolder', folderColorStyle = 'icon',
     compactTree = false, treeProgress = true,
     trashed = [], trashEnabled = true, onRestore, onPurge, onEmptyTrash, onExportNote,
+    onOpenContexts,
   } = props;
 
   const [showGame, setShowGame] = useState(false);
@@ -228,20 +231,25 @@ export default function NoteList(props: Props) {
 
   return (
     <aside className="w-60 shrink-0 bg-gray-950 flex flex-col h-full select-none">
-      <div className="px-4 py-3 flex items-center justify-between border-b border-gray-800">
-        <div className="flex items-center gap-1.5">
-          <button onClick={onLogoClick} className="flex items-center" aria-label="Notefix" title="Notefix"><Logo size={18} /></button>
-          <span className="text-gray-200 text-xs font-semibold uppercase tracking-widest">{view === 'archived' ? t('noteList.headerArchive') : view === 'trash' ? t('noteList.headerTrash') : 'Notefix'}</span>
-        </div>
-        <div className="flex items-center gap-1">
-          {view === 'active' && (
-            <button onClick={onCreate} className="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 rounded" title={t('noteList.newNote')}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
+      <div className="px-4 py-3 border-b border-gray-800">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5">
+            <button onClick={onLogoClick} className="flex items-center" aria-label="Notefix" title="Notefix"><Logo size={18} /></button>
+            <span className="text-gray-200 text-xs font-semibold uppercase tracking-widest">{view === 'archived' ? t('noteList.headerArchive') : view === 'trash' ? t('noteList.headerTrash') : 'Notefix'}</span>
+          </div>
+          <div className="flex items-center gap-1">
+            {view === 'active' && (
+              <button onClick={onCreate} className="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 rounded" title={t('noteList.newNote')}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
+              </button>
+            )}
+            <button onClick={e => setHeaderMenu({ x: e.clientX, y: e.clientY })} className="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 rounded" title={t('noteList.more')}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="19" cy="12" r="1.6" /></svg>
             </button>
-          )}
-          <button onClick={e => setHeaderMenu({ x: e.clientX, y: e.clientY })} className="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 rounded" title={t('noteList.more')}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="19" cy="12" r="1.6" /></svg>
-          </button>
+          </div>
+        </div>
+        <div className="mt-2 -mx-1">
+          <ContextSwitcher onManage={onOpenContexts} />
         </div>
       </div>
 

@@ -5,6 +5,14 @@ import type { Note, Folder } from '../types';
 
 vi.mock('../export', () => ({ exportSelected: vi.fn() }));
 vi.mock('emoji-picker-react', () => ({ default: () => null, Theme: { DARK: 'dark' } }));
+// ContextSwitcher (rendered in the header) hits the Tauri-backed api on mount;
+// stub it so jsdom doesn't blow up on real invoke/listen calls.
+vi.mock('../api', () => ({
+  api: {
+    contexts: { list: vi.fn().mockResolvedValue([]), switch: vi.fn(), add: vi.fn() },
+    onContextChanged: () => () => {},
+  },
+}));
 
 const note = (id: string, content: string, updatedAt = Date.now(), pinned = false, archived = false, color = '', dueAt: number | null = null, folderId: string | null = null): Note =>
   ({ id, content, updatedAt, pinned, archived, color, dueAt, folderId });
