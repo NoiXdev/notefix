@@ -1,7 +1,9 @@
 import type { ReactNode } from 'react';
+import { useEffect, useState } from 'react';
 import type { Note, Stats, Folder } from './types';
 import { getPreview } from './preview';
 import { formatDate } from './dates';
+import { monthGrid, weekdayShorts } from './calendarGrid';
 import i18n from './i18n';
 
 export interface WidgetCtx {
@@ -17,6 +19,37 @@ function NoteLine({ note, onSelectNote }: { note: Note; onSelectNote: (id: strin
     <button onClick={() => onSelectNote(note.id)} className="w-full text-left px-2 py-1 rounded hover:bg-gray-100 text-sm truncate text-gray-800">
       {getPreview(note.content)}
     </button>
+  );
+}
+
+function ClockWidget() {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => { const id = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(id); }, []);
+  return <div className="text-3xl font-bold text-gray-800 tabular-nums">{now.toLocaleTimeString()}</div>;
+}
+
+function DateWidget() {
+  const d = new Date();
+  return (
+    <div className="text-gray-800">
+      <div className="text-sm text-gray-500">{d.toLocaleDateString(undefined, { weekday: 'long' })}</div>
+      <div className="text-2xl font-bold">{d.toLocaleDateString()}</div>
+    </div>
+  );
+}
+
+function CalendarWidget() {
+  const now = new Date();
+  const weeks = monthGrid(now.getFullYear(), now.getMonth());
+  const today = now.getDate();
+  return (
+    <div className="text-gray-800 text-xs">
+      <div className="font-semibold mb-1">{now.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</div>
+      <div className="grid grid-cols-7 gap-0.5 text-center">
+        {weekdayShorts().map((w, i) => <div key={`h${i}`} className="text-gray-400">{w}</div>)}
+        {weeks.flat().map((d, i) => <div key={i} className={d === today ? 'bg-yellow-300 rounded font-bold' : ''}>{d ?? ''}</div>)}
+      </div>
+    </div>
   );
 }
 
@@ -77,6 +110,9 @@ export const WIDGETS: Record<string, { labelKey: string; render: (ctx: WidgetCtx
       <button onClick={onCreateNote} className="w-full py-2 rounded text-sm font-medium" style={{ background: '#fde047', color: '#1c1917' }}>{i18n.t('dashboard.newNote')}</button>
     ),
   },
+  clock: { labelKey: 'dashboard.widgets.clock', render: () => <ClockWidget /> },
+  date: { labelKey: 'dashboard.widgets.date', render: () => <DateWidget /> },
+  calendar: { labelKey: 'dashboard.widgets.calendar', render: () => <CalendarWidget /> },
 };
 
 export const WIDGET_KEYS = Object.keys(WIDGETS);
@@ -91,4 +127,7 @@ export const WIDGET_SIZES: Record<string, WidgetSize> = {
   pinned: { w: 4, h: 3, minW: 2, minH: 2 },
   folders: { w: 4, h: 3, minW: 2, minH: 2 },
   quicknote: { w: 3, h: 2, minW: 2, minH: 2 },
+  clock: { w: 3, h: 2, minW: 2, minH: 2 },
+  date: { w: 3, h: 2, minW: 2, minH: 2 },
+  calendar: { w: 4, h: 4, minW: 3, minH: 3 },
 };

@@ -31,4 +31,10 @@ describe('dashboardWidgets — new', () => {
     fireEvent.click(screen.getByText(/Neue Notiz/));
     expect(onCreateNote).toHaveBeenCalled();
   });
+  it('calendar widget renders the current month', () => {
+    const ctx = { notes: [], folders: [], stats: null, onSelectNote: vi.fn(), onCreateNote: vi.fn() };
+    render(<>{WIDGETS.calendar.render(ctx)}</>);
+    const month = new Date().toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+    expect(screen.getByText(month)).toBeInTheDocument();
+  });
 });

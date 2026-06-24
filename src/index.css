@@ -23,6 +23,9 @@
   min-height: 100%;
 }
 
+.ProseMirror { caret-color: #1c1917; }
+.ProseMirror ul[data-type="taskList"] li > div { min-height: 1.4em; }
+
 .ProseMirror p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);
   color: #b59f3b;
