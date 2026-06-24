@@ -152,6 +152,12 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
             <h1 className="text-2xl font-bold text-gray-900 mb-1">{info.name}</h1>
             <p className="text-sm text-gray-500 mb-8">{t("settings.about.version", { version: info.version })}</p>
             <p className="text-sm text-gray-600">{info.description}</p>
+            <p className="text-sm text-gray-600 mt-4 max-w-md">{t("settings.about.story")}</p>
+            <div className="mt-6 flex flex-col gap-1 text-sm">
+              <a href="https://noix.dev" className="text-blue-700 underline">{t("settings.about.project")}</a>
+              <a href="https://docs.noix.dev" className="text-blue-700 underline">{t("settings.about.docs")}</a>
+              <span className="text-gray-500 mt-2">{t("settings.about.license")}</span>
+            </div>
           </div>
         )}
 

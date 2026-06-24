@@ -12,6 +12,10 @@ export const de = {
     },
     about: {
       version: 'Version {{version}}',
+      story: 'Aus dginx notes wurde Notefix — komplett neu aufgebaut, mit vielen neuen Funktionen.',
+      project: 'Projekt: noix.dev',
+      docs: 'Doku: docs.noix.dev',
+      license: 'MIT License',
     },
     appearance: {
       language: 'Sprache',
