@@ -70,6 +70,10 @@ export const api = {
   exportNotesBase64: (path: string, ids: string[]): Promise<void> => invoke("export_notes_base64", { path, ids }),
   exportNotesBundle: (dir: string, ids: string[]): Promise<void> => invoke("export_notes_bundle", { dir, ids }),
 
+  noteInlinedHtml: (noteId: string): Promise<string> => invoke("note_inlined_html", { noteId }),
+  saveExport: (path: string, bytes: number[]): Promise<void> => invoke("save_export", { path, bytes }),
+  exportMdBundle: (dir: string, md: string, name: string): Promise<void> => invoke("export_md_bundle", { dir, md, name }),
+
   stats: (): Promise<import("./types").Stats> => invoke("note_stats"),
 
   getDbPath: (): Promise<string> => invoke("get_db_path"),
