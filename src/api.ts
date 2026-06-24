@@ -136,6 +136,13 @@ export const api = {
   /** Start an interactive resize from the bottom-right corner (frameless window grip). */
   startResize: (): Promise<void> => getCurrentWindow().startResizeDragging("SouthEast"),
 
+  checkPaths: (): Promise<{ dbWritable: boolean; imagesWritable: boolean; dbPath: string; imagesPath: string }> =>
+    invoke("check_paths"),
+
+  /** Harmless probe of the window:* capability group (set the current title to itself). */
+  windowProbe: (): Promise<boolean> =>
+    getCurrentWindow().title().then(t => getCurrentWindow().setTitle(t)).then(() => true).catch(() => false),
+
   getAppInfo: async (): Promise<AppInfo> => ({
     name: "Notefix",
     version: await getVersion(),
