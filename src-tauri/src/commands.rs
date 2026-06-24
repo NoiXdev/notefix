@@ -53,6 +53,7 @@ pub fn notes_delete(app: AppHandle, webview: WebviewWindow, store: State<'_, Mut
         } else {
             store.delete_note(&id).map_err(|e| e.to_string())?;
         }
+        crate::images::run_gc(&app, &store);
     }
     broadcast_changed(&app, webview.label());
     crate::tray::rebuild_menu(&app);
@@ -69,7 +70,7 @@ pub fn notes_restore(app: AppHandle, webview: WebviewWindow, store: State<'_, Mu
 
 #[tauri::command]
 pub fn notes_purge(app: AppHandle, webview: WebviewWindow, store: State<'_, Mutex<Store>>, id: String) -> Result<(), String> {
-    { let store = store.lock().map_err(|e| e.to_string())?; store.delete_note(&id).map_err(|e| e.to_string())?; }
+    { let store = store.lock().map_err(|e| e.to_string())?; store.delete_note(&id).map_err(|e| e.to_string())?; crate::images::run_gc(&app, &store); }
     broadcast_changed(&app, webview.label());
     crate::tray::rebuild_menu(&app);
     Ok(())
@@ -83,7 +84,7 @@ pub fn trash_load(store: State<'_, Mutex<Store>>) -> Result<Vec<Note>, String> {
 
 #[tauri::command]
 pub fn trash_empty(app: AppHandle, webview: WebviewWindow, store: State<'_, Mutex<Store>>) -> Result<(), String> {
-    { let store = store.lock().map_err(|e| e.to_string())?; store.purge_trashed(None).map_err(|e| e.to_string())?; }
+    { let store = store.lock().map_err(|e| e.to_string())?; store.purge_trashed(None).map_err(|e| e.to_string())?; crate::images::run_gc(&app, &store); }
     broadcast_changed(&app, webview.label());
     crate::tray::rebuild_menu(&app);
     Ok(())
@@ -249,7 +250,7 @@ pub fn folder_move(app: AppHandle, webview: WebviewWindow, store: State<'_, Mute
 
 #[tauri::command]
 pub fn folder_delete(app: AppHandle, webview: WebviewWindow, store: State<'_, Mutex<Store>>, id: String, mode: String) -> Result<(), String> {
-    { let store = store.lock().map_err(|e| e.to_string())?; crate::folders::delete_folder(&store.conn, &id, crate::folders::DeleteMode::from_str(&mode)).map_err(|e| e.to_string())?; }
+    { let store = store.lock().map_err(|e| e.to_string())?; crate::folders::delete_folder(&store.conn, &id, crate::folders::DeleteMode::from_str(&mode)).map_err(|e| e.to_string())?; crate::images::run_gc(&app, &store); }
     notify(&app, &webview);
     Ok(())
 }

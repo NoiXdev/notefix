@@ -1,4 +1,5 @@
-use std::path::PathBuf;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use tauri::AppHandle;
 
 use base64::Engine;
@@ -98,6 +99,62 @@ pub fn migrate_inline_images(store: &crate::storage::Store, images_root: &std::p
     Ok(())
 }
 
+/// Alle in einem Content referenzierten noteimg-Relativpfade.
+pub fn referenced_paths(content: &str) -> Vec<String> {
+    let re = regex::Regex::new(r#"noteimg://localhost/([^"'\s\\)]+)"#).unwrap();
+    re.captures_iter(content).map(|c| c[1].to_string()).collect()
+}
+
+/// Set aller referenzierten Pfade über alle Notizen (inkl. Papierkorb).
+pub fn collect_referenced(store: &crate::storage::Store) -> HashSet<String> {
+    let mut set = HashSet::new();
+    if let Ok(notes) = store.load_all_notes() {
+        for n in notes { for p in referenced_paths(&n.content) { set.insert(p); } }
+    }
+    set
+}
+
+fn prune_empty_dirs(dir: &Path, root: &Path) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.is_dir() { prune_empty_dirs(&p, root); }
+        }
+    }
+    if dir != root {
+        if let Ok(mut it) = std::fs::read_dir(dir) {
+            if it.next().is_none() { let _ = std::fs::remove_dir(dir); }
+        }
+    }
+}
+
+/// Löscht alle Dateien unter `images_root`, deren Relativpfad nicht referenziert ist.
+pub fn gc_images(images_root: &Path, referenced: &HashSet<String>) -> std::io::Result<()> {
+    if !images_root.exists() { return Ok(()); }
+    let mut stack = vec![images_root.to_path_buf()];
+    let mut files = Vec::new();
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir)? {
+            let p = entry?.path();
+            if p.is_dir() { stack.push(p); } else { files.push(p); }
+        }
+    }
+    for f in &files {
+        if let Ok(rel) = f.strip_prefix(images_root) {
+            let rel_str = rel.to_string_lossy().replace('\\', "/");
+            if !referenced.contains(&rel_str) { let _ = std::fs::remove_file(f); }
+        }
+    }
+    prune_empty_dirs(images_root, images_root);
+    Ok(())
+}
+
+/// Convenience: aktuelle Referenzen sammeln und GC ausführen (best effort).
+pub fn run_gc(app: &AppHandle, store: &crate::storage::Store) {
+    let referenced = collect_referenced(store);
+    let _ = gc_images(&images_dir(app), &referenced);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -146,5 +203,25 @@ mod tests {
         let (new, files) = rewrite_data_urls("<p>kein bild</p>", "a");
         assert_eq!(new, "<p>kein bild</p>");
         assert!(files.is_empty());
+    }
+    #[test]
+    fn referenced_paths_finds_sharded_refs() {
+        let c = "<img src=\"noteimg://localhost/a/b/x.png\"><img src=\"noteimg://localhost/y.png\">";
+        let r = referenced_paths(c);
+        assert!(r.contains(&"a/b/x.png".to_string()));
+        assert!(r.contains(&"y.png".to_string()));
+    }
+    #[test]
+    fn gc_deletes_unreferenced_keeps_referenced() {
+        let root = std::env::temp_dir().join(format!("notefix-gc-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("a/b")).unwrap();
+        std::fs::write(root.join("a/b/x.png"), [1u8]).unwrap();
+        std::fs::write(root.join("y.png"), [2u8]).unwrap();
+        let mut refs = HashSet::new();
+        refs.insert("a/b/x.png".to_string());
+        gc_images(&root, &refs).unwrap();
+        assert!(root.join("a/b/x.png").exists());
+        assert!(!root.join("y.png").exists());
+        std::fs::remove_dir_all(&root).ok();
     }
 }

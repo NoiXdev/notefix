@@ -64,6 +64,7 @@ pub fn run() {
                 let _ = images::migrate_inline_images(&store, &images::images_dir(app.handle()));
                 let _ = settings::set_setting(&store.conn, "imagesMigrated", "true");
             }
+            let _ = images::gc_images(&images::images_dir(app.handle()), &images::collect_referenced(&store));
             if let Some(legacy) = legacy_notes_dir() {
                 let _ = migrate::import_legacy_if_needed(&store, &legacy);
             }
