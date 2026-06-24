@@ -176,6 +176,11 @@ pub fn run() {
             commands::export_md_bundle,
             commands::check_paths,
             commands::mcp_apply_config,
+            commands::contexts_list,
+            commands::context_add,
+            commands::context_switch,
+            commands::context_rename,
+            commands::context_remove,
             linkmeta::fetch_link_meta,
         ])
         .build(tauri::generate_context!())

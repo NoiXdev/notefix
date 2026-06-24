@@ -297,6 +297,103 @@ pub struct DbLocationResult {
     pub path: String,
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextInfo {
+    pub id: String,
+    pub label: String,
+    pub kind: String,
+    pub path: String,
+    pub active: bool,
+}
+
+fn to_infos(reg: &crate::profiles::Registry) -> Vec<ContextInfo> {
+    reg.contexts.iter().map(|c| ContextInfo {
+        id: c.id.clone(), label: c.label.clone(), kind: c.kind.clone(),
+        path: c.path.clone(), active: c.id == reg.active_id,
+    }).collect()
+}
+
+#[tauri::command]
+pub fn contexts_list(reg: State<'_, Mutex<crate::profiles::Registry>>) -> Result<Vec<ContextInfo>, String> {
+    let r = reg.lock().map_err(|e| e.to_string())?;
+    Ok(to_infos(&r))
+}
+
+#[tauri::command]
+pub fn context_add(
+    app: AppHandle,
+    reg: State<'_, Mutex<crate::profiles::Registry>>,
+    store: State<'_, Mutex<Store>>,
+    label: String,
+) -> Result<Vec<ContextInfo>, String> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let path = crate::config::contexts_dir(&app).join(format!("{id}.db"));
+    std::fs::create_dir_all(crate::config::contexts_dir(&app)).map_err(|e| e.to_string())?;
+    // Initialise the new DB.
+    { let s = Store::open(&path).map_err(|e| e.to_string())?; crate::migrate::run_migrations(&s.conn).map_err(|e| e.to_string())?; }
+    let infos = {
+        let mut r = reg.lock().map_err(|e| e.to_string())?;
+        r.add(id.clone(), label, path.to_string_lossy().into_owned());
+        r.set_active(&id)?;
+        crate::profiles::save(&crate::config::profiles_path(&app), &r).map_err(|e| e.to_string())?;
+        to_infos(&r)
+    };
+    swap_store_to(&store, &path)?;
+    broadcast_context_changed(&app);
+    Ok(infos)
+}
+
+#[tauri::command]
+pub fn context_switch(
+    app: AppHandle,
+    reg: State<'_, Mutex<crate::profiles::Registry>>,
+    store: State<'_, Mutex<Store>>,
+    id: String,
+) -> Result<(), String> {
+    let path = {
+        let mut r = reg.lock().map_err(|e| e.to_string())?;
+        r.set_active(&id)?;
+        let p = r.active().unwrap().path.clone();
+        crate::profiles::save(&crate::config::profiles_path(&app), &r).map_err(|e| e.to_string())?;
+        p
+    };
+    swap_store_to(&store, std::path::Path::new(&path))?;
+    broadcast_context_changed(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn context_rename(app: AppHandle, reg: State<'_, Mutex<crate::profiles::Registry>>, id: String, label: String) -> Result<Vec<ContextInfo>, String> {
+    let mut r = reg.lock().map_err(|e| e.to_string())?;
+    r.rename(&id, label)?;
+    crate::profiles::save(&crate::config::profiles_path(&app), &r).map_err(|e| e.to_string())?;
+    Ok(to_infos(&r))
+}
+
+#[tauri::command]
+pub fn context_remove(app: AppHandle, reg: State<'_, Mutex<crate::profiles::Registry>>, id: String, delete_file: bool) -> Result<Vec<ContextInfo>, String> {
+    let removed = { let mut r = reg.lock().map_err(|e| e.to_string())?; let e = r.remove(&id)?; crate::profiles::save(&crate::config::profiles_path(&app), &r).map_err(|e| e.to_string())?; e };
+    if delete_file {
+        for ext in ["", "-wal", "-shm"] { let p = with_ext(std::path::Path::new(&removed.path), ext); let _ = std::fs::remove_file(p); }
+    }
+    let r = reg.lock().map_err(|e| e.to_string())?;
+    Ok(to_infos(&r))
+}
+
+fn swap_store_to(store: &State<'_, Mutex<Store>>, path: &std::path::Path) -> Result<(), String> {
+    let mut s = store.lock().map_err(|e| e.to_string())?;
+    s.conn = rusqlite::Connection::open(path).map_err(|e| e.to_string())?;
+    crate::migrate::run_migrations(&s.conn).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn broadcast_context_changed(app: &AppHandle) {
+    let labels: Vec<String> = app.webview_windows().keys().cloned().collect();
+    for label in labels { let _ = app.emit_to(label.as_str(), "context-changed", ()); }
+    crate::tray::rebuild_menu(app);
+}
+
 fn with_ext(path: &std::path::Path, ext: &str) -> std::path::PathBuf {
     if ext.is_empty() {
         path.to_path_buf()
@@ -350,6 +447,15 @@ pub fn set_db_location(app: AppHandle, store: State<'_, Mutex<Store>>, folder: S
         let mut s = store.lock().map_err(|e| e.to_string())?;
         s.conn = rusqlite::Connection::open(&target).map_err(|e| e.to_string())?;
         crate::migrate::run_migrations(&s.conn).map_err(|e| e.to_string())?;
+    }
+
+    // Keep the active context's registry entry pointing at the new path.
+    if let Some(reg) = app.try_state::<Mutex<crate::profiles::Registry>>() {
+        if let Ok(mut r) = reg.lock() {
+            let active = r.active_id.clone();
+            if let Some(c) = r.contexts.iter_mut().find(|c| c.id == active) { c.path = target.to_string_lossy().into_owned(); }
+            let _ = crate::profiles::save(&crate::config::profiles_path(&app), &r);
+        }
     }
 
     Ok(DbLocationResult { mode: mode.to_string(), path: target.to_string_lossy().into_owned() })
