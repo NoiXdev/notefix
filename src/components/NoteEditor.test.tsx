@@ -65,23 +65,23 @@ beforeEach(() => {
 describe("NoteEditor — main window mode (isWindow=false)", () => {
   it("renders the formatting toolbar", () => {
     render(<NoteEditor note={mockNote} onChange={onChange} />);
-    expect(screen.getByTitle("Bold")).toBeInTheDocument();
-    expect(screen.getByTitle("Italic")).toBeInTheDocument();
-    expect(screen.getByTitle("Underline")).toBeInTheDocument();
-    expect(screen.getByTitle("Strikethrough")).toBeInTheDocument();
-    expect(screen.getByTitle("Bullet list")).toBeInTheDocument();
-    expect(screen.getByTitle("Numbered list")).toBeInTheDocument();
+    expect(screen.getByTitle("Fett")).toBeInTheDocument();
+    expect(screen.getByTitle("Kursiv")).toBeInTheDocument();
+    expect(screen.getByTitle("Unterstrichen")).toBeInTheDocument();
+    expect(screen.getByTitle("Durchgestrichen")).toBeInTheDocument();
+    expect(screen.getByTitle("Aufzählung")).toBeInTheDocument();
+    expect(screen.getByTitle("Nummerierte Liste")).toBeInTheDocument();
   });
 
   it('shows the "open in new window" button', () => {
     render(<NoteEditor note={mockNote} onChange={onChange} />);
-    expect(screen.getByTitle("Open in new window")).toBeInTheDocument();
+    expect(screen.getByTitle("In neuem Fenster öffnen")).toBeInTheDocument();
   });
 
   it("does not show the custom title bar", () => {
     render(<NoteEditor note={mockNote} onChange={onChange} />);
-    expect(screen.queryByTitle("Keep on top")).not.toBeInTheDocument();
-    expect(screen.queryByTitle("Close")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("Im Vordergrund halten")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("Schließen")).not.toBeInTheDocument();
   });
 
   it("renders the save indicator", () => {
@@ -93,26 +93,26 @@ describe("NoteEditor — main window mode (isWindow=false)", () => {
 describe("NoteEditor — standalone window mode (isWindow=true)", () => {
   it("shows the custom title bar with pin and close buttons", () => {
     render(<NoteEditor note={mockNote} onChange={onChange} isWindow />);
-    expect(screen.getByTitle("Keep on top")).toBeInTheDocument();
-    expect(screen.getByTitle("Close")).toBeInTheDocument();
+    expect(screen.getByTitle("Im Vordergrund halten")).toBeInTheDocument();
+    expect(screen.getByTitle("Schließen")).toBeInTheDocument();
   });
 
   it('does not show the "open in new window" button', () => {
     render(<NoteEditor note={mockNote} onChange={onChange} isWindow />);
-    expect(screen.queryByTitle("Open in new window")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("In neuem Fenster öffnen")).not.toBeInTheDocument();
   });
 
   it("toggles pin label when api.toggleAlwaysOnTop resolves true", async () => {
     render(<NoteEditor note={mockNote} onChange={onChange} isWindow />);
-    const pinBtn = screen.getByTitle("Keep on top");
+    const pinBtn = screen.getByTitle("Im Vordergrund halten");
     fireEvent.click(pinBtn);
-    await screen.findByTitle("Unpin window");
+    await screen.findByTitle("Nicht mehr anheften");
     expect(mockToggleAlwaysOnTop).toHaveBeenCalledWith(false);
   });
 
   it("closes the window via the Tauri API (not DOM window.close)", () => {
     render(<NoteEditor note={mockNote} onChange={onChange} isWindow />);
-    fireEvent.click(screen.getByTitle("Close"));
+    fireEvent.click(screen.getByTitle("Schließen"));
     expect(mockCloseWindow).toHaveBeenCalledOnce();
   });
 });

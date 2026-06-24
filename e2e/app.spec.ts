@@ -5,12 +5,12 @@ test('app loads and shows the sidebar', async ({ page }) => {
   await installTauriMock(page);
   await page.goto('/');
   await expect(page.getByText('Notefix')).toBeVisible();
-  await expect(page.getByTitle('New note')).toBeVisible();
+  await expect(page.getByTitle('Neue Notiz')).toBeVisible();
 });
 
 test('creating a note opens the editor', async ({ page }) => {
   await installTauriMock(page);
   await page.goto('/');
-  await page.getByTitle('New note').click();
-  await expect(page.getByTitle('Bold')).toBeVisible();
+  await page.getByTitle('Neue Notiz').click();
+  await expect(page.getByTitle('Fett')).toBeVisible();
 });

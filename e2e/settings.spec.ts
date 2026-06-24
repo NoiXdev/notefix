@@ -13,7 +13,7 @@ test('settings: navigating every page throws no errors', async ({ page }) => {
 
   await installTauriMock(page);
   await openSettings(page);
-  for (const nav of ['Darstellung', 'System', 'Statistik', 'Tastatur', 'About']) {
+  for (const nav of ['Darstellung', 'System', 'Statistik', 'Tastatur', 'Über']) {
     await page.getByText(nav, { exact: true }).click();
   }
   expect(errors).toEqual([]);
@@ -35,7 +35,7 @@ test('settings/system: close-behavior select is in the viewport (not below the f
 test('the close prompt shows on top of Settings, not hidden behind it', async ({ page }) => {
   await installTauriMock(page);
   await openSettings(page);
-  await expect(page.getByText('Settings')).toBeVisible(); // settings panel is open
+  await expect(page.getByText('Einstellungen')).toBeVisible(); // settings panel is open
 
   // The window "close-requested" event can fire while Settings is open. The
   // dialog used to render after an early `return <Settings/>`, so it only
@@ -43,7 +43,7 @@ test('the close prompt shows on top of Settings, not hidden behind it', async ({
   await page.evaluate(() => (window as unknown as { __emitTauriEvent: (e: string) => void }).__emitTauriEvent('close-requested'));
 
   await expect(page.getByText('Notefix schließen')).toBeVisible();
-  await expect(page.getByText('Settings')).toBeVisible(); // Settings still mounted underneath
+  await expect(page.getByText('Einstellungen')).toBeVisible(); // Settings still mounted underneath
 });
 
 test('settings/system: close-behavior dropdown opens and lists its options', async ({ page }) => {

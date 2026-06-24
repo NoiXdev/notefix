@@ -29,12 +29,12 @@ beforeEach(() => vi.clearAllMocks());
 describe('NoteList — empty state', () => {
   it('shows the empty state message when there are no notes', () => {
     render(<NoteList {...defaultProps} />);
-    expect(screen.getByText(/no notes yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/noch keine notizen/i)).toBeInTheDocument();
   });
 
   it('does not render any note buttons when empty', () => {
     render(<NoteList {...defaultProps} />);
-    expect(screen.queryByTitle('Delete note')).not.toBeInTheDocument();
+    expect(screen.queryByTitle('Notiz löschen')).not.toBeInTheDocument();
   });
 });
 
@@ -58,7 +58,7 @@ describe('NoteList — rendering notes', () => {
   it('renders one row per note', () => {
     const notes = [note('1', '<p>First</p>'), note('2', '<p>Second</p>'), note('3', '<p>Third</p>')];
     render(<NoteList {...defaultProps} notes={notes} />);
-    expect(screen.getAllByTitle('Delete note')).toHaveLength(3);
+    expect(screen.getAllByTitle('Notiz löschen')).toHaveLength(3);
   });
 
   it('applies selected style to the active note', () => {
@@ -76,7 +76,7 @@ describe('NoteList — rendering notes', () => {
 describe('NoteList — interactions', () => {
   it('calls onCreate when the + button is clicked', () => {
     render(<NoteList {...defaultProps} />);
-    fireEvent.click(screen.getByTitle('New note'));
+    fireEvent.click(screen.getByTitle('Neue Notiz'));
     expect(defaultProps.onCreate).toHaveBeenCalledOnce();
   });
 
@@ -88,14 +88,14 @@ describe('NoteList — interactions', () => {
 
   it('calls onDelete with the note id after confirming the delete dialog', () => {
     render(<NoteList {...defaultProps} notes={[note('7', '<p>Delete me</p>')]} />);
-    fireEvent.click(screen.getByTitle('Delete note'));
+    fireEvent.click(screen.getByTitle('Notiz löschen'));
     fireEvent.click(screen.getByText('In Papierkorb'));
     expect(defaultProps.onDelete).toHaveBeenCalledWith('7');
   });
 
   it('does not call onSelect when the delete button is clicked', () => {
     render(<NoteList {...defaultProps} notes={[note('7', '<p>Note</p>')]} />);
-    fireEvent.click(screen.getByTitle('Delete note'));
+    fireEvent.click(screen.getByTitle('Notiz löschen'));
     expect(defaultProps.onSelect).not.toHaveBeenCalled();
   });
 });

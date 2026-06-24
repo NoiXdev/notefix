@@ -67,14 +67,14 @@ beforeEach(() => {
 describe("App — empty state", () => {
   it("shows the empty state when no notes exist", async () => {
     render(<App />);
-    await waitFor(() => expect(screen.getByText(/select a note/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/Wähle eine Notiz/i)).toBeInTheDocument());
   });
 
   it("renders the sidebar", async () => {
     render(<App />);
     await waitFor(() => {
       expect(screen.getByText("Notefix")).toBeInTheDocument();
-      expect(screen.getByTitle("New note")).toBeInTheDocument();
+      expect(screen.getByTitle("Neue Notiz")).toBeInTheDocument();
     });
   });
 });
@@ -82,16 +82,16 @@ describe("App — empty state", () => {
 describe("App — creating notes", () => {
   it("creates a note and auto-selects it when + is clicked", async () => {
     render(<App />);
-    await waitFor(() => screen.getByTitle("New note"));
-    fireEvent.click(screen.getByTitle("New note"));
-    await waitFor(() => expect(screen.getByTitle("Bold")).toBeInTheDocument());
-    expect(screen.queryByText(/select a note/i)).not.toBeInTheDocument();
+    await waitFor(() => screen.getByTitle("Neue Notiz"));
+    fireEvent.click(screen.getByTitle("Neue Notiz"));
+    await waitFor(() => expect(screen.getByTitle("Fett")).toBeInTheDocument());
+    expect(screen.queryByText(/Wähle eine Notiz/i)).not.toBeInTheDocument();
   });
 
   it("shows the new note in the sidebar list", async () => {
     render(<App />);
-    await waitFor(() => screen.getByTitle("New note"));
-    fireEvent.click(screen.getByTitle("New note"));
+    await waitFor(() => screen.getByTitle("Neue Notiz"));
+    fireEvent.click(screen.getByTitle("Neue Notiz"));
     await waitFor(() => expect(screen.getByText("New note")).toBeInTheDocument());
   });
 });
@@ -99,21 +99,21 @@ describe("App — creating notes", () => {
 describe("App — deleting notes", () => {
   it("returns to empty state when the only note is deleted", async () => {
     render(<App />);
-    await waitFor(() => screen.getByTitle("New note"));
-    fireEvent.click(screen.getByTitle("New note"));
-    await waitFor(() => screen.getByTitle("Delete note"));
-    fireEvent.click(screen.getByTitle("Delete note"));
+    await waitFor(() => screen.getByTitle("Neue Notiz"));
+    fireEvent.click(screen.getByTitle("Neue Notiz"));
+    await waitFor(() => screen.getByTitle("Notiz löschen"));
+    fireEvent.click(screen.getByTitle("Notiz löschen"));
     await waitFor(() => screen.getByText(/Endgültig löschen|In Papierkorb/));
     fireEvent.click(screen.getByText(/Endgültig löschen|In Papierkorb/));
-    await waitFor(() => expect(screen.getByText(/select a note/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/Wähle eine Notiz/i)).toBeInTheDocument());
   });
 });
 
 describe("App — shortcuts", () => {
   it("Cmd+N creates a note", async () => {
     render(<App />);
-    await waitFor(() => screen.getByTitle("New note"));
+    await waitFor(() => screen.getByTitle("Neue Notiz"));
     fireEvent.keyDown(document.body, { key: "n", metaKey: true });
-    await waitFor(() => expect(screen.getByTitle("Bold")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTitle("Fett")).toBeInTheDocument());
   });
 });
