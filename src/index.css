@@ -164,3 +164,12 @@
 .lp-switch { margin-left: 6px; display: inline-flex; gap: 2px; }
 .lp-switch button { font-size: 10px; padding: 0 4px; border: 1px solid #e7d27a; border-radius: 4px; background: #fff; color: #57534e; }
 .lp-switch button.on { background: #fde047; color: #1c1917; }
+
+.hljs-section { color: #b45309; font-weight: 600; }
+.hljs-strong { font-weight: 700; color: #1c1917; }
+.hljs-emphasis { font-style: italic; color: #57534e; }
+.hljs-link, .hljs-symbol, .hljs-bullet { color: #2563eb; }
+.hljs-code { color: #047857; }
+.hljs-quote { color: #78716c; font-style: italic; }
+.hljs-string { color: #047857; }
+.hljs-comment { color: #a8a29e; }

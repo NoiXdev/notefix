@@ -33,6 +33,7 @@
     "@tiptap/react": "^3.27.1",
     "@tiptap/starter-kit": "^3.27.1",
     "emoji-picker-react": "^4.19.1",
+    "highlight.js": "^11.11.1",
     "html2canvas-pro": "^2.2.0",
     "i18next": "^26.3.2",
     "jspdf": "^4.2.1",
@@ -42,6 +43,7 @@
     "react-grid-layout": "^1.5.3",
     "react-i18next": "^17.0.8",
     "react-select": "^5.10.2",
+    "react-simple-code-editor": "^0.14.1",
     "tailwindcss": "^4.3.1",
     "turndown": "^7.2.4",
     "turndown-plugin-gfm": "^1.0.2"
