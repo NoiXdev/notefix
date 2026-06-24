@@ -10,7 +10,7 @@ import Toggle from "./Toggle";
 import ShortcutsSettings from "./ShortcutsSettings";
 import { runSystemChecks } from "../systemChecks";
 
-type Page = "about" | "appearance" | "system" | "stats" | "shortcuts" | "diagnostics";
+type Page = "about" | "appearance" | "system" | "mcp" | "stats" | "shortcuts" | "diagnostics";
 
 interface NavItemProps {
   label: string;
@@ -81,6 +81,11 @@ const CLOSE_ACTIONS: { value: import("../hooks/useSettings").CloseAction; labelK
   { value: "quit", labelKey: "settings.system.closeActions.quit" },
 ];
 
+const MCP_BINDS: { value: "internal" | "external"; labelKey: string }[] = [
+  { value: "internal", labelKey: "settings.mcp.binds.internal" },
+  { value: "external", labelKey: "settings.mcp.binds.external" },
+];
+
 const LANGUAGES = [
   { value: "system", label: "" }, // Label kommt aus t() zur Laufzeit
   { value: "de", label: "Deutsch" },
@@ -146,6 +151,7 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
           <NavItem label={t("settings.nav.about")} active={page === "about"} onClick={() => setPage("about")} />
           <NavItem label={t("settings.nav.appearance")} active={page === "appearance"} onClick={() => setPage("appearance")} />
           <NavItem label={t("settings.nav.system")} active={page === "system"} onClick={() => setPage("system")} />
+          <NavItem label={t("settings.nav.mcp")} active={page === "mcp"} onClick={() => setPage("mcp")} />
           <NavItem label={t("settings.nav.stats")} active={page === "stats"} onClick={() => setPage("stats")} />
           <NavItem label={t("settings.nav.shortcuts")} active={page === "shortcuts"} onClick={() => setPage("shortcuts")} />
           <NavItem label={t("settings.nav.diagnostics")} active={page === "diagnostics"} onClick={() => setPage("diagnostics")} />
@@ -286,6 +292,10 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
           </div>
         )}
 
+        {page === "mcp" && (
+          <McpPage settings={settings} onSetSetting={onSetSetting} />
+        )}
+
         {page === "shortcuts" && (
           <ShortcutsSettings value={settings.shortcuts} onChange={v => onSetSetting("shortcuts", v)} />
         )}
@@ -335,6 +345,108 @@ function SystemChecksPage({ settings, onChangeLocation }: { settings: AppSetting
           </div>
         ))}
         <button onClick={run} className="self-start mt-2 px-4 py-1.5 rounded text-sm font-medium border" style={{ borderColor: "#e7d27a", color: "#1c1917" }}>{t("diagnostics.recheck")}</button>
+      </div>
+    </div>
+  );
+}
+
+function McpPage({ settings, onSetSetting }: { settings: AppSettings; onSetSetting: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void }) {
+  const { t } = useTranslation();
+  const [copied, setCopied] = useState(false);
+
+  // Generate a token on first visit if none exists yet.
+  useEffect(() => {
+    if (settings.mcpToken === "") onSetSetting("mcpToken", crypto.randomUUID());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const host = settings.mcpBind === "internal" ? "127.0.0.1" : "0.0.0.0";
+  const url = `http://${host}:${settings.mcpPort}/mcp`;
+  const clientUrl = `http://127.0.0.1:${settings.mcpPort}/mcp`;
+
+  const demo = JSON.stringify(
+    {
+      mcpServers: {
+        notefix: {
+          command: "npx",
+          args: [
+            "-y",
+            "mcp-remote",
+            clientUrl,
+            "--header",
+            `Authorization: Bearer ${settings.mcpToken}`,
+          ],
+        },
+      },
+    },
+    null,
+    2,
+  );
+
+  const copyDemo = async () => {
+    try {
+      await navigator.clipboard.writeText(demo);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // clipboard unavailable — ignore
+    }
+  };
+
+  return (
+    <div>
+      <h1 className="text-2xl font-bold text-gray-900 mb-1">{t("settings.mcp.title")}</h1>
+      <p className="text-sm text-gray-500 mb-6">{t("settings.mcp.subtitle")}</p>
+      <div className="flex flex-col gap-3 max-w-md">
+        <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
+          <span>{t("settings.mcp.enabled")}</span>
+          <Toggle checked={settings.mcpEnabled ?? false} onChange={() => onSetSetting("mcpEnabled", !settings.mcpEnabled)} label={t("settings.mcp.enabled")} />
+        </label>
+
+        <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
+          <span>{t("settings.mcp.reachable")}</span>
+          <div className="w-56"><Select value={settings.mcpBind ?? "internal"} options={MCP_BINDS.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("mcpBind", v as "internal" | "external")} /></div>
+        </label>
+        {settings.mcpBind === "external" && (
+          <div className="rounded border px-3 py-2 text-xs" style={{ background: "#fee2e2", borderColor: "#fca5a5", color: "#991b1b" }}>
+            {t("settings.mcp.externalWarning")}
+          </div>
+        )}
+
+        <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
+          <span>{t("settings.mcp.port")}</span>
+          <input type="number" min={1} max={65535} value={settings.mcpPort ?? 4357} onChange={e => onSetSetting("mcpPort", Math.min(65535, Math.max(1, Number(e.target.value) || 4357)))} className="w-24 bg-white border rounded px-2 py-1" style={{ borderColor: "#e7d27a" }} />
+        </label>
+
+        <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
+          <span>{t("settings.mcp.authRequired")}</span>
+          <Toggle checked={settings.mcpAuthRequired ?? true} onChange={() => onSetSetting("mcpAuthRequired", !settings.mcpAuthRequired)} label={t("settings.mcp.authRequired")} />
+        </label>
+
+        <h2 className="text-sm font-semibold text-gray-800 mt-2">{t("settings.mcp.token")}</h2>
+        <div className="flex items-center gap-2">
+          <input type="text" readOnly value={settings.mcpToken} className="flex-1 bg-white border rounded px-2 py-1 text-xs font-mono" style={{ borderColor: "#e7d27a" }} />
+          <button onClick={() => onSetSetting("mcpToken", crypto.randomUUID())} className="shrink-0 px-3 py-1 rounded text-xs font-medium border" style={{ borderColor: "#e7d27a", color: "#1c1917" }}>
+            {t("settings.mcp.regenerate")}
+          </button>
+        </div>
+
+        <label className="flex items-center justify-between gap-4 text-sm text-gray-800 mt-2">
+          <span>{t("settings.mcp.allowWrite")}</span>
+          <Toggle checked={settings.mcpAllowWrite ?? false} onChange={() => onSetSetting("mcpAllowWrite", !settings.mcpAllowWrite)} label={t("settings.mcp.allowWrite")} />
+        </label>
+
+        <h2 className="text-sm font-semibold text-gray-800 mt-2">{t("settings.mcp.status")}</h2>
+        <p className="text-xs text-gray-600 break-all font-mono">{url}</p>
+
+        <h2 className="text-sm font-semibold text-gray-800 mt-2">{t("settings.mcp.demo")}</h2>
+        <p className="text-xs text-gray-500">{t("settings.mcp.demoHint")}</p>
+        <div className="relative">
+          <pre className="bg-white border rounded p-3 text-[11px] leading-relaxed font-mono overflow-auto" style={{ borderColor: "#e7d27a" }}>{demo}</pre>
+          <button onClick={copyDemo} className="absolute top-2 right-2 px-2 py-0.5 rounded text-[11px] font-medium border" style={{ background: "#fde047", borderColor: "#e7d27a", color: "#1c1917" }}>
+            {copied ? t("settings.mcp.copied") : t("settings.mcp.copy")}
+          </button>
+        </div>
       </div>
     </div>
   );

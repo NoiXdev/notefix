@@ -74,6 +74,18 @@ export default function App() {
   useEffect(() => { void i18n.changeLanguage(resolveLang(settings.language, navigator.language)); }, [settings.language]);
 
   useEffect(() => {
+    if (!loaded) return;
+    void api.mcpApplyConfig({
+      enabled: settings.mcpEnabled,
+      bind: settings.mcpBind,
+      port: settings.mcpPort,
+      token: settings.mcpToken,
+      authRequired: settings.mcpAuthRequired,
+      allowWrite: settings.mcpAllowWrite,
+    });
+  }, [loaded, settings.mcpEnabled, settings.mcpBind, settings.mcpPort, settings.mcpToken, settings.mcpAuthRequired, settings.mcpAllowWrite]);
+
+  useEffect(() => {
     return api.onTrayEvent({
       newNote: async () => {
         const id = await createNote();

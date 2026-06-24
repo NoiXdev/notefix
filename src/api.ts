@@ -157,4 +157,8 @@ export const api = {
   openExternal: (url: string): Promise<void> => openUrl(url),
 
   fetchLinkMeta: (url: string): Promise<import("./linkMeta").LinkMeta> => invoke("fetch_link_meta", { url }),
+
+  /** Start/stop/reconfigure the local MCP server. */
+  mcpApplyConfig: (c: { enabled: boolean; bind: string; port: number; token: string; authRequired: boolean; allowWrite: boolean }): Promise<void> =>
+    invoke("mcp_apply_config", c),
 };

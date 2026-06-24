@@ -32,6 +32,12 @@ export interface AppSettings {
   linkPreviewEnabled: boolean;
   linkPreviewMode: 'url' | 'inline' | 'card';
   copyFormat: import('../copyFormat').CopyFormat;
+  mcpEnabled: boolean;
+  mcpBind: 'internal' | 'external';
+  mcpPort: number;
+  mcpAuthRequired: boolean;
+  mcpToken: string;
+  mcpAllowWrite: boolean;
 }
 
 const DEFAULT_LAYOUT: DashboardWidget[] = [
@@ -60,6 +66,12 @@ const DEFAULTS: AppSettings = {
   linkPreviewEnabled: true,
   linkPreviewMode: 'card',
   copyFormat: 'md',
+  mcpEnabled: false,
+  mcpBind: 'internal',
+  mcpPort: 4357,
+  mcpAuthRequired: true,
+  mcpToken: '',
+  mcpAllowWrite: false,
 };
 
 function isGridWidget(x: unknown): x is DashboardWidget {
@@ -117,6 +129,12 @@ export function useSettings() {
         linkPreviewEnabled: raw.linkPreviewEnabled !== 'false',
         linkPreviewMode: (['url', 'inline', 'card'].includes(raw.linkPreviewMode) ? raw.linkPreviewMode : 'card') as 'url' | 'inline' | 'card',
         copyFormat: (['richtext', 'html', 'md', 'text'].includes(raw.copyFormat) ? raw.copyFormat : 'md') as import('../copyFormat').CopyFormat,
+        mcpEnabled: raw.mcpEnabled === 'true',
+        mcpBind: raw.mcpBind === 'external' ? 'external' : 'internal',
+        mcpPort: Number(raw.mcpPort) > 0 ? Number(raw.mcpPort) : 4357,
+        mcpAuthRequired: raw.mcpAuthRequired !== 'false',
+        mcpToken: typeof raw.mcpToken === 'string' ? raw.mcpToken : '',
+        mcpAllowWrite: raw.mcpAllowWrite === 'true',
       });
       setLoaded(true);
     });

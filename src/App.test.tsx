@@ -52,6 +52,7 @@ vi.mock("./api", () => ({
     closeWindow: vi.fn(),
     getAppInfo: vi.fn(),
     openExternal: vi.fn(),
+    mcpApplyConfig: vi.fn(() => Promise.resolve()),
   },
 }));
 
