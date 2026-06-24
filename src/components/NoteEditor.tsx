@@ -15,7 +15,6 @@ import { saveImageFile } from '../saveImage';
 import { toDateInputValue, fromDateInputValue } from '../dates';
 import { htmlToMarkdown, markdownToHtml } from '../markdown';
 import HistoryModal from './HistoryModal';
-import StatusBar from './StatusBar';
 import { mdCursor, richCounts } from '../editorStatus';
 
 async function insertImageFilesIntoView(view: EditorView, files: File[], noteId: string, pos?: number): Promise<void> {
@@ -244,18 +243,22 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
 
   return (
     <div className="flex flex-col h-full relative" style={{ background: '#fef9c3' }}>
-      <button
-        onClick={flushSave}
-        title={saveState === 'saving' ? t('editor.saving') : lastSavedAt ? t('editor.savedAt', { time: new Date(lastSavedAt).toLocaleTimeString() }) : t('editor.saved')}
-        className={`absolute right-2 ${isWindow ? 'top-10' : 'top-1'} z-10 w-6 h-6 flex items-center justify-center rounded text-amber-700/70 hover:text-amber-800`}
-        aria-label={t('editor.save')}
-      >
-        {saveState === 'saving' ? (
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="animate-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
-        ) : (
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" /><polyline points="17 21 17 13 7 13 7 21" /><polyline points="7 3 7 8 15 8" /></svg>
-        )}
-      </button>
+      {/* Top-right cluster: live status (words/chars or Ln/Col) + autosave indicator */}
+      <div className={`absolute right-2 ${isWindow ? 'top-10' : 'top-1'} z-10 flex items-center gap-2`}>
+        <span className="font-mono text-[11px] text-gray-500 select-none pointer-events-none whitespace-nowrap">{statusText}</span>
+        <button
+          onClick={flushSave}
+          title={saveState === 'saving' ? t('editor.saving') : lastSavedAt ? t('editor.savedAt', { time: new Date(lastSavedAt).toLocaleTimeString() }) : t('editor.saved')}
+          className="w-6 h-6 flex items-center justify-center rounded text-amber-700/70 hover:text-amber-800"
+          aria-label={t('editor.save')}
+        >
+          {saveState === 'saving' ? (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="animate-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
+          ) : (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" /><polyline points="17 21 17 13 7 13 7 21" /><polyline points="7 3 7 8 15 8" /></svg>
+          )}
+        </button>
+      </div>
 
       {/* Custom title bar — only in frameless window mode */}
       {isWindow && (
@@ -434,7 +437,6 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
         )}
       </div>
       {historyOpen && <HistoryModal noteId={note.id} onRestore={restore} onClose={() => setHistoryOpen(false)} />}
-      <StatusBar text={statusText} />
     </div>
   );
 }
