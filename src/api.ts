@@ -63,6 +63,16 @@ export const api = {
       invoke("settings_set", { key, value }),
   },
 
+  contexts: {
+    list: (): Promise<import("./contexts").ContextInfo[]> => invoke("contexts_list"),
+    add: (label: string): Promise<import("./contexts").ContextInfo[]> => invoke("context_add", { label }),
+    switch: (id: string): Promise<void> => invoke("context_switch", { id }),
+    rename: (id: string, label: string): Promise<import("./contexts").ContextInfo[]> =>
+      invoke("context_rename", { id, label }),
+    remove: (id: string, deleteFile: boolean): Promise<import("./contexts").ContextInfo[]> =>
+      invoke("context_remove", { id, deleteFile }),
+  },
+
   saveImage: (noteId: string, name: string, bytes: number[]): Promise<string> => invoke("save_image", { noteId, name, bytes }),
 
   exportNotes: (path: string, ids: string[]): Promise<void> =>
@@ -101,6 +111,14 @@ export const api = {
   /** Subscribe to cross-window note changes. Returns an unsubscribe fn. */
   onNotesChanged(callback: () => void): () => void {
     const unlisten = listen("notes-changed", () => callback());
+    return () => {
+      void unlisten.then((un) => un());
+    };
+  },
+
+  /** Subscribe to active-context switches. Returns an unsubscribe fn. */
+  onContextChanged(callback: () => void): () => void {
+    const unlisten = listen("context-changed", () => callback());
     return () => {
       void unlisten.then((un) => un());
     };
