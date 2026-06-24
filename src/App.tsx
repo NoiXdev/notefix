@@ -7,7 +7,7 @@ import { useSettings } from './hooks/useSettings';
 import NoteList from './components/NoteList';
 import NoteEditor from './components/NoteEditor';
 import Logo from './components/Logo';
-import Settings from './components/Settings';
+import Settings, { type Page as SettingsPage } from './components/Settings';
 import DeleteFolderModal from './components/DeleteFolderModal';
 import CloseDialog from './components/CloseDialog';
 import ExportDialog from './components/ExportDialog';
@@ -40,7 +40,7 @@ export default function App() {
   const [dashEdit, setDashEdit] = useState(false);
   const [stats, setStats] = useState<Stats | null>(null);
   const [sysProblems, setSysProblems] = useState<SystemCheck[] | null>(null);
-  const [settingsPage, setSettingsPage] = useState<'diagnostics' | undefined>(undefined);
+  const [settingsPage, setSettingsPage] = useState<SettingsPage | undefined>(undefined);
   const initView = useRef(false);
   const selectNote = (id: string) => { setSelectedId(id); setView('editor'); };
 
@@ -196,7 +196,7 @@ export default function App() {
         onCreate={handleCreate}
         onDelete={handleDelete}
         onOpenSettings={() => { setSettingsPage(undefined); setShowSettings(true); }}
-        onOpenContexts={() => { setSettingsPage(undefined); setShowSettings(true); }}
+        onOpenContexts={() => { setSettingsPage('contexts'); setShowSettings(true); }}
         onOpenDashboard={() => setView('dashboard')}
         onTogglePin={setPinned}
         onArchive={setArchived}

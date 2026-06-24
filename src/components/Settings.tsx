@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, type AppInfo } from "../api";
+import type { ContextInfo } from "../contexts";
 import type { Stats } from "../types";
 import type { DateFormat } from "../dates";
 import type { AppSettings } from "../hooks/useSettings";
@@ -11,7 +12,7 @@ import ShortcutsSettings from "./ShortcutsSettings";
 import { runSystemChecks } from "../systemChecks";
 import { OSS_LIBS } from "../licenses";
 
-type Page = "about" | "appearance" | "system" | "mcp" | "stats" | "shortcuts" | "diagnostics";
+export type Page = "about" | "appearance" | "system" | "contexts" | "mcp" | "stats" | "shortcuts" | "diagnostics";
 
 interface NavItemProps {
   label: string;
@@ -152,6 +153,7 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
           <NavItem label={t("settings.nav.about")} active={page === "about"} onClick={() => setPage("about")} />
           <NavItem label={t("settings.nav.appearance")} active={page === "appearance"} onClick={() => setPage("appearance")} />
           <NavItem label={t("settings.nav.system")} active={page === "system"} onClick={() => setPage("system")} />
+          <NavItem label={t("contexts.nav")} active={page === "contexts"} onClick={() => setPage("contexts")} />
           <NavItem label={t("settings.nav.mcp")} active={page === "mcp"} onClick={() => setPage("mcp")} />
           <NavItem label={t("settings.nav.stats")} active={page === "stats"} onClick={() => setPage("stats")} />
           <NavItem label={t("settings.nav.shortcuts")} active={page === "shortcuts"} onClick={() => setPage("shortcuts")} />
@@ -306,6 +308,10 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
           </div>
         )}
 
+        {page === "contexts" && (
+          <ContextsPage />
+        )}
+
         {page === "mcp" && (
           <McpPage settings={settings} onSetSetting={onSetSetting} />
         )}
@@ -332,6 +338,63 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
           <SystemChecksPage settings={settings} onChangeLocation={changeLocation} />
         )}
       </main>
+    </div>
+  );
+}
+
+function ContextsPage() {
+  const { t } = useTranslation();
+  const [ctx, setCtx] = useState<ContextInfo[]>([]);
+
+  useEffect(() => {
+    api.contexts.list().then(setCtx);
+  }, []);
+
+  const labelOf = (c: ContextInfo) => c.label || t("contexts.localDefault");
+
+  const rename = async (c: ContextInfo) => {
+    const name = window.prompt(t("contexts.rename"), c.label);
+    if (name == null) return;
+    setCtx(await api.contexts.rename(c.id, name));
+  };
+
+  const remove = async (c: ContextInfo) => {
+    if (c.active) return;
+    if (!window.confirm(`${t("contexts.remove")}: ${labelOf(c)}`)) return;
+    const deleteFile = window.confirm(t("contexts.removeFile"));
+    setCtx(await api.contexts.remove(c.id, deleteFile));
+  };
+
+  const add = async () => {
+    const name = window.prompt(t("contexts.addPrompt"));
+    if (name == null) return;
+    setCtx(await api.contexts.add(name));
+  };
+
+  return (
+    <div>
+      <h1 className="text-2xl font-bold text-gray-900 mb-1">{t("contexts.title")}</h1>
+      <p className="text-sm text-gray-500 mb-6">{t("contexts.subtitle")}</p>
+      <div className="flex flex-col gap-2 max-w-lg">
+        {ctx.map(c => (
+          <div key={c.id} className="flex items-start justify-between gap-3 rounded border px-3 py-2" style={{ borderColor: "#e7d27a", background: "#fffdf0" }}>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-sm font-medium text-gray-800">
+                <span className="truncate">{labelOf(c)}</span>
+                {c.active && (
+                  <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide" style={{ background: "#fde047", color: "#1c1917" }}>{t("contexts.active")}</span>
+                )}
+              </div>
+              <div className="text-xs text-gray-500 break-all font-mono">{c.path}</div>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <button onClick={() => rename(c)} className="px-3 py-1 rounded text-xs font-medium border" style={{ borderColor: "#e7d27a", color: "#1c1917" }}>{t("contexts.rename")}</button>
+              <button onClick={() => remove(c)} disabled={c.active} className="px-3 py-1 rounded text-xs font-medium border disabled:opacity-40 disabled:cursor-not-allowed" style={{ borderColor: "#e7d27a", color: "#1c1917" }}>{t("contexts.remove")}</button>
+            </div>
+          </div>
+        ))}
+      </div>
+      <button onClick={add} className="mt-4 px-4 py-1.5 rounded text-sm font-medium" style={{ background: "#fde047", color: "#1c1917" }}>{t("contexts.add")}</button>
     </div>
   );
 }
