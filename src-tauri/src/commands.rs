@@ -439,6 +439,40 @@ pub fn export_notes_base64(store: State<'_, Mutex<Store>>, app: AppHandle, path:
 }
 
 #[tauri::command]
+pub fn note_inlined_html(store: State<'_, Mutex<Store>>, app: AppHandle, note_id: String) -> Result<String, String> {
+    let notes = { let s = store.lock().map_err(|e| e.to_string())?; s.load_all_notes().map_err(|e| e.to_string())? };
+    let note = notes.into_iter().find(|n| n.id == note_id).ok_or_else(|| "note not found".to_string())?;
+    let root = crate::images::images_dir(&app);
+    Ok(crate::export::inline_images(&note.content, |rel| {
+        let safe = crate::images::safe_subpath(rel)?;
+        let bytes = std::fs::read(root.join(&safe)).ok()?;
+        Some((crate::images::mime_for(rel).to_string(), bytes))
+    }))
+}
+
+#[tauri::command]
+pub fn save_export(path: String, bytes: Vec<u8>) -> Result<(), String> {
+    std::fs::write(&path, &bytes).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn export_md_bundle(app: AppHandle, dir: String, md: String, name: String) -> Result<(), String> {
+    let (rewritten, paths) = crate::export::to_bundle(&md);
+    let root = crate::images::images_dir(&app);
+    let dest = std::path::PathBuf::from(&dir);
+    std::fs::create_dir_all(dest.join("images")).map_err(|e| e.to_string())?;
+    for rel in paths {
+        if let Some(safe) = crate::images::safe_subpath(&rel) {
+            let to = dest.join("images").join(&safe);
+            if let Some(p) = to.parent() { let _ = std::fs::create_dir_all(p); }
+            let _ = std::fs::copy(root.join(&safe), &to);
+        }
+    }
+    let fname = format!("{}.md", name.replace(['/', '\\', ':'], "-"));
+    std::fs::write(dest.join(fname), rewritten).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn export_notes_bundle(store: State<'_, Mutex<Store>>, app: AppHandle, dir: String, ids: Vec<String>) -> Result<(), String> {
     let notes = { let s = store.lock().map_err(|e| e.to_string())?; s.load_notes().map_err(|e| e.to_string())? };
     let root = crate::images::images_dir(&app);

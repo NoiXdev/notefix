@@ -135,6 +135,9 @@ pub fn run() {
             commands::save_image,
             commands::export_notes_base64,
             commands::export_notes_bundle,
+            commands::note_inlined_html,
+            commands::save_export,
+            commands::export_md_bundle,
             commands::check_paths,
         ])
         .build(tauri::generate_context!())
