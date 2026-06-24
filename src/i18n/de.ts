@@ -292,4 +292,9 @@ export const de = {
     noteNotFound: 'Notiz nicht gefunden.',
     selectOrCreate: 'Wähle eine Notiz oder erstelle eine neue',
   },
+  export: {
+    title: 'Notiz exportieren',
+    text: 'Text',
+    mdBundle: 'Markdown: Bilder als Ordner',
+  },
 };

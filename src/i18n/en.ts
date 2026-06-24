@@ -292,4 +292,9 @@ export const en = {
     noteNotFound: 'Note not found.',
     selectOrCreate: 'Select a note or create a new one',
   },
+  export: {
+    title: 'Export note',
+    text: 'Text',
+    mdBundle: 'Markdown: images as a folder',
+  },
 };

@@ -11,10 +11,12 @@ import Settings from './components/Settings';
 import DeleteFolderModal from './components/DeleteFolderModal';
 import CloseDialog from './components/CloseDialog';
 import ExportDialog from './components/ExportDialog';
+import ExportFormatModal from './components/ExportFormatModal';
 import Dashboard from './components/Dashboard';
 import SystemCheckModal from './components/SystemCheckModal';
 import { runSystemChecks, type SystemCheck } from './systemChecks';
 import { exportBase64, exportBundle } from './export';
+import { exportNote, type ExportFormat } from './export/exporters';
 import { resolveBindings, eventToCombo } from './shortcuts';
 import i18n from './i18n';
 import { resolveLang } from './i18n/lang';
@@ -33,6 +35,7 @@ export default function App() {
   const [closePrompt, setClosePrompt] = useState(false);
   const [exportReq, setExportReq] = useState<{ ids: string[]; name: string } | null>(null);
   const requestExport = (ids: string[], name: string) => setExportReq({ ids, name });
+  const [exportNoteState, setExportNoteState] = useState<import('./types').Note | null>(null);
   const [view, setView] = useState<'editor' | 'dashboard'>('editor');
   const [dashEdit, setDashEdit] = useState(false);
   const [stats, setStats] = useState<Stats | null>(null);
@@ -194,7 +197,7 @@ export default function App() {
         onRestore={restoreNote}
         onPurge={purgeNote}
         onEmptyTrash={emptyTrash}
-        onExport={requestExport}
+        onExportNote={(n) => setExportNoteState(n)}
       />
       <main className="flex-1 overflow-hidden">
         {view === 'dashboard' ? (
@@ -244,6 +247,12 @@ export default function App() {
           onBase64={() => { void exportBase64(exportReq.ids, exportReq.name); setExportReq(null); }}
           onBundle={() => { void exportBundle(exportReq.ids); setExportReq(null); }}
           onCancel={() => setExportReq(null)}
+        />
+      )}
+      {exportNoteState && (
+        <ExportFormatModal
+          onExport={(f: ExportFormat, mdBundle: boolean) => { const n = exportNoteState; setExportNoteState(null); void exportNote(n, f, mdBundle); }}
+          onCancel={() => setExportNoteState(null)}
         />
       )}
       {sysProblems && (

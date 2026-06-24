@@ -17,7 +17,7 @@ const defaultProps = {
   onCreate: vi.fn(),
   onDelete: vi.fn(),
   onOpenSettings: vi.fn(),
-  onExport: vi.fn(),
+  onExportNote: vi.fn(),
   onTogglePin: vi.fn(),
   onArchive: vi.fn(),
   onSetColor: vi.fn(),

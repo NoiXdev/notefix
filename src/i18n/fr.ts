@@ -292,4 +292,9 @@ export const fr = {
     noteNotFound: 'Note introuvable.',
     selectOrCreate: 'Sélectionnez une note ou créez-en une nouvelle',
   },
+  export: {
+    title: 'Exporter la note',
+    text: 'Texte',
+    mdBundle: 'Markdown : images dans un dossier',
+  },
 };

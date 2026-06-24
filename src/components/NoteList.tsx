@@ -52,7 +52,7 @@ interface Props {
   onRestore?: (id: string) => void;
   onPurge?: (id: string) => void;
   onEmptyTrash?: () => void;
-  onExport: (ids: string[], name: string) => void;
+  onExportNote: (note: Note) => void;
 }
 
 const sortNotes = (a: Note, b: Note) => Number(b.pinned) - Number(a.pinned) || a.position - b.position;
@@ -76,7 +76,7 @@ export default function NoteList(props: Props) {
     onReorderNotes, onReorderFolders, onSetFolderIcon, onSetFolderColor, onSetFolderSort,
     dateFormat = 'auto', pinnedScope = 'perFolder', folderColorStyle = 'icon',
     compactTree = false, treeProgress = true,
-    trashed = [], trashEnabled = true, onRestore, onPurge, onEmptyTrash, onExport,
+    trashed = [], trashEnabled = true, onRestore, onPurge, onEmptyTrash, onExportNote,
   } = props;
 
   const [showGame, setShowGame] = useState(false);
@@ -305,7 +305,7 @@ export default function NoteList(props: Props) {
             ...(onArchive ? [{ label: menu.note.archived ? t('noteList.menu.restore') : t('noteList.menu.archive'), icon: fa(faBoxArchive), onClick: () => onArchive(menu.note.id, !menu.note.archived) }] : []),
             ...(onMoveNote ? [{ label: t('noteList.menu.moveTo'), icon: fa(faRightLong), submenu: moveSubmenu(menu.note) }] : []),
             { label: t('noteList.menu.delete'), icon: fa(faTrash), onClick: () => setPendingDelete(menu.note.id) },
-            { label: t('noteList.menu.export'), icon: fa(faFileExport), onClick: () => onExport([menu.note.id], `${(getPreview(menu.note.content).slice(0, 40) || t('noteList.exportFallbackName')).replace(/[/\\:]/g, '-')}.json`) },
+            { label: t('noteList.menu.export'), icon: fa(faFileExport), onClick: () => onExportNote(menu.note) },
           ]}
           onClose={() => setMenu(null)}
         />
