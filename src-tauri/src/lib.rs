@@ -6,6 +6,7 @@ mod images;
 mod linkmeta;
 mod mcp;
 mod migrate;
+mod profiles;
 mod revisions;
 mod settings;
 mod stats;
