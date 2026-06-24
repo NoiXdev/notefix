@@ -13,6 +13,7 @@ import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
 import { countTasks } from '../tasks';
 import { ResizableImage } from './ResizableImage';
+import { CodeBlock } from '../codeBlock';
 import { LinkPreview, LinkPreviewCtx, type LinkDisplay } from './LinkPreviewNode';
 import { isBareUrl } from '../linkMeta';
 import type { Note } from '../types';
@@ -111,7 +112,8 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
 
   const editor = useEditor({
     extensions: [
-      StarterKit,
+      StarterKit.configure({ codeBlock: false }),
+      CodeBlock,
       Underline,
       Placeholder.configure({ placeholder: t('editor.placeholder') }),
       TaskList,

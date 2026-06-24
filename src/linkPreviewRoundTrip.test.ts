@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect } from 'vitest';
 import { Editor } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
@@ -7,15 +7,21 @@ import TaskItem from '@tiptap/extension-task-item';
 import { LinkPreview } from './components/LinkPreviewNode';
 import { htmlToMarkdown, markdownToHtml } from './markdown';
 
+const editors: Editor[] = [];
+// Destroy editors so ProseMirror's DOMObserver timer doesn't fire after teardown.
+afterEach(() => { editors.forEach(e => e.destroy()); editors.length = 0; });
+
 // Regression: StarterKit's Link mark (parse priority 1000 at the extension
 // level, 50 at the ProseMirror rule level) used to win the `a[href]` parse over
 // the linkPreview node, so every markdown round-trip silently downgraded a
 // preview into a plain link. LinkPreview's parse rule now carries priority 100.
 function makeEditor(content: string) {
-  return new Editor({
+  const ed = new Editor({
     extensions: [StarterKit, Underline, TaskList, TaskItem.configure({ nested: true }), LinkPreview],
     content,
   });
+  editors.push(ed);
+  return ed;
 }
 
 describe('link-preview survives a markdown round trip', () => {

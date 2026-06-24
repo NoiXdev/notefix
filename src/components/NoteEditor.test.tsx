@@ -28,7 +28,7 @@ vi.mock("@tiptap/react", () => {
   };
   return { useEditor: () => editor, EditorContent: () => null };
 });
-vi.mock("@tiptap/starter-kit", () => ({ default: {} }));
+vi.mock("@tiptap/starter-kit", () => ({ default: { configure: () => ({}) } }));
 vi.mock("@tiptap/extension-underline", () => ({ default: {} }));
 vi.mock("@tiptap/extension-placeholder", () => ({ default: { configure: () => ({}) } }));
 vi.mock("@tiptap/extension-task-list", () => ({ default: {} }));
