@@ -220,7 +220,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
       <button
         onClick={flushSave}
         title={saveState === 'saving' ? 'Speichern…' : lastSavedAt ? `Zuletzt gespeichert: ${new Date(lastSavedAt).toLocaleTimeString()}` : 'Gespeichert'}
-        className="absolute right-2 top-1 z-10 w-6 h-6 flex items-center justify-center rounded text-amber-700/70 hover:text-amber-800"
+        className={`absolute right-2 ${isWindow ? 'top-10' : 'top-1'} z-10 w-6 h-6 flex items-center justify-center rounded text-amber-700/70 hover:text-amber-800`}
         aria-label="Speichern"
       >
         {saveState === 'saving' ? (
