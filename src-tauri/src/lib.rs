@@ -4,6 +4,7 @@ mod export;
 mod folders;
 mod images;
 mod linkmeta;
+mod mcp;
 mod migrate;
 mod revisions;
 mod settings;
