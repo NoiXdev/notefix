@@ -63,7 +63,7 @@ export const api = {
       invoke("settings_set", { key, value }),
   },
 
-  saveImage: (name: string, bytes: number[]): Promise<string> => invoke("save_image", { name, bytes }),
+  saveImage: (noteId: string, name: string, bytes: number[]): Promise<string> => invoke("save_image", { noteId, name, bytes }),
 
   exportNotes: (path: string, ids: string[]): Promise<void> =>
     invoke("export_notes", { path, ids }),

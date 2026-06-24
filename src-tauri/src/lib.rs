@@ -27,7 +27,7 @@ pub fn run() {
         .register_uri_scheme_protocol("noteimg", |ctx, request| {
             let app = ctx.app_handle();
             let name = request.uri().path().trim_start_matches('/').to_string();
-            let body = images::sanitize_name(&name)
+            let body = images::safe_subpath(&name)
                 .and_then(|n| std::fs::read(images::images_dir(app).join(n)).ok());
             match body {
                 Some(bytes) => tauri::http::Response::builder()

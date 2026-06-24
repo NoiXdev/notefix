@@ -8,11 +8,29 @@ pub fn images_dir(app: &AppHandle) -> PathBuf {
     dir
 }
 
-pub fn sanitize_name(name: &str) -> Option<String> {
-    if name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
-        return None;
+/// Note-ID (UUID) → verschachtelter Pfad: jeder '-' wird ein Verzeichnistrenner.
+pub fn shard(id: &str) -> String {
+    id.replace('-', "/")
+}
+
+/// Validiert einen images-relativen Subpfad: erlaubt `a/b/c.ext`, lehnt
+/// leere/`.`/`..`/absolute/Backslash-Segmente ab. Gibt den normalisierten Pfad zurück.
+pub fn safe_subpath(path: &str) -> Option<String> {
+    if path.is_empty() { return None; }
+    let mut parts = Vec::new();
+    for seg in path.split('/') {
+        if seg.is_empty() || seg == "." || seg == ".." || seg.contains('\\') {
+            return None;
+        }
+        parts.push(seg);
     }
-    Some(name.to_string())
+    if parts.is_empty() { return None; }
+    Some(parts.join("/"))
+}
+
+/// Sharded noteimg-URL für ein Bild einer Notiz.
+pub fn note_image_url(note_id: &str, name: &str) -> String {
+    format!("noteimg://localhost/{}/{}", shard(note_id), name)
 }
 
 pub fn mime_for(name: &str) -> &'static str {
@@ -29,17 +47,30 @@ pub fn mime_for(name: &str) -> &'static str {
 mod tests {
     use super::*;
     #[test]
-    fn sanitize_rejects_traversal() {
-        assert_eq!(sanitize_name("abc.png").as_deref(), Some("abc.png"));
-        assert!(sanitize_name("../x").is_none());
-        assert!(sanitize_name("a/b").is_none());
-        assert!(sanitize_name("a\\b").is_none());
-        assert!(sanitize_name("").is_none());
+    fn shard_splits_uuid_on_hyphens() {
+        assert_eq!(shard("5061b1e2-bad1-4fc7-a4f6-e16577f5dca4"), "5061b1e2/bad1/4fc7/a4f6/e16577f5dca4");
+        assert_eq!(shard("a"), "a");
+    }
+    #[test]
+    fn safe_subpath_accepts_nested_rejects_traversal() {
+        assert_eq!(safe_subpath("a/b/c.png").as_deref(), Some("a/b/c.png"));
+        assert_eq!(safe_subpath("x.png").as_deref(), Some("x.png"));
+        assert!(safe_subpath("../x").is_none());
+        assert!(safe_subpath("a/../b").is_none());
+        assert!(safe_subpath("/a").is_none());
+        assert!(safe_subpath("a/").is_none());
+        assert!(safe_subpath("").is_none());
+        assert!(safe_subpath("a\\b").is_none());
     }
     #[test]
     fn mime_maps() {
         assert_eq!(mime_for("x.png"), "image/png");
-        assert_eq!(mime_for("x.JPEG"), "image/jpeg");
+        assert_eq!(mime_for("a/b/x.JPEG"), "image/jpeg");
         assert_eq!(mime_for("x.bin"), "application/octet-stream");
+    }
+    #[test]
+    fn note_image_url_builds_sharded_url() {
+        assert_eq!(note_image_url("5061b1e2-bad1-4fc7-a4f6-e16577f5dca4", "x.png"),
+            "noteimg://localhost/5061b1e2/bad1/4fc7/a4f6/e16577f5dca4/x.png");
     }
 }

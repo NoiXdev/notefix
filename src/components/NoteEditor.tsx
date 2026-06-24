@@ -15,11 +15,11 @@ import { toDateInputValue, fromDateInputValue } from '../dates';
 import { htmlToMarkdown, markdownToHtml } from '../markdown';
 import HistoryModal from './HistoryModal';
 
-async function insertImageFilesIntoView(view: EditorView, files: File[], pos?: number): Promise<void> {
+async function insertImageFilesIntoView(view: EditorView, files: File[], noteId: string, pos?: number): Promise<void> {
   const images = files.filter(f => f.type.startsWith('image/'));
   if (!images.length) return;
   for (const file of images) {
-    const src = await saveImageFile(file);
+    const src = await saveImageFile(noteId, file);
     const node = view.state.schema.nodes.image?.create({ src });
     if (!node) continue;
     const insertAt = typeof pos === 'number' ? pos : view.state.selection.to;
@@ -27,11 +27,11 @@ async function insertImageFilesIntoView(view: EditorView, files: File[], pos?: n
   }
 }
 
-async function insertImageFilesIntoEditor(editor: Editor, files: File[]): Promise<void> {
+async function insertImageFilesIntoEditor(editor: Editor, files: File[], noteId: string): Promise<void> {
   const images = files.filter(f => f.type.startsWith('image/'));
   if (!images.length) return;
   for (const file of images) {
-    const src = await saveImageFile(file);
+    const src = await saveImageFile(noteId, file);
     editor.chain().focus().setImage({ src }).run();
   }
 }
@@ -123,7 +123,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
         const files = Array.from(event.clipboardData?.files ?? []);
         if (!files.some(f => f.type.startsWith('image/'))) return false;
         event.preventDefault();
-        void insertImageFilesIntoView(view, files);
+        void insertImageFilesIntoView(view, files, note.id);
         return true;
       },
       handleDrop: (view, event) => {
@@ -132,7 +132,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
         if (!files.some(f => f.type.startsWith('image/'))) return false;
         event.preventDefault();
         const coords = view.posAtCoords({ left: (event as DragEvent).clientX, top: (event as DragEvent).clientY });
-        void insertImageFilesIntoView(view, files, coords?.pos);
+        void insertImageFilesIntoView(view, files, note.id, coords?.pos);
         return true;
       },
     },
@@ -362,7 +362,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
           className="hidden"
           onChange={async e => {
             const files = Array.from(e.target.files ?? []);
-            if (files.length) await insertImageFilesIntoEditor(editor, files);
+            if (files.length) await insertImageFilesIntoEditor(editor, files, note.id);
             e.target.value = '';
           }}
         />

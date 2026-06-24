@@ -386,9 +386,11 @@ pub fn hide_main(app: AppHandle) {
 }
 
 #[tauri::command]
-pub fn save_image(app: AppHandle, name: String, bytes: Vec<u8>) -> Result<String, String> {
-    let name = crate::images::sanitize_name(&name).ok_or_else(|| "invalid name".to_string())?;
-    let dir = crate::images::images_dir(&app);
+pub fn save_image(app: AppHandle, note_id: String, name: String, bytes: Vec<u8>) -> Result<String, String> {
+    let name = crate::images::safe_subpath(&name).ok_or_else(|| "invalid name".to_string())?;
+    let sub = crate::images::safe_subpath(&crate::images::shard(&note_id)).ok_or_else(|| "invalid note id".to_string())?;
+    let dir = crate::images::images_dir(&app).join(&sub);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     std::fs::write(dir.join(&name), &bytes).map_err(|e| e.to_string())?;
-    Ok(format!("noteimg://localhost/{name}"))
+    Ok(crate::images::note_image_url(&note_id, &name))
 }
