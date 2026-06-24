@@ -1,8 +1,10 @@
 import { Node, mergeAttributes } from '@tiptap/core';
 import { ReactNodeViewRenderer, NodeViewWrapper, type NodeViewProps } from '@tiptap/react';
 import { createContext, useContext, useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { api } from '../api';
 import { fetchMeta } from '../linkMeta';
+import ContextMenu from './ContextMenu';
 
 export type LinkDisplay = 'url' | 'inline' | 'card';
 export const LinkPreviewCtx = createContext<{ enabled: boolean; mode: LinkDisplay }>({ enabled: true, mode: 'card' });
@@ -11,10 +13,12 @@ function domainOf(href: string): string {
   try { return new URL(href).hostname.replace(/^www\./, ''); } catch { return href; }
 }
 
-export function LinkPreviewView({ node, updateAttributes, selected }: NodeViewProps) {
+export function LinkPreviewView({ node, updateAttributes, deleteNode, selected }: NodeViewProps) {
   const { enabled } = useContext(LinkPreviewCtx);
+  const { t } = useTranslation();
   const a = node.attrs as { href: string; display: LinkDisplay; title: string; description: string; image: string; site: string };
   const [, setLoading] = useState(false);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     if (a.title || !a.href) return;
@@ -38,19 +42,32 @@ export function LinkPreviewView({ node, updateAttributes, selected }: NodeViewPr
     </span>
   ) : null;
 
+  const menuItems = [
+    { label: t('editor.linkMenu.open'), onClick: () => { void api.openExternal(a.href); } },
+    { label: t('editor.linkMenu.display'), submenu: [
+      { label: t('editor.linkMenu.displayUrl'), onClick: () => updateAttributes({ display: 'url' }) },
+      { label: t('editor.linkMenu.displayInline'), onClick: () => updateAttributes({ display: 'inline' }) },
+      { label: t('editor.linkMenu.displayCard'), onClick: () => updateAttributes({ display: 'card' }) },
+    ] },
+    { label: t('editor.linkMenu.remove'), onClick: () => deleteNode() },
+  ];
+  const onCtx = (e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); setMenu({ x: e.clientX, y: e.clientY }); };
+  const Menu = () => menu ? <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} /> : null;
+
   if (display === 'url') {
-    return <NodeViewWrapper as="span" className="lp-w"><a href={a.href} onClick={open} className="lp-url">{label}</a><Switcher /></NodeViewWrapper>;
+    return <NodeViewWrapper as="span" className="lp-w" onContextMenu={onCtx}><a href={a.href} onClick={open} className="lp-url">{label}</a><Switcher /><Menu /></NodeViewWrapper>;
   }
   if (display === 'inline') {
     return (
-      <NodeViewWrapper as="span" className="lp-w">
+      <NodeViewWrapper as="span" className="lp-w" onContextMenu={onCtx}>
         <a href={a.href} onClick={open} className="lp-chip" title={label}><span className="lp-chip-site">{site}</span><span className="lp-chip-title">{label}</span></a>
         <Switcher />
+        <Menu />
       </NodeViewWrapper>
     );
   }
   return (
-    <NodeViewWrapper as="span" className="lp-w">
+    <NodeViewWrapper as="span" className="lp-w" onContextMenu={onCtx}>
       <a href={a.href} onClick={open} className="lp-card">
         {a.image ? <img className="lp-card-img" src={a.image} alt="" /> : null}
         <span className="lp-card-body">
@@ -60,6 +77,7 @@ export function LinkPreviewView({ node, updateAttributes, selected }: NodeViewPr
         </span>
       </a>
       <Switcher />
+      <Menu />
     </NodeViewWrapper>
   );
 }
