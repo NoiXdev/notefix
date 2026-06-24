@@ -17,6 +17,8 @@ export const de = {
       project: 'Projekt: noix.dev',
       docs: 'Doku: docs.noix.dev',
       license: 'MIT License',
+      openSource: 'Open Source',
+      openSourceIntro: 'Notefix baut auf diesen Open-Source-Projekten auf:',
     },
     appearance: {
       language: 'Sprache',

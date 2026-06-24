@@ -9,6 +9,7 @@ import Select from "./Select";
 import Toggle from "./Toggle";
 import ShortcutsSettings from "./ShortcutsSettings";
 import { runSystemChecks } from "../systemChecks";
+import { OSS_LIBS } from "../licenses";
 
 type Page = "about" | "appearance" | "system" | "mcp" | "stats" | "shortcuts" | "diagnostics";
 
@@ -170,6 +171,19 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
               <a href="https://noix.dev" className="text-blue-700 underline">{t("settings.about.project")}</a>
               <a href="https://docs.noix.dev" className="text-blue-700 underline">{t("settings.about.docs")}</a>
               <span className="text-gray-500 mt-2">{t("settings.about.license")}</span>
+            </div>
+
+            <div className="mt-10 max-w-md">
+              <h2 className="text-sm font-semibold text-gray-800 mb-1">{t("settings.about.openSource")}</h2>
+              <p className="text-xs text-gray-500 mb-3">{t("settings.about.openSourceIntro")}</p>
+              <ul className="flex flex-col divide-y divide-yellow-200/70 border-y border-yellow-200/70">
+                {OSS_LIBS.map(lib => (
+                  <li key={lib.name} className="flex items-center justify-between gap-3 py-1.5 text-xs">
+                    <a href={lib.url} className="text-blue-700 underline">{lib.name}</a>
+                    <span className="text-gray-500 whitespace-nowrap">{lib.license}</span>
+                  </li>
+                ))}
+              </ul>
             </div>
           </div>
         )}
