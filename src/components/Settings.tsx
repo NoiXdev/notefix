@@ -6,7 +6,7 @@ import type { AppSettings } from "../hooks/useSettings";
 import Logo from "./Logo";
 import Select from "./Select";
 import Toggle from "./Toggle";
-import { SHORTCUTS } from '../shortcuts';
+import ShortcutsSettings from "./ShortcutsSettings";
 import { runSystemChecks } from "../systemChecks";
 
 type Page = "about" | "appearance" | "system" | "stats" | "shortcuts" | "diagnostics";
@@ -244,18 +244,7 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
         )}
 
         {page === "shortcuts" && (
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900 mb-1">Tastatur</h1>
-            <p className="text-sm text-gray-500 mb-6">Mod = ⌘ (Mac) bzw. Strg.</p>
-            <div className="flex flex-col gap-2 max-w-md">
-              {SHORTCUTS.map(s => (
-                <div key={s.description} className="flex items-center justify-between gap-4 text-sm text-gray-800 border-b border-yellow-200 pb-1.5">
-                  <span>{s.description}</span>
-                  <kbd className="px-2 py-0.5 rounded bg-white border text-xs" style={{ borderColor: "#e7d27a" }}>{s.keys}</kbd>
-                </div>
-              ))}
-            </div>
-          </div>
+          <ShortcutsSettings value={settings.shortcuts} onChange={v => onSetSetting("shortcuts", v)} />
         )}
 
         {page === "stats" && (

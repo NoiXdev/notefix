@@ -55,7 +55,3 @@ export function parseShortcuts(raw: string | undefined): Record<string, string> 
     return {};
   }
 }
-
-// Übergangsweise abgeleitete Anzeige-Liste — wird in Task 4 entfernt.
-export interface Shortcut { keys: string; description: string; }
-export const SHORTCUTS: Shortcut[] = SHORTCUT_ACTIONS.map(a => ({ keys: comboLabel(a.defaultCombo), description: a.label }));
