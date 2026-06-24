@@ -395,3 +395,46 @@ pub fn save_image(app: AppHandle, note_id: String, name: String, bytes: Vec<u8>)
     std::fs::write(dir.join(&name), &bytes).map_err(|e| e.to_string())?;
     Ok(crate::images::note_image_url(&note_id, &name))
 }
+
+fn select_notes(notes: Vec<crate::storage::Note>, ids: &[String]) -> Vec<crate::storage::Note> {
+    if ids.is_empty() { notes } else { notes.into_iter().filter(|n| ids.contains(&n.id)).collect() }
+}
+
+#[tauri::command]
+pub fn export_notes_base64(store: State<'_, Mutex<Store>>, app: AppHandle, path: String, ids: Vec<String>) -> Result<(), String> {
+    let notes = { let s = store.lock().map_err(|e| e.to_string())?; s.load_notes().map_err(|e| e.to_string())? };
+    let root = crate::images::images_dir(&app);
+    let out: Vec<crate::storage::Note> = select_notes(notes, &ids).into_iter().map(|mut n| {
+        n.content = crate::export::inline_images(&n.content, |rel| {
+            let safe = crate::images::safe_subpath(rel)?;
+            let bytes = std::fs::read(root.join(&safe)).ok()?;
+            Some((crate::images::mime_for(rel).to_string(), bytes))
+        });
+        n
+    }).collect();
+    let json = serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn export_notes_bundle(store: State<'_, Mutex<Store>>, app: AppHandle, dir: String, ids: Vec<String>) -> Result<(), String> {
+    let notes = { let s = store.lock().map_err(|e| e.to_string())?; s.load_notes().map_err(|e| e.to_string())? };
+    let root = crate::images::images_dir(&app);
+    let dest = std::path::PathBuf::from(&dir);
+    std::fs::create_dir_all(dest.join("images")).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for mut n in select_notes(notes, &ids) {
+        let (content, paths) = crate::export::to_bundle(&n.content);
+        for rel in paths {
+            if let Some(safe) = crate::images::safe_subpath(&rel) {
+                let to = dest.join("images").join(&safe);
+                if let Some(parent) = to.parent() { let _ = std::fs::create_dir_all(parent); }
+                let _ = std::fs::copy(root.join(&safe), &to);
+            }
+        }
+        n.content = content;
+        out.push(n);
+    }
+    let json = serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?;
+    std::fs::write(dest.join("notes.json"), json).map_err(|e| e.to_string())
+}

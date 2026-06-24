@@ -1,3 +1,5 @@
+use base64::Engine;
+
 use crate::storage::Note;
 
 /// Serialize notes to pretty JSON. Empty `ids` => all notes; otherwise only the
@@ -9,6 +11,27 @@ pub fn notes_to_json(notes: &[Note], ids: &[String]) -> serde_json::Result<Strin
         notes.iter().filter(|n| ids.contains(&n.id)).collect()
     };
     serde_json::to_string_pretty(&selected)
+}
+
+/// Ersetzt jede `noteimg://localhost/<pfad>`-URL durch eine `data:`-URL; `read`
+/// liefert (mime, bytes) für einen Relativpfad oder None (dann unverändert).
+pub fn inline_images<F: Fn(&str) -> Option<(String, Vec<u8>)>>(content: &str, read: F) -> String {
+    let re = regex::Regex::new(r#"noteimg://localhost/([^"'\s\\)]+)"#).unwrap();
+    re.replace_all(content, |c: &regex::Captures| match read(&c[1]) {
+        Some((mime, bytes)) => format!("data:{};base64,{}", mime, base64::engine::general_purpose::STANDARD.encode(bytes)),
+        None => c[0].to_string(),
+    }).to_string()
+}
+
+/// Ersetzt `noteimg://localhost/<pfad>` durch `images/<pfad>` und sammelt die Pfade.
+pub fn to_bundle(content: &str) -> (String, Vec<String>) {
+    let re = regex::Regex::new(r#"noteimg://localhost/([^"'\s\\)]+)"#).unwrap();
+    let mut paths = Vec::new();
+    let new = re.replace_all(content, |c: &regex::Captures| {
+        paths.push(c[1].to_string());
+        format!("images/{}", &c[1])
+    }).to_string();
+    (new, paths)
 }
 
 #[cfg(test)]
@@ -41,5 +64,20 @@ mod tests {
     fn uses_camel_case_updated_at() {
         let json = notes_to_json(&[note("a")], &[]).unwrap();
         assert!(json.contains("\"updatedAt\""));
+    }
+
+    #[test]
+    fn inline_images_replaces_with_data_url() {
+        let c = "<img src=\"noteimg://localhost/a/b/x.png\">";
+        let out = inline_images(c, |rel| { assert_eq!(rel, "a/b/x.png"); Some(("image/png".into(), vec![1,2,3])) });
+        assert!(out.contains("data:image/png;base64,"));
+        assert!(!out.contains("noteimg://"));
+    }
+
+    #[test]
+    fn to_bundle_rewrites_and_collects() {
+        let (new, paths) = to_bundle("<img src=\"noteimg://localhost/a/b/x.png\">");
+        assert!(new.contains("src=\"images/a/b/x.png\""));
+        assert_eq!(paths, vec!["a/b/x.png".to_string()]);
     }
 }

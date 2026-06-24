@@ -132,6 +132,8 @@ pub fn run() {
             commands::quit_app,
             commands::hide_main,
             commands::save_image,
+            commands::export_notes_base64,
+            commands::export_notes_bundle,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
