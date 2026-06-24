@@ -133,6 +133,9 @@ export const api = {
   /** Close the current window. DOM `window.close()` is a no-op in the webview, so route through Tauri. */
   closeWindow: (): Promise<void> => getCurrentWindow().close(),
 
+  /** Start an interactive resize from the bottom-right corner (frameless window grip). */
+  startResize: (): Promise<void> => getCurrentWindow().startResizeDragging("SouthEast"),
+
   getAppInfo: async (): Promise<AppInfo> => ({
     name: "Notefix",
     version: await getVersion(),
