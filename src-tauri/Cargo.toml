@@ -32,6 +32,8 @@ base64 = "0.22"
 regex = "1"
 uuid = { version = "1", features = ["v4"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "charset", "http2"] }
+axum = { version = "0.8", default-features = false, features = ["json", "tokio", "http1"] }
+tokio = { version = "1", default-features = false, features = ["net", "sync"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"

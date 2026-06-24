@@ -72,7 +72,32 @@ pub fn run() {
                 let _ = migrate::import_legacy_if_needed(&store, &legacy);
             }
             let start_minimized = settings::get_bool(&store.conn, "startMinimized");
+
+            // Read MCP settings before `store` is moved into the managed state.
+            let mcp_enabled = settings::get_bool(&store.conn, "mcpEnabled");
+            let mcp_bind = settings::get_string(&store.conn, "mcpBind", "internal");
+            let mcp_port = settings::get_int(&store.conn, "mcpPort", 4357) as u16;
+            let mcp_token = settings::get_string(&store.conn, "mcpToken", "");
+            let mcp_auth_required = settings::get_bool_default(&store.conn, "mcpAuthRequired", true);
+            let mcp_allow_write = settings::get_bool(&store.conn, "mcpAllowWrite");
+
             app.manage(Mutex::new(store));
+
+            if mcp_enabled {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = crate::mcp::apply(
+                        handle,
+                        true,
+                        mcp_bind,
+                        mcp_port,
+                        mcp_token,
+                        mcp_auth_required,
+                        mcp_allow_write,
+                    )
+                    .await;
+                });
+            }
 
             tray::build_tray(app.handle())?;
 
@@ -141,6 +166,7 @@ pub fn run() {
             commands::save_export,
             commands::export_md_bundle,
             commands::check_paths,
+            commands::mcp_apply_config,
             linkmeta::fetch_link_meta,
         ])
         .build(tauri::generate_context!())

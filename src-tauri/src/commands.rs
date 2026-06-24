@@ -375,6 +375,19 @@ pub fn folder_set_sort(app: AppHandle, webview: WebviewWindow, store: State<'_, 
 }
 
 #[tauri::command]
+pub async fn mcp_apply_config(
+    app: AppHandle,
+    enabled: bool,
+    bind: String,
+    port: u16,
+    token: String,
+    auth_required: bool,
+    allow_write: bool,
+) -> Result<(), String> {
+    crate::mcp::apply(app, enabled, bind, port, token, auth_required, allow_write).await
+}
+
+#[tauri::command]
 pub fn quit_app(app: AppHandle) {
     app.exit(0);
 }

@@ -1,8 +1,6 @@
-// NOTE: handle_rpc/helpers are only exercised by tests in Task 1; the axum
-// server + StoreAccess real impl that call them are wired in Task 2.
-#![allow(dead_code)]
-
 use serde_json::{json, Value};
+use std::sync::{Arc, Mutex, OnceLock};
+use tauri::{AppHandle, Emitter, Manager};
 
 pub trait NoteAccess: Send + Sync {
     fn list(&self) -> Vec<(String, String)>; // (id, title)
@@ -81,6 +79,178 @@ pub fn handle_rpc(req: &Value, store: &dyn NoteAccess, allow_write: bool, versio
         }
         _ => Some(rpc_err(&id, -32601, "method not found")),
     }
+}
+
+pub struct StoreAccess {
+    pub app: AppHandle,
+}
+
+impl NoteAccess for StoreAccess {
+    fn list(&self) -> Vec<(String, String)> {
+        let st = self.app.state::<Mutex<crate::storage::Store>>();
+        let store = st.lock().unwrap();
+        store
+            .load_notes()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|n| {
+                let t = html_to_text(&n.content);
+                (n.id, t.lines().next().unwrap_or("").to_string())
+            })
+            .collect()
+    }
+    fn get(&self, id: &str) -> Option<String> {
+        let st = self.app.state::<Mutex<crate::storage::Store>>();
+        let store = st.lock().unwrap();
+        store
+            .load_all_notes()
+            .ok()?
+            .into_iter()
+            .find(|n| n.id == id)
+            .map(|n| html_to_text(&n.content))
+    }
+    fn search(&self, q: &str) -> Vec<(String, String)> {
+        let ql = q.to_lowercase();
+        let st = self.app.state::<Mutex<crate::storage::Store>>();
+        let store = st.lock().unwrap();
+        store
+            .load_notes()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|n| {
+                let t = html_to_text(&n.content);
+                if t.to_lowercase().contains(&ql) {
+                    Some((n.id, t.lines().next().unwrap_or("").to_string()))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+    fn create(&self, content: &str) -> Result<String, String> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        let note = crate::storage::Note {
+            id: id.clone(),
+            content: text_to_html(content),
+            updated_at: now,
+            pinned: false,
+            archived: false,
+            color: String::new(),
+            due_at: None,
+            folder_id: None,
+            position: 0,
+            deleted_at: None,
+        };
+        let st = self.app.state::<Mutex<crate::storage::Store>>();
+        {
+            let store = st.lock().unwrap();
+            store.save_note(&note).map_err(|e| e.to_string())?;
+        }
+        let _ = self.app.emit("notes-changed", ());
+        Ok(id)
+    }
+    fn append(&self, id: &str, text: &str) -> Result<(), String> {
+        let st = self.app.state::<Mutex<crate::storage::Store>>();
+        let mut note = {
+            let store = st.lock().unwrap();
+            store
+                .load_all_notes()
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .find(|n| n.id == id)
+                .ok_or("note not found")?
+        };
+        note.content.push_str(&text_to_html(text));
+        {
+            let store = st.lock().unwrap();
+            store.save_note(&note).map_err(|e| e.to_string())?;
+        }
+        let _ = self.app.emit("notes-changed", ());
+        Ok(())
+    }
+}
+
+struct McpState {
+    app: AppHandle,
+    token: String,
+    auth_required: bool,
+    allow_write: bool,
+    version: String,
+}
+
+static SHUTDOWN: OnceLock<Mutex<Option<tokio::sync::oneshot::Sender<()>>>> = OnceLock::new();
+
+async fn mcp_route(
+    axum::extract::State(state): axum::extract::State<Arc<McpState>>,
+    headers: axum::http::HeaderMap,
+    axum::Json(req): axum::Json<serde_json::Value>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if state.auth_required {
+        let want = format!("Bearer {}", state.token);
+        let ok = headers
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|h| h.to_str().ok())
+            .map(|h| h == want)
+            .unwrap_or(false);
+        if !ok {
+            return (axum::http::StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+        }
+    }
+    let access = StoreAccess { app: state.app.clone() };
+    match handle_rpc(&req, &access, state.allow_write, &state.version) {
+        Some(resp) => axum::Json(resp).into_response(),
+        None => axum::http::StatusCode::ACCEPTED.into_response(),
+    }
+}
+
+pub async fn apply(
+    app: AppHandle,
+    enabled: bool,
+    bind: String,
+    port: u16,
+    token: String,
+    auth_required: bool,
+    allow_write: bool,
+) -> Result<(), String> {
+    if let Some(slot) = SHUTDOWN.get() {
+        if let Some(tx) = slot.lock().unwrap().take() {
+            let _ = tx.send(());
+        }
+    }
+    if !enabled {
+        return Ok(());
+    }
+    let host = if bind == "external" { "0.0.0.0" } else { "127.0.0.1" };
+    let addr: std::net::SocketAddr = format!("{host}:{port}")
+        .parse()
+        .map_err(|e: std::net::AddrParseError| e.to_string())?;
+    let version = app.package_info().version.to_string();
+    let state = Arc::new(McpState {
+        app,
+        token,
+        auth_required,
+        allow_write,
+        version,
+    });
+    let router = axum::Router::new()
+        .route("/mcp", axum::routing::post(mcp_route))
+        .with_state(state);
+    let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| e.to_string())?;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    SHUTDOWN.get_or_init(|| Mutex::new(None)).lock().unwrap().replace(tx);
+    tauri::async_runtime::spawn(async move {
+        let _ = axum::serve(listener, router)
+            .with_graceful_shutdown(async {
+                let _ = rx.await;
+            })
+            .await;
+    });
+    Ok(())
 }
 
 #[cfg(test)]
