@@ -3,6 +3,7 @@ mod config;
 mod export;
 mod folders;
 mod images;
+mod linkmeta;
 mod migrate;
 mod revisions;
 mod settings;
@@ -139,6 +140,7 @@ pub fn run() {
             commands::save_export,
             commands::export_md_bundle,
             commands::check_paths,
+            linkmeta::fetch_link_meta,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
