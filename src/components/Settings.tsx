@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { api, type AppInfo } from "../api";
 import type { Stats } from "../types";
 import type { DateFormat } from "../dates";
@@ -67,7 +68,15 @@ const CLOSE_ACTIONS: { value: import("../hooks/useSettings").CloseAction; label:
   { value: "quit", label: "Beenden" },
 ];
 
+const LANGUAGES = [
+  { value: "system", label: "" }, // Label kommt aus t() zur Laufzeit
+  { value: "de", label: "Deutsch" },
+  { value: "en", label: "English" },
+  { value: "fr", label: "Français" },
+];
+
 export default function Settings({ onClose, settings, onSetSetting, onExport, initialPage }: Props) {
+  const { t } = useTranslation();
   const [page, setPage] = useState<Page>(initialPage ?? "about");
   const [info, setInfo] = useState<AppInfo | null>(null);
 
@@ -146,6 +155,9 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
             <p className="text-sm text-gray-500 mb-6">Wie angepinnte Notizen in der Liste erscheinen.</p>
             <h2 className="text-sm font-semibold text-gray-800 mb-2">Datumsformat</h2>
             <div className="max-w-sm"><Select value={settings.dateFormat} options={DATE_FORMATS} onChange={v => onSetSetting("dateFormat", v as DateFormat)} /></div>
+
+            <h2 className="text-sm font-semibold text-gray-800 mt-8 mb-2">{t("settings.appearance.language")}</h2>
+            <div className="max-w-sm"><Select value={settings.language} options={LANGUAGES.map(l => ({ value: l.value, label: l.value === "system" ? t("settings.appearance.langAuto") : l.label }))} onChange={v => onSetSetting("language", v as import("../hooks/useSettings").LangSetting)} /></div>
 
             <h2 className="text-sm font-semibold text-gray-800 mt-8 mb-2">Angepinnte Notizen</h2>
             <div className="max-w-sm"><Select value={settings.pinnedScope} options={PIN_SCOPES} onChange={v => onSetSetting("pinnedScope", v as import("../hooks/useSettings").PinnedScope)} /></div>

@@ -1,7 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '../api';
 import type { DateFormat } from '../dates';
+import type { LangSetting } from '../i18n/lang';
 import { parseShortcuts } from '../shortcuts';
+
+export type { LangSetting };
 
 export type CloseAction = 'ask' | 'minimize' | 'quit';
 export type PinnedScope = 'perFolder' | 'global';
@@ -25,6 +28,7 @@ export interface AppSettings {
   trashRetentionDays: number;
   closeAction: CloseAction;
   shortcuts: Record<string, string>;
+  language: LangSetting;
 }
 
 const DEFAULT_LAYOUT: DashboardWidget[] = [
@@ -49,6 +53,7 @@ const DEFAULTS: AppSettings = {
   trashRetentionDays: 30,
   closeAction: 'ask',
   shortcuts: {},
+  language: 'system',
 };
 
 function isGridWidget(x: unknown): x is DashboardWidget {
@@ -102,6 +107,7 @@ export function useSettings() {
         trashRetentionDays: Number(raw.trashRetentionDays) > 0 ? Number(raw.trashRetentionDays) : 30,
         closeAction: (['minimize', 'quit'].includes(raw.closeAction) ? raw.closeAction : 'ask') as CloseAction,
         shortcuts: parseShortcuts(raw.shortcuts),
+        language: (['en', 'de', 'fr'].includes(raw.language) ? raw.language : 'system') as LangSetting,
       });
       setLoaded(true);
     });

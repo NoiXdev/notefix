@@ -15,6 +15,8 @@ import SystemCheckModal from './components/SystemCheckModal';
 import { runSystemChecks, type SystemCheck } from './systemChecks';
 import { exportBase64, exportBundle } from './export';
 import { resolveBindings, eventToCombo } from './shortcuts';
+import i18n from './i18n';
+import { resolveLang } from './i18n/lang';
 import type { Folder, Stats } from './types';
 
 const windowNoteId = new URLSearchParams(window.location.search).get('windowNoteId');
@@ -63,6 +65,8 @@ export default function App() {
 
   useEffect(() => { api.stats().then(setStats); }, [notes]);
   useEffect(() => api.onCloseRequested(() => setClosePrompt(true)), []);
+
+  useEffect(() => { void i18n.changeLanguage(resolveLang(settings.language, navigator.language)); }, [settings.language]);
 
   useEffect(() => {
     return api.onTrayEvent({

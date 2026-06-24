@@ -5,7 +5,7 @@ export default defineConfig({
   fullyParallel: true,
   reporter: 'list',
   timeout: 30_000,
-  use: { baseURL: 'http://localhost:1420', trace: 'on-first-retry' },
+  use: { baseURL: 'http://localhost:1420', locale: 'de-DE', trace: 'on-first-retry' },
   webServer: {
     command: 'npm run dev',
     url: 'http://localhost:1420',
