@@ -373,17 +373,23 @@ pub fn context_rename(app: AppHandle, reg: State<'_, Mutex<crate::profiles::Regi
 
 #[tauri::command]
 pub fn context_remove(app: AppHandle, reg: State<'_, Mutex<crate::profiles::Registry>>, id: String, delete_file: bool) -> Result<Vec<ContextInfo>, String> {
-    let removed = { let mut r = reg.lock().map_err(|e| e.to_string())?; let e = r.remove(&id)?; crate::profiles::save(&crate::config::profiles_path(&app), &r).map_err(|e| e.to_string())?; e };
+    let (removed, infos) = {
+        let mut r = reg.lock().map_err(|e| e.to_string())?;
+        let removed = r.remove(&id)?;
+        crate::profiles::save(&crate::config::profiles_path(&app), &r).map_err(|e| e.to_string())?;
+        (removed, to_infos(&r))
+    };
     if delete_file {
         for ext in ["", "-wal", "-shm"] { let p = with_ext(std::path::Path::new(&removed.path), ext); let _ = std::fs::remove_file(p); }
     }
-    let r = reg.lock().map_err(|e| e.to_string())?;
-    Ok(to_infos(&r))
+    Ok(infos)
 }
 
+// Lock convention: never hold the Store and Registry locks simultaneously; if ever needed, lock Store before Registry.
 fn swap_store_to(store: &State<'_, Mutex<Store>>, path: &std::path::Path) -> Result<(), String> {
     let mut s = store.lock().map_err(|e| e.to_string())?;
-    s.conn = rusqlite::Connection::open(path).map_err(|e| e.to_string())?;
+    let opened = Store::open(path).map_err(|e| e.to_string())?;
+    s.conn = opened.conn;
     crate::migrate::run_migrations(&s.conn).map_err(|e| e.to_string())?;
     Ok(())
 }

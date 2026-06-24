@@ -1,6 +1,6 @@
 // src-tauri/src/profiles.rs
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -63,10 +63,10 @@ fn new_id() -> String { uuid::Uuid::new_v4().to_string() }
 
 // Persistence (not unit-tested — needs a real file):
 pub fn load(path: &Path, default_db: &str) -> Registry {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|j| serde_json::from_str(&j).ok())
-        .unwrap_or_else(|| Registry::default_for(default_db))
+    match std::fs::read_to_string(path).ok().and_then(|j| serde_json::from_str::<Registry>(&j).ok()) {
+        Some(r) if r.active().is_some() => r,
+        _ => Registry::default_for(default_db),
+    }
 }
 
 pub fn save(path: &Path, reg: &Registry) -> std::io::Result<()> {

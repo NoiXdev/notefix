@@ -91,6 +91,7 @@ pub fn run() {
             let mcp_allow_write = settings::get_bool(&store.conn, "mcpAllowWrite");
 
             app.manage(Mutex::new(store));
+            app.manage(Mutex::new(reg));
 
             if mcp_enabled {
                 let handle = app.handle().clone();
