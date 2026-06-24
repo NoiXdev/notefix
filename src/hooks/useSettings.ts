@@ -108,37 +108,40 @@ export function useSettings() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULTS);
   const [loaded, setLoaded] = useState(false);
 
-  useEffect(() => {
-    api.settings.load().then(raw => {
-      setSettings({
-        startMinimized: raw.startMinimized === 'true',
-        dateFormat: (['de', 'iso', 'us'].includes(raw.dateFormat) ? raw.dateFormat : 'auto') as DateFormat,
-        pinnedScope: raw.pinnedScope === 'global' ? 'global' : 'perFolder',
-        folderColorStyle: (['bar', 'row'].includes(raw.folderColorStyle) ? raw.folderColorStyle : 'icon') as FolderColorStyle,
-        revisionLimit: Number(raw.revisionLimit) > 0 ? Number(raw.revisionLimit) : 50,
-        autosaveDelay: Number(raw.autosaveDelay) >= 100 ? Number(raw.autosaveDelay) : 400,
-        startView: raw.startView === 'dashboard' ? 'dashboard' : 'lastNote',
-        dashboardLayout: parseLayout(raw.dashboardLayout),
-        compactTree: raw.compactTree === 'true',
-        treeProgress: raw.treeProgress !== 'false',
-        trashEnabled: raw.trashEnabled !== 'false',
-        trashRetentionDays: Number(raw.trashRetentionDays) > 0 ? Number(raw.trashRetentionDays) : 30,
-        closeAction: (['minimize', 'quit'].includes(raw.closeAction) ? raw.closeAction : 'ask') as CloseAction,
-        shortcuts: parseShortcuts(raw.shortcuts),
-        language: (['en', 'de', 'fr'].includes(raw.language) ? raw.language : 'system') as LangSetting,
-        linkPreviewEnabled: raw.linkPreviewEnabled !== 'false',
-        linkPreviewMode: (['url', 'inline', 'card'].includes(raw.linkPreviewMode) ? raw.linkPreviewMode : 'card') as 'url' | 'inline' | 'card',
-        copyFormat: (['richtext', 'html', 'md', 'text'].includes(raw.copyFormat) ? raw.copyFormat : 'md') as import('../copyFormat').CopyFormat,
-        mcpEnabled: raw.mcpEnabled === 'true',
-        mcpBind: raw.mcpBind === 'external' ? 'external' : 'internal',
-        mcpPort: Number(raw.mcpPort) > 0 ? Number(raw.mcpPort) : 4357,
-        mcpAuthRequired: raw.mcpAuthRequired !== 'false',
-        mcpToken: typeof raw.mcpToken === 'string' ? raw.mcpToken : '',
-        mcpAllowWrite: raw.mcpAllowWrite === 'true',
-      });
-      setLoaded(true);
+  const reload = useCallback(async () => {
+    const raw = await api.settings.load();
+    setSettings({
+      startMinimized: raw.startMinimized === 'true',
+      dateFormat: (['de', 'iso', 'us'].includes(raw.dateFormat) ? raw.dateFormat : 'auto') as DateFormat,
+      pinnedScope: raw.pinnedScope === 'global' ? 'global' : 'perFolder',
+      folderColorStyle: (['bar', 'row'].includes(raw.folderColorStyle) ? raw.folderColorStyle : 'icon') as FolderColorStyle,
+      revisionLimit: Number(raw.revisionLimit) > 0 ? Number(raw.revisionLimit) : 50,
+      autosaveDelay: Number(raw.autosaveDelay) >= 100 ? Number(raw.autosaveDelay) : 400,
+      startView: raw.startView === 'dashboard' ? 'dashboard' : 'lastNote',
+      dashboardLayout: parseLayout(raw.dashboardLayout),
+      compactTree: raw.compactTree === 'true',
+      treeProgress: raw.treeProgress !== 'false',
+      trashEnabled: raw.trashEnabled !== 'false',
+      trashRetentionDays: Number(raw.trashRetentionDays) > 0 ? Number(raw.trashRetentionDays) : 30,
+      closeAction: (['minimize', 'quit'].includes(raw.closeAction) ? raw.closeAction : 'ask') as CloseAction,
+      shortcuts: parseShortcuts(raw.shortcuts),
+      language: (['en', 'de', 'fr'].includes(raw.language) ? raw.language : 'system') as LangSetting,
+      linkPreviewEnabled: raw.linkPreviewEnabled !== 'false',
+      linkPreviewMode: (['url', 'inline', 'card'].includes(raw.linkPreviewMode) ? raw.linkPreviewMode : 'card') as 'url' | 'inline' | 'card',
+      copyFormat: (['richtext', 'html', 'md', 'text'].includes(raw.copyFormat) ? raw.copyFormat : 'md') as import('../copyFormat').CopyFormat,
+      mcpEnabled: raw.mcpEnabled === 'true',
+      mcpBind: raw.mcpBind === 'external' ? 'external' : 'internal',
+      mcpPort: Number(raw.mcpPort) > 0 ? Number(raw.mcpPort) : 4357,
+      mcpAuthRequired: raw.mcpAuthRequired !== 'false',
+      mcpToken: typeof raw.mcpToken === 'string' ? raw.mcpToken : '',
+      mcpAllowWrite: raw.mcpAllowWrite === 'true',
     });
+    setLoaded(true);
   }, []);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
 
   const setSetting = useCallback(
     async <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
@@ -149,5 +152,5 @@ export function useSettings() {
     [],
   );
 
-  return { settings, setSetting, loaded };
+  return { settings, setSetting, loaded, reload };
 }

@@ -26,9 +26,9 @@ const windowNoteId = new URLSearchParams(window.location.search).get('windowNote
 
 export default function App() {
   const { t } = useTranslation();
-  const { notes, loading, createNote, updateNote, deleteNote, setPinned, setArchived, setColor, setDue, setFolder, reorderNotes, trashed, restoreNote, purgeNote, emptyTrash } = useNotes();
-  const { folders, createFolder, renameFolder, deleteFolder, reorderFolders, setFolderIcon, setFolderColor, setFolderSort } = useFolders();
-  const { settings, setSetting, loaded } = useSettings();
+  const { notes, loading, createNote, updateNote, deleteNote, setPinned, setArchived, setColor, setDue, setFolder, reorderNotes, trashed, restoreNote, purgeNote, emptyTrash, reload: reloadNotes } = useNotes();
+  const { folders, createFolder, renameFolder, deleteFolder, reorderFolders, setFolderIcon, setFolderColor, setFolderSort, reload: reloadFolders } = useFolders();
+  const { settings, setSetting, loaded, reload: reloadSettings } = useSettings();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [folderToDelete, setFolderToDelete] = useState<Folder | null>(null);
@@ -70,6 +70,16 @@ export default function App() {
 
   useEffect(() => { api.stats().then(setStats); }, [notes]);
   useEffect(() => api.onCloseRequested(() => setClosePrompt(true)), []);
+
+  useEffect(() => {
+    return api.onContextChanged(() => {
+      setSelectedId(null);
+      setView('editor');
+      void reloadNotes();
+      void reloadFolders();
+      void reloadSettings();
+    });
+  }, [reloadNotes, reloadFolders, reloadSettings]);
 
   useEffect(() => { void i18n.changeLanguage(resolveLang(settings.language, navigator.language)); }, [settings.language]);
 

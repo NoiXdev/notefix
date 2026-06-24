@@ -58,5 +58,5 @@ export function useFolders() {
     await reload();
   }, [reload]);
 
-  return { folders, createFolder, renameFolder, moveFolder, deleteFolder, reorderFolders, setFolderIcon, setFolderColor, setFolderSort };
+  return { folders, createFolder, renameFolder, moveFolder, deleteFolder, reorderFolders, setFolderIcon, setFolderColor, setFolderSort, reload };
 }

@@ -44,6 +44,8 @@ vi.mock("./api", () => ({
     onTrayEvent: () => () => {},
     onNotesChanged: () => () => {},
     onCloseRequested: () => () => {},
+    onContextChanged: () => () => {},
+    contexts: { list: () => Promise.resolve([]) },
     quitApp: vi.fn(),
     hideMain: vi.fn(),
     openNoteWindow: vi.fn(),

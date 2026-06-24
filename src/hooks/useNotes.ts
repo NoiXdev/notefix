@@ -82,5 +82,5 @@ export function useNotes() {
   const purgeNote = useCallback(async (id: string) => { await api.notes.purge(id); await reload(); }, [reload]);
   const emptyTrash = useCallback(async () => { await api.trash.empty(); await reload(); }, [reload]);
 
-  return { notes, trashed, loading, createNote, updateNote, deleteNote, setPinned, setArchived, setColor, setDue, setFolder, reorderNotes, restoreNote, purgeNote, emptyTrash };
+  return { notes, trashed, loading, createNote, updateNote, deleteNote, setPinned, setArchived, setColor, setDue, setFolder, reorderNotes, restoreNote, purgeNote, emptyTrash, reload };
 }
