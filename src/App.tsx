@@ -14,6 +14,7 @@ import Dashboard from './components/Dashboard';
 import SystemCheckModal from './components/SystemCheckModal';
 import { runSystemChecks, type SystemCheck } from './systemChecks';
 import { exportBase64, exportBundle } from './export';
+import { resolveBindings, eventToCombo } from './shortcuts';
 import type { Folder, Stats } from './types';
 
 const windowNoteId = new URLSearchParams(window.location.search).get('windowNoteId');
@@ -83,26 +84,33 @@ export default function App() {
   };
 
   useEffect(() => {
+    const bindings = resolveBindings(settings.shortcuts);
     const onKey = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement | null;
+      const combo = eventToCombo(e);
+      if (!combo) return;
+      if (windowNoteId) {
+        if (combo === bindings.closeWindow) { e.preventDefault(); void api.closeWindow(); }
+        return;
+      }
       if (showSettings) return;
+      const t = e.target as HTMLElement | null;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
-      const mod = e.metaKey || e.ctrlKey;
-      if (mod && e.shiftKey && e.key.toLowerCase() === 'n') { e.preventDefault(); void createFolder('Neuer Ordner', null); return; }
-      if (mod && e.key.toLowerCase() === 'n') { e.preventDefault(); void handleCreate(); return; }
-      if (mod && e.key.toLowerCase() === 'e' && selectedNote) { e.preventDefault(); setArchived(selectedNote.id, !selectedNote.archived); return; }
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (combo === bindings.newFolder) { e.preventDefault(); void createFolder('Neuer Ordner', null); return; }
+      if (combo === bindings.newNote) { e.preventDefault(); void handleCreate(); return; }
+      if (combo === bindings.archive && selectedNote) { e.preventDefault(); setArchived(selectedNote.id, !selectedNote.archived); return; }
+      if (combo === bindings.navPrev || combo === bindings.navNext) {
         const list = notes.filter(n => !n.archived && !n.deletedAt);
         if (!list.length) return;
         e.preventDefault();
         const idx = list.findIndex(n => n.id === selectedId);
-        const next = idx === -1 ? list[0] : list[e.key === 'ArrowDown' ? Math.min(list.length - 1, idx + 1) : Math.max(0, idx - 1)];
+        const dir = combo === bindings.navNext ? 1 : -1;
+        const next = idx === -1 ? list[0] : list[dir === 1 ? Math.min(list.length - 1, idx + 1) : Math.max(0, idx - 1)];
         if (next) selectNote(next.id);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [notes, selectedId, selectedNote, showSettings, createFolder, handleCreate, setArchived]);
+  }, [notes, selectedId, selectedNote, showSettings, createFolder, handleCreate, setArchived, settings.shortcuts]);
 
   if (windowNoteId) {
     if (loading) {
