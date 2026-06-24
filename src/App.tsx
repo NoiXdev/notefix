@@ -11,6 +11,8 @@ import DeleteFolderModal from './components/DeleteFolderModal';
 import CloseDialog from './components/CloseDialog';
 import ExportDialog from './components/ExportDialog';
 import Dashboard from './components/Dashboard';
+import SystemCheckModal from './components/SystemCheckModal';
+import { runSystemChecks, type SystemCheck } from './systemChecks';
 import { exportBase64, exportBundle } from './export';
 import type { Folder, Stats } from './types';
 
@@ -29,6 +31,8 @@ export default function App() {
   const [view, setView] = useState<'editor' | 'dashboard'>('editor');
   const [dashEdit, setDashEdit] = useState(false);
   const [stats, setStats] = useState<Stats | null>(null);
+  const [sysProblems, setSysProblems] = useState<SystemCheck[] | null>(null);
+  const [settingsPage, setSettingsPage] = useState<'diagnostics' | undefined>(undefined);
   const initView = useRef(false);
   const selectNote = (id: string) => { setSelectedId(id); setView('editor'); };
 
@@ -45,6 +49,16 @@ export default function App() {
       if (settings.startView === 'dashboard') setView('dashboard');
     }
   }, [loaded, settings.startView]);
+
+  const checkedRef = useRef(false);
+  useEffect(() => {
+    if (!loaded || checkedRef.current) return;
+    checkedRef.current = true;
+    void runSystemChecks(settings).then(checks => {
+      const problems = checks.filter(c => c.status === 'error');
+      if (problems.length) setSysProblems(problems);
+    });
+  }, [loaded, settings]);
 
   useEffect(() => { api.stats().then(setStats); }, [notes]);
   useEffect(() => api.onCloseRequested(() => setClosePrompt(true)), []);
@@ -131,7 +145,7 @@ export default function App() {
   return (
     <>
       {showSettings && (
-        <Settings onClose={() => setShowSettings(false)} settings={settings} onSetSetting={setSetting} onExport={requestExport} />
+        <Settings onClose={() => setShowSettings(false)} settings={settings} onSetSetting={setSetting} onExport={requestExport} initialPage={settingsPage} />
       )}
       {!showSettings && (
       <div className="flex h-screen overflow-hidden">
@@ -142,7 +156,7 @@ export default function App() {
         onSelect={selectNote}
         onCreate={handleCreate}
         onDelete={handleDelete}
-        onOpenSettings={() => setShowSettings(true)}
+        onOpenSettings={() => { setSettingsPage(undefined); setShowSettings(true); }}
         onOpenDashboard={() => setView('dashboard')}
         onTogglePin={setPinned}
         onArchive={setArchived}
@@ -216,6 +230,13 @@ export default function App() {
           onBase64={() => { void exportBase64(exportReq.ids, exportReq.name); setExportReq(null); }}
           onBundle={() => { void exportBundle(exportReq.ids); setExportReq(null); }}
           onCancel={() => setExportReq(null)}
+        />
+      )}
+      {sysProblems && (
+        <SystemCheckModal
+          problems={sysProblems}
+          onOpenSettings={() => { setSysProblems(null); setSettingsPage('diagnostics'); setShowSettings(true); }}
+          onClose={() => setSysProblems(null)}
         />
       )}
     </>

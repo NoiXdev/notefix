@@ -7,8 +7,9 @@ import Logo from "./Logo";
 import Select from "./Select";
 import Toggle from "./Toggle";
 import { SHORTCUTS } from '../shortcuts';
+import { runSystemChecks } from "../systemChecks";
 
-type Page = "about" | "appearance" | "system" | "stats" | "shortcuts";
+type Page = "about" | "appearance" | "system" | "stats" | "shortcuts" | "diagnostics";
 
 interface NavItemProps {
   label: string;
@@ -34,6 +35,7 @@ interface Props {
   settings: AppSettings;
   onSetSetting: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void;
   onExport: (ids: string[], name: string) => void;
+  initialPage?: Page;
 }
 
 const DATE_FORMATS: { value: DateFormat; label: string }[] = [
@@ -65,8 +67,8 @@ const CLOSE_ACTIONS: { value: import("../hooks/useSettings").CloseAction; label:
   { value: "quit", label: "Beenden" },
 ];
 
-export default function Settings({ onClose, settings, onSetSetting, onExport }: Props) {
-  const [page, setPage] = useState<Page>("about");
+export default function Settings({ onClose, settings, onSetSetting, onExport, initialPage }: Props) {
+  const [page, setPage] = useState<Page>(initialPage ?? "about");
   const [info, setInfo] = useState<AppInfo | null>(null);
 
   useEffect(() => {
@@ -124,6 +126,7 @@ export default function Settings({ onClose, settings, onSetSetting, onExport }: 
           <NavItem label="System" active={page === "system"} onClick={() => setPage("system")} />
           <NavItem label="Statistik" active={page === "stats"} onClick={() => setPage("stats")} />
           <NavItem label="Tastatur" active={page === "shortcuts"} onClick={() => setPage("shortcuts")} />
+          <NavItem label="Diagnose" active={page === "diagnostics"} onClick={() => setPage("diagnostics")} />
         </nav>
       </aside>
 
@@ -268,7 +271,38 @@ export default function Settings({ onClose, settings, onSetSetting, onExport }: 
             )}
           </div>
         )}
+
+        {page === "diagnostics" && (
+          <SystemChecksPage settings={settings} onChangeLocation={changeLocation} />
+        )}
       </main>
+    </div>
+  );
+}
+
+function SystemChecksPage({ settings, onChangeLocation }: { settings: AppSettings; onChangeLocation: () => void }) {
+  const [checks, setChecks] = useState<import("../systemChecks").SystemCheck[] | null>(null);
+  const run = () => { void runSystemChecks(settings).then(setChecks); };
+  useEffect(run, [settings]);
+  const color = (s: string) => s === 'ok' ? '#16a34a' : s === 'warn' ? '#d97706' : '#dc2626';
+  return (
+    <div>
+      <h1 className="text-2xl font-bold text-gray-900 mb-1">Diagnose</h1>
+      <p className="text-sm text-gray-500 mb-6">Prüft die Rechte und Ordner, die Notefix zum Arbeiten braucht.</p>
+      <div className="flex flex-col gap-3 max-w-lg">
+        {(checks ?? []).map(c => (
+          <div key={c.key} className="flex items-start justify-between gap-3 text-sm">
+            <div>
+              <div className="font-medium text-gray-800"><span style={{ color: color(c.status) }}>●</span> {c.label}</div>
+              <div className="text-xs text-gray-500 break-all">{c.detail}</div>
+            </div>
+            {c.action === 'changeLocation' && (
+              <button onClick={onChangeLocation} className="shrink-0 px-3 py-1 rounded text-xs font-medium border" style={{ borderColor: "#e7d27a", color: "#1c1917" }}>Speicherort ändern…</button>
+            )}
+          </div>
+        ))}
+        <button onClick={run} className="self-start mt-2 px-4 py-1.5 rounded text-sm font-medium border" style={{ borderColor: "#e7d27a", color: "#1c1917" }}>Erneut prüfen</button>
+      </div>
     </div>
   );
 }

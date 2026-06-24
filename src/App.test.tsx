@@ -39,6 +39,8 @@ vi.mock("./api", () => ({
     stats: vi.fn(() => Promise.resolve({ notes: 0, archived: 0, characters: 0, words: 0 })),
     settings: { load: () => Promise.resolve({}), set: vi.fn() },
     autostart: { isEnabled: () => Promise.resolve(false), enable: vi.fn(), disable: vi.fn() },
+    checkPaths: vi.fn(() => Promise.resolve({ dbWritable: true, imagesWritable: true, dbPath: '', imagesPath: '' })),
+    windowProbe: vi.fn(() => Promise.resolve(true)),
     onTrayEvent: () => () => {},
     onNotesChanged: () => () => {},
     onCloseRequested: () => () => {},
