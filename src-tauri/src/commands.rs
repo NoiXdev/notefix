@@ -396,6 +396,28 @@ pub fn save_image(app: AppHandle, note_id: String, name: String, bytes: Vec<u8>)
     Ok(crate::images::note_image_url(&note_id, &name))
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PathChecks {
+    db_writable: bool,
+    images_writable: bool,
+    db_path: String,
+    images_path: String,
+}
+
+#[tauri::command]
+pub fn check_paths(app: AppHandle) -> PathChecks {
+    let db = crate::config::read_db_path(&app);
+    let db_dir = db.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    let images = crate::images::images_dir(&app);
+    PathChecks {
+        db_writable: crate::syscheck::is_writable(&db_dir),
+        images_writable: crate::syscheck::is_writable(&images),
+        db_path: db_dir.to_string_lossy().to_string(),
+        images_path: images.to_string_lossy().to_string(),
+    }
+}
+
 fn select_notes(notes: Vec<crate::storage::Note>, ids: &[String]) -> Vec<crate::storage::Note> {
     if ids.is_empty() { notes } else { notes.into_iter().filter(|n| ids.contains(&n.id)).collect() }
 }

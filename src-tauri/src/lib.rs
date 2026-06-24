@@ -8,6 +8,7 @@ mod revisions;
 mod settings;
 mod stats;
 mod storage;
+mod syscheck;
 mod tray;
 
 use std::sync::Mutex;
@@ -134,6 +135,7 @@ pub fn run() {
             commands::save_image,
             commands::export_notes_base64,
             commands::export_notes_bundle,
+            commands::check_paths,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
