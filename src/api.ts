@@ -35,6 +35,7 @@ export const api = {
     revisionContent: (id: number): Promise<string | null> => invoke("note_revision_content", { id }),
     restore: (id: string): Promise<void> => invoke("notes_restore", { id }),
     purge: (id: string): Promise<void> => invoke("notes_purge", { id }),
+    loadAll: (): Promise<import("./combined").CombinedNote[]> => invoke("notes_load_all"),
   },
 
   trash: {
