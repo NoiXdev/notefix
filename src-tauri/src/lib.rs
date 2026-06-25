@@ -1,4 +1,5 @@
 mod aggregate;
+mod imagesync;
 mod auth;
 mod commands;
 mod config;

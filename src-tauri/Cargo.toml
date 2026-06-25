@@ -32,7 +32,7 @@ tauri-plugin-deep-link = "2"
 base64 = "0.22"
 regex = "1"
 uuid = { version = "1", features = ["v4"] }
-reqwest = { version = "0.13", default-features = false, features = ["rustls", "charset", "http2", "json"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "charset", "http2", "json", "multipart", "query"] }
 axum = { version = "0.8", default-features = false, features = ["json", "tokio", "http1"] }
 tokio = { version = "1", default-features = false, features = ["net", "sync", "time", "macros"] }
 # Auth bridge (A1): PKCE + OS keychain token storage.
