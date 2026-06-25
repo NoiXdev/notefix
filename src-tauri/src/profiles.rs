@@ -7,8 +7,10 @@ use std::path::Path;
 pub struct ContextEntry {
     pub id: String,
     pub label: String,        // "" = i18n default label, frontend übersetzt
-    pub kind: String,         // "local" (Vorbereitung für "server")
-    pub path: String,         // absoluter DB-Pfad
+    pub kind: String,         // "local" | "server"
+    pub path: String,         // absoluter DB-Pfad (lokaler Cache bei "server")
+    #[serde(default)]
+    pub server_url: String,   // nur bei kind == "server"
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -29,12 +31,19 @@ impl Registry {
         Registry {
             version: 1,
             active_id: id.clone(),
-            contexts: vec![ContextEntry { id, label: String::new(), kind: "local".into(), path: db_path.into() }],
+            contexts: vec![ContextEntry { id, label: String::new(), kind: "local".into(), path: db_path.into(), server_url: String::new() }],
         }
     }
 
     pub fn add(&mut self, id: String, label: String, path: String) -> ContextEntry {
-        let e = ContextEntry { id, label, kind: "local".into(), path };
+        let e = ContextEntry { id, label, kind: "local".into(), path, server_url: String::new() };
+        self.contexts.push(e.clone());
+        e
+    }
+
+    /// Add a server-backed context (local cache DB at `path`, tokens in keychain).
+    pub fn add_server(&mut self, id: String, label: String, path: String, server_url: String) -> ContextEntry {
+        let e = ContextEntry { id, label, kind: "server".into(), path, server_url };
         self.contexts.push(e.clone());
         e
     }
@@ -88,7 +97,7 @@ mod tests {
     use super::*;
 
     fn entry(id: &str, path: &str) -> ContextEntry {
-        ContextEntry { id: id.into(), label: String::new(), kind: "local".into(), path: path.into() }
+        ContextEntry { id: id.into(), label: String::new(), kind: "local".into(), path: path.into(), server_url: String::new() }
     }
 
     #[test]
@@ -135,6 +144,17 @@ mod tests {
         r.add("b".into(), String::new(), "/b.db".into());
         assert!(r.remove(&r.active_id.clone()).is_err()); // active
         assert!(r.remove("b").is_ok()); // non-active ok
+    }
+
+    #[test]
+    fn add_server_marks_kind_and_url() {
+        let mut r = Registry::default_for("/data/notefix.db");
+        let e = r.add_server("s".into(), "notes.example".into(), "/data/contexts/s/notefix.db".into(), "https://notes.example".into());
+        assert_eq!(e.kind, "server");
+        assert_eq!(e.server_url, "https://notes.example");
+        assert_eq!(r.contexts.len(), 2);
+        r.set_active("s").unwrap();
+        assert_eq!(r.active().unwrap().kind, "server");
     }
 
     #[test]

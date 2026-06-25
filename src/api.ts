@@ -71,6 +71,12 @@ export const api = {
       invoke("context_rename", { id, label }),
     remove: (id: string, deleteFile: boolean): Promise<import("./contexts").ContextInfo[]> =>
       invoke("context_remove", { id, deleteFile }),
+    /** Begin add-server: returns the browser authorize URL to open. */
+    serverAuthBegin: (serverUrl: string): Promise<string> =>
+      invoke("server_auth_begin", { serverUrl }),
+    /** Complete add-server from a notefix://auth callback URL. */
+    serverAuthComplete: (url: string): Promise<import("./contexts").ContextInfo[]> =>
+      invoke("server_auth_complete", { url }),
   },
 
   saveImage: (noteId: string, name: string, bytes: number[]): Promise<string> => invoke("save_image", { noteId, name, bytes }),

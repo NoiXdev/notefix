@@ -10,7 +10,7 @@ export interface MockData {
 
 export async function installTauriMock(page: Page, data: MockData = {}): Promise<void> {
   await page.addInitScript((d: MockData) => {
-    const singleContext = [{ id: 'local', label: '', kind: 'local', path: '/tmp/notefix.db', active: true }];
+    const singleContext = [{ id: 'local', label: '', kind: 'local', path: '/tmp/notefix.db', serverUrl: '', active: true }];
     const responses: Record<string, unknown> = {
       notes_load: d.notes ?? [],
       folders_load: d.folders ?? [],
@@ -26,6 +26,9 @@ export async function installTauriMock(page: Page, data: MockData = {}): Promise
       context_rename: d.responses?.context_rename ?? singleContext,
       context_remove: d.responses?.context_remove ?? singleContext,
       context_switch: d.responses?.context_switch ?? undefined,
+      // A1 add-server: begin returns an authorize URL; complete echoes contexts.
+      server_auth_begin: d.responses?.server_auth_begin ?? 'https://srv.example/oauth/authorize?state=x',
+      server_auth_complete: d.responses?.server_auth_complete ?? singleContext,
     };
     let cbId = 0;
     // Registry so tests can drive Tauri events (e.g. window "close-requested").
@@ -35,7 +38,10 @@ export async function installTauriMock(page: Page, data: MockData = {}): Promise
       __TAURI_INTERNALS__: Record<string, unknown>;
       __TAURI_EVENT_PLUGIN_INTERNALS__: Record<string, unknown>;
       __emitTauriEvent: (event: string, payload?: unknown) => void;
+      __tauriCalls: string[];
     };
+    // Log of invoked command names so tests can assert a command ran.
+    w.__tauriCalls = [];
     // The event API calls this on unlisten/cleanup; without it the app throws
     // "Cannot read properties of undefined (reading 'unregisterListener')".
     w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
@@ -46,6 +52,7 @@ export async function installTauriMock(page: Page, data: MockData = {}): Promise
         currentWebview: { windowLabel: 'main', label: 'main' },
       },
       invoke: async (cmd: string, args?: unknown) => {
+        w.__tauriCalls.push(cmd);
         if (cmd in responses) return responses[cmd];
         if (cmd.startsWith('plugin:autostart')) return false;
         if (cmd === 'plugin:app|version') return '0.0.0-e2e';

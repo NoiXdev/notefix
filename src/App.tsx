@@ -81,6 +81,13 @@ export default function App() {
     });
   }, [reloadNotes, reloadFolders, reloadSettings]);
 
+  // Complete add-server flows centrally: the browser redirect (notefix://auth)
+  // arrives as an auth-callback event regardless of which UI started the flow.
+  // A successful exchange emits context-changed, which reloads everything.
+  useEffect(() => api.onAuthCallback((url) => {
+    void api.contexts.serverAuthComplete(url).catch(() => {});
+  }), []);
+
   useEffect(() => { void i18n.changeLanguage(resolveLang(settings.language, navigator.language)); }, [settings.language]);
 
   useEffect(() => {

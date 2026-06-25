@@ -126,6 +126,8 @@ pub fn store_tokens(context_id: &str, tokens: &Tokens) -> Result<(), String> {
     entry(context_id)?.set_password(&json).map_err(|e| e.to_string())
 }
 
+// Consumed by the C1 sync engine (reading the access token for API calls).
+#[allow(dead_code)]
 pub fn load_tokens(context_id: &str) -> Result<Option<Tokens>, String> {
     match entry(context_id)?.get_password() {
         Ok(json) => serde_json::from_str::<Tokens>(&json).map(Some).map_err(|e| e.to_string()),

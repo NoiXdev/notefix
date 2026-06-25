@@ -304,13 +304,14 @@ pub struct ContextInfo {
     pub label: String,
     pub kind: String,
     pub path: String,
+    pub server_url: String,
     pub active: bool,
 }
 
 fn to_infos(reg: &crate::profiles::Registry) -> Vec<ContextInfo> {
     reg.contexts.iter().map(|c| ContextInfo {
         id: c.id.clone(), label: c.label.clone(), kind: c.kind.clone(),
-        path: c.path.clone(), active: c.id == reg.active_id,
+        path: c.path.clone(), server_url: c.server_url.clone(), active: c.id == reg.active_id,
     }).collect()
 }
 
@@ -385,6 +386,115 @@ pub fn context_remove(app: AppHandle, reg: State<'_, Mutex<crate::profiles::Regi
     if delete_file {
         for ext in ["", "-wal", "-shm"] { let p = with_ext(std::path::Path::new(&removed.path), ext); let _ = std::fs::remove_file(p); }
     }
+    // Server contexts keep their tokens in the keychain; drop them on removal.
+    if removed.kind == "server" { let _ = crate::auth::clear_tokens(&removed.id); }
+    Ok(infos)
+}
+
+/// Pending browser auth flows, keyed by the PKCE `state`. Lives only in memory:
+/// a flow that is never completed is simply forgotten when the app exits.
+pub struct PendingAuth {
+    pub verifier: String,
+    pub server_url: String,
+    pub config: crate::auth::OAuthConfig,
+}
+pub type PendingAuthMap = Mutex<std::collections::HashMap<String, PendingAuth>>;
+
+fn server_label(server_url: &str) -> String {
+    url::Url::parse(server_url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_string))
+        .unwrap_or_else(|| server_url.to_string())
+}
+
+/// Step 1 of add-server: discover the server's OAuth config, mint PKCE material,
+/// stash it under its `state`, and return the browser authorize URL to open.
+#[tauri::command]
+pub async fn server_auth_begin(
+    pending: State<'_, PendingAuthMap>,
+    server_url: String,
+) -> Result<String, String> {
+    let server_url = crate::auth::normalize_server_url(&server_url);
+    let config = crate::auth::fetch_oauth_config(&server_url).await?;
+    let p = crate::auth::pkce();
+
+    let mut authorize = url::Url::parse(&config.authorize_url).map_err(|e| e.to_string())?;
+    {
+        let mut q = authorize.query_pairs_mut();
+        q.append_pair("response_type", "code");
+        q.append_pair("client_id", &config.client_id);
+        q.append_pair("redirect_uri", crate::auth::REDIRECT_URI);
+        q.append_pair("code_challenge", &p.challenge);
+        q.append_pair("code_challenge_method", "S256");
+        q.append_pair("state", &p.state);
+        if !config.scopes.is_empty() {
+            q.append_pair("scope", &config.scopes.join(" "));
+        }
+    }
+    let authorize = authorize.to_string();
+
+    pending
+        .lock()
+        .map_err(|e| e.to_string())?
+        .insert(p.state, PendingAuth { verifier: p.verifier, server_url, config });
+    Ok(authorize)
+}
+
+/// Step 2 of add-server: handle the `notefix://auth?code=…&state=…` callback —
+/// validate state, exchange the code, store tokens in the keychain, and add a
+/// server context (with its own local cache DB) as the active context.
+#[tauri::command]
+pub async fn server_auth_complete(
+    app: AppHandle,
+    reg: State<'_, Mutex<crate::profiles::Registry>>,
+    store: State<'_, Mutex<Store>>,
+    pending: State<'_, PendingAuthMap>,
+    url: String,
+) -> Result<Vec<ContextInfo>, String> {
+    let parsed = url::Url::parse(&url).map_err(|e| e.to_string())?;
+    let (mut code, mut state) = (None, None);
+    for (k, v) in parsed.query_pairs() {
+        match k.as_ref() {
+            "code" => code = Some(v.into_owned()),
+            "state" => state = Some(v.into_owned()),
+            _ => {}
+        }
+    }
+    let code = code.ok_or("missing code in callback")?;
+    let state = state.ok_or("missing state in callback")?;
+
+    // Validate + consume the pending flow (CSRF: unknown state is rejected).
+    let pa = pending
+        .lock()
+        .map_err(|e| e.to_string())?
+        .remove(&state)
+        .ok_or("unknown or expired auth state")?;
+
+    let tokens =
+        crate::auth::exchange_code(&pa.config.token_url, &pa.config.client_id, &code, &pa.verifier)
+            .await?;
+
+    // A server context still owns a local cache DB (its sync engine lands in C1).
+    let id = uuid::Uuid::new_v4().to_string();
+    let dir = crate::config::contexts_dir(&app).join(&id);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join("notefix.db");
+    {
+        let s = Store::open(&path).map_err(|e| e.to_string())?;
+        crate::migrate::run_migrations(&s.conn).map_err(|e| e.to_string())?;
+    }
+    crate::auth::store_tokens(&id, &tokens)?;
+
+    let label = server_label(&pa.server_url);
+    let infos = {
+        let mut r = reg.lock().map_err(|e| e.to_string())?;
+        r.add_server(id.clone(), label, path.to_string_lossy().into_owned(), pa.server_url);
+        r.set_active(&id)?;
+        crate::profiles::save(&crate::config::profiles_path(&app), &r).map_err(|e| e.to_string())?;
+        to_infos(&r)
+    };
+    swap_store_to(&store, &path)?;
+    broadcast_context_changed(&app);
     Ok(infos)
 }
 

@@ -1,5 +1,3 @@
-// A1 auth bridge plumbing; the `server_auth_*` commands (Task 4) consume it.
-#[allow(dead_code)]
 mod auth;
 mod commands;
 mod config;
@@ -143,6 +141,8 @@ pub fn run() {
 
             app.manage(Mutex::new(store));
             app.manage(Mutex::new(reg));
+            // In-memory store of in-flight browser auth flows (A1).
+            app.manage(commands::PendingAuthMap::default());
 
             if mcp_enabled {
                 let handle = app.handle().clone();
@@ -233,6 +233,8 @@ pub fn run() {
             commands::context_switch,
             commands::context_rename,
             commands::context_remove,
+            commands::server_auth_begin,
+            commands::server_auth_complete,
             linkmeta::fetch_link_meta,
         ])
         .build(tauri::generate_context!())

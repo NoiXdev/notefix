@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { faGlobe } from "@fortawesome/free-solid-svg-icons";
 import { api, type AppInfo } from "../api";
 import type { ContextInfo } from "../contexts";
+import { startServerAuth } from "../serverAuth";
 import type { Stats } from "../types";
 import type { DateFormat } from "../dates";
 import type { AppSettings } from "../hooks/useSettings";
@@ -345,6 +348,7 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
 
 type CtxDialog =
   | { mode: "add" }
+  | { mode: "addServer" }
   | { mode: "rename"; c: ContextInfo }
   | { mode: "remove"; c: ContextInfo }
   | null;
@@ -354,13 +358,35 @@ function ContextsPage() {
   const [ctx, setCtx] = useState<ContextInfo[]>([]);
   const [dialog, setDialog] = useState<CtxDialog>(null);
   const [deleteFile, setDeleteFile] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api.contexts.list().then(setCtx);
+    void api.contexts.list().then(setCtx);
+    // A completed server auth emits context-changed; refresh + clear pending.
+    return api.onContextChanged(() => {
+      setConnecting(false);
+      void api.contexts.list().then(setCtx);
+    });
   }, []);
 
-  const labelOf = (c: ContextInfo) => c.label || t("contexts.localDefault");
+  const labelOf = (c: ContextInfo) =>
+    c.label || (c.kind === "server" ? c.serverUrl : t("contexts.localDefault"));
   const close = () => { setDialog(null); setDeleteFile(false); };
+
+  const submitServer = async (raw: string) => {
+    close();
+    const urlStr = raw.trim();
+    if (!urlStr) return;
+    setError(null);
+    setConnecting(true);
+    try {
+      await startServerAuth(urlStr);
+    } catch {
+      setConnecting(false);
+      setError(t("contexts.serverError"));
+    }
+  };
 
   return (
     <div>
@@ -371,12 +397,13 @@ function ContextsPage() {
           <div key={c.id} className="flex items-start justify-between gap-3 rounded border px-3 py-2" style={{ borderColor: "#e7d27a", background: "#fffdf0" }}>
             <div className="min-w-0">
               <div className="flex items-center gap-2 text-sm font-medium text-gray-800">
+                {c.kind === "server" && <FontAwesomeIcon icon={faGlobe} className="text-[11px] text-gray-500 shrink-0" />}
                 <span className="truncate">{labelOf(c)}</span>
                 {c.active && (
                   <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide" style={{ background: "#fde047", color: "#1c1917" }}>{t("contexts.active")}</span>
                 )}
               </div>
-              <div className="text-xs text-gray-500 break-all font-mono">{c.path}</div>
+              <div className="text-xs text-gray-500 break-all font-mono">{c.kind === "server" ? c.serverUrl : c.path}</div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
               <button onClick={() => setDialog({ mode: "rename", c })} className="px-3 py-1 rounded text-xs font-medium border" style={{ borderColor: "#e7d27a", color: "#1c1917" }}>{t("contexts.rename")}</button>
@@ -385,7 +412,12 @@ function ContextsPage() {
           </div>
         ))}
       </div>
-      <button onClick={() => setDialog({ mode: "add" })} className="mt-4 px-4 py-1.5 rounded text-sm font-medium" style={{ background: "#fde047", color: "#1c1917" }}>{t("contexts.add")}</button>
+      <div className="mt-4 flex items-center gap-2">
+        <button onClick={() => setDialog({ mode: "add" })} className="px-4 py-1.5 rounded text-sm font-medium" style={{ background: "#fde047", color: "#1c1917" }}>{t("contexts.add")}</button>
+        <button onClick={() => { setError(null); setDialog({ mode: "addServer" }); }} className="px-4 py-1.5 rounded text-sm font-medium border" style={{ borderColor: "#e7d27a", color: "#1c1917" }}>{t("contexts.addServer")}</button>
+        {connecting && <span className="text-xs text-gray-500">{t("contexts.connecting")}</span>}
+        {error && <span className="text-xs text-red-600" role="alert">{error}</span>}
+      </div>
 
       {dialog?.mode === "add" && (
         <PromptDialog
@@ -393,6 +425,15 @@ function ContextsPage() {
           confirmLabel={t("contexts.add")}
           placeholder={t("contexts.addPrompt")}
           onSubmit={async name => { setCtx(await api.contexts.add(name)); close(); }}
+          onCancel={close}
+        />
+      )}
+      {dialog?.mode === "addServer" && (
+        <PromptDialog
+          title={t("contexts.addServer")}
+          confirmLabel={t("contexts.addServer")}
+          placeholder={t("contexts.addServerPrompt")}
+          onSubmit={submitServer}
           onCancel={close}
         />
       )}

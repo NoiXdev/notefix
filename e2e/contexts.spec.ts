@@ -18,3 +18,37 @@ test('context switcher mounts and its menu exposes "Verwalten…"', async ({ pag
 
   expect(errors).toEqual([]);
 });
+
+test('add-server flow: dialog → begin → auth-callback completes', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', e => errors.push(e.message));
+
+  await installTauriMock(page);
+  await page.goto('/');
+
+  // Open the switcher and start adding a server.
+  await page.getByLabel('Kontext wechseln').click();
+  await page.getByText('Server hinzufügen…').click();
+
+  // Enter the server URL and confirm.
+  await page.getByPlaceholder('Server-URL (z. B. https://notes.example.com)').fill('https://srv.example');
+  await page.getByRole('button', { name: 'Server hinzufügen…' }).click();
+
+  // The discovery + browser-open ran (server_auth_begin) and we show "Verbinde…".
+  await expect(page.getByText('Verbinde…')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __tauriCalls: string[] }).__tauriCalls))
+    .toContain('server_auth_begin');
+
+  // Simulate the browser redirect (notefix://auth?code=…&state=…) arriving.
+  await page.evaluate(() => (window as unknown as { __emitTauriEvent: (e: string, p?: unknown) => void })
+    .__emitTauriEvent('auth-callback', 'notefix://auth?code=abc&state=x'));
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __tauriCalls: string[] }).__tauriCalls))
+    .toContain('server_auth_complete');
+
+  // The server's context-changed broadcast clears the pending indicator.
+  await page.evaluate(() => (window as unknown as { __emitTauriEvent: (e: string, p?: unknown) => void })
+    .__emitTauriEvent('context-changed'));
+  await expect(page.getByText('Verbinde…')).toBeHidden();
+
+  expect(errors).toEqual([]);
+});
