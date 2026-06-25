@@ -144,6 +144,44 @@ pub fn reorder_folders(conn: &Connection, parent_id: Option<&str>, ids: &[String
     Ok(())
 }
 
+pub fn touch_folder(conn: &Connection, id: &str) -> rusqlite::Result<()> {
+    conn.execute("UPDATE folders SET updated_at = ?2, dirty = 1 WHERE id = ?1", (id, now_ms()))?;
+    Ok(())
+}
+
+pub fn tombstone_folder(conn: &Connection, id: &str) -> rusqlite::Result<()> {
+    let now = now_ms();
+    conn.execute("UPDATE folders SET deleted_at = ?2, dirty = 1, updated_at = ?2 WHERE id = ?1", (id, now))?;
+    Ok(())
+}
+
+pub fn load_dirty_folders(conn: &Connection) -> rusqlite::Result<Vec<Folder>> {
+    let mut stmt = conn.prepare("SELECT id, name, parent_id, position, icon, color, sort, updated_at, deleted_at, dirty FROM folders WHERE dirty = 1")?;
+    let rows = stmt.query_map([], |r| Ok(Folder {
+        id: r.get(0)?, name: r.get(1)?, parent_id: r.get(2)?, position: r.get(3)?, icon: r.get(4)?, color: r.get(5)?, sort: r.get(6)?,
+        updated_at: r.get(7)?, deleted_at: r.get(8)?, dirty: r.get(9)?,
+    }))?;
+    rows.collect()
+}
+
+pub fn clear_folder_dirty(conn: &Connection, ids: &[String]) -> rusqlite::Result<()> {
+    for id in ids { conn.execute("UPDATE folders SET dirty = 0 WHERE id = ?1", [id])?; }
+    Ok(())
+}
+
+pub fn upsert_folder_from_server(conn: &Connection, f: &Folder) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO folders (id, name, parent_id, position, icon, color, sort, created_at, updated_at, deleted_at, dirty)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9, 0)
+         ON CONFLICT(id) DO UPDATE SET
+            name=excluded.name, parent_id=excluded.parent_id, position=excluded.position,
+            icon=excluded.icon, color=excluded.color, sort=excluded.sort,
+            updated_at=excluded.updated_at, deleted_at=excluded.deleted_at, dirty=0",
+        (&f.id, &f.name, &f.parent_id, f.position, &f.icon, &f.color, &f.sort, f.updated_at, f.deleted_at),
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -248,5 +286,16 @@ mod tests {
         delete_folder(&s.conn, "c", DeleteMode::Recursive).unwrap();
         assert!(load_folders(&s.conn).unwrap().is_empty());
         assert!(s.load_notes().unwrap().is_empty());
+    }
+
+    #[test]
+    fn touch_and_dirty_collect_for_folders() {
+        let s = crate::storage::Store::open_in_memory().unwrap();
+        crate::migrate::run_migrations(&s.conn).unwrap();
+        create_folder(&s.conn, "f1", "Work", None).unwrap();
+        touch_folder(&s.conn, "f1").unwrap();
+        assert_eq!(load_dirty_folders(&s.conn).unwrap().len(), 1);
+        clear_folder_dirty(&s.conn, &["f1".into()]).unwrap();
+        assert!(load_dirty_folders(&s.conn).unwrap().is_empty());
     }
 }

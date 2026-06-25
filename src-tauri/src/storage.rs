@@ -29,9 +29,15 @@ pub struct Note {
 
 pub struct Store {
     pub conn: Connection,
+    pub sync_enabled: bool,
 }
 
 const COLS: &str = "id, content, updated_at, pinned, archived, color, due_at, folder_id, position, deleted_at, dirty";
+
+fn now_ms() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+}
 
 fn row_to_note(r: &rusqlite::Row) -> rusqlite::Result<Note> {
     Ok(Note {
@@ -43,12 +49,12 @@ fn row_to_note(r: &rusqlite::Row) -> rusqlite::Result<Note> {
 
 impl Store {
     pub fn open(path: &Path) -> rusqlite::Result<Self> {
-        Ok(Self { conn: Connection::open(path)? })
+        Ok(Self { conn: Connection::open(path)?, sync_enabled: false })
     }
 
     #[cfg(test)]
     pub fn open_in_memory() -> rusqlite::Result<Self> {
-        Ok(Self { conn: Connection::open_in_memory()? })
+        Ok(Self { conn: Connection::open_in_memory()?, sync_enabled: false })
     }
 
     pub fn load_notes(&self) -> rusqlite::Result<Vec<Note>> {
@@ -73,10 +79,12 @@ impl Store {
     }
 
     pub fn save_note(&self, note: &Note) -> rusqlite::Result<()> {
+        let (updated_at, dirty) = if self.sync_enabled { (now_ms(), 1) } else { (note.updated_at, 0) };
         self.conn.execute(
-            "INSERT INTO notes (id, content, updated_at, pinned, archived, color, due_at, folder_id, position) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-             ON CONFLICT(id) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at",
-            (&note.id, &note.content, note.updated_at, note.pinned, note.archived, &note.color, note.due_at, &note.folder_id, note.position),
+            "INSERT INTO notes (id, content, updated_at, pinned, archived, color, due_at, folder_id, position, dirty)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+             ON CONFLICT(id) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at, dirty = excluded.dirty",
+            (&note.id, &note.content, updated_at, note.pinned, note.archived, &note.color, note.due_at, &note.folder_id, note.position, dirty),
         )?;
         Ok(())
     }
@@ -87,30 +95,69 @@ impl Store {
         Ok(())
     }
 
+    /// Server-context delete: tombstone + mark dirty (pushed as a tombstone).
+    pub fn sync_delete_note(&self, id: &str) -> rusqlite::Result<()> {
+        self.conn.execute("UPDATE notes SET deleted_at = ?2, dirty = 1, updated_at = ?2 WHERE id = ?1", (id, now_ms()))?;
+        Ok(())
+    }
+
+    pub fn load_dirty_notes(&self) -> rusqlite::Result<Vec<Note>> {
+        let sql = format!("SELECT {COLS} FROM notes WHERE dirty = 1");
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map([], row_to_note)?;
+        rows.collect()
+    }
+
+    pub fn clear_note_dirty(&self, ids: &[String]) -> rusqlite::Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        for id in ids { tx.execute("UPDATE notes SET dirty = 0 WHERE id = ?1", [id])?; }
+        tx.commit()
+    }
+
+    /// Apply a note pulled from the server: server fields win, row is clean.
+    pub fn upsert_note_from_server(&self, n: &Note) -> rusqlite::Result<()> {
+        upsert_note_from_server_conn(&self.conn, n)
+    }
+
     pub fn set_pinned(&self, id: &str, pinned: bool) -> rusqlite::Result<()> {
         self.conn.execute("UPDATE notes SET pinned = ?2 WHERE id = ?1", (id, pinned))?;
+        if self.sync_enabled {
+            self.conn.execute("UPDATE notes SET updated_at = ?2, dirty = 1 WHERE id = ?1", (id, now_ms()))?;
+        }
         Ok(())
     }
 
     pub fn set_archived(&self, id: &str, archived: bool) -> rusqlite::Result<()> {
         self.conn.execute("UPDATE notes SET archived = ?2 WHERE id = ?1", (id, archived))?;
+        if self.sync_enabled {
+            self.conn.execute("UPDATE notes SET updated_at = ?2, dirty = 1 WHERE id = ?1", (id, now_ms()))?;
+        }
         Ok(())
     }
 
     pub fn set_color(&self, id: &str, color: &str) -> rusqlite::Result<()> {
         self.conn.execute("UPDATE notes SET color = ?2 WHERE id = ?1", (id, color))?;
+        if self.sync_enabled {
+            self.conn.execute("UPDATE notes SET updated_at = ?2, dirty = 1 WHERE id = ?1", (id, now_ms()))?;
+        }
         Ok(())
     }
 
     /// Set or clear the due date. Does NOT touch `updated_at`.
     pub fn set_due(&self, id: &str, due_at: Option<i64>) -> rusqlite::Result<()> {
         self.conn.execute("UPDATE notes SET due_at = ?2 WHERE id = ?1", (id, due_at))?;
+        if self.sync_enabled {
+            self.conn.execute("UPDATE notes SET updated_at = ?2, dirty = 1 WHERE id = ?1", (id, now_ms()))?;
+        }
         Ok(())
     }
 
     /// Move a note to a folder (None = root). Does NOT touch `updated_at`.
     pub fn set_folder(&self, id: &str, folder_id: Option<&str>) -> rusqlite::Result<()> {
         self.conn.execute("UPDATE notes SET folder_id = ?2 WHERE id = ?1", (id, folder_id))?;
+        if self.sync_enabled {
+            self.conn.execute("UPDATE notes SET updated_at = ?2, dirty = 1 WHERE id = ?1", (id, now_ms()))?;
+        }
         Ok(())
     }
 
@@ -162,6 +209,20 @@ impl Store {
     }
 }
 
+/// Upsert a server note against an arbitrary connection (used inside a tx).
+pub fn upsert_note_from_server_conn(conn: &rusqlite::Connection, n: &Note) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO notes (id, content, updated_at, pinned, archived, color, due_at, folder_id, position, deleted_at, dirty)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0)
+         ON CONFLICT(id) DO UPDATE SET
+            content=excluded.content, updated_at=excluded.updated_at, pinned=excluded.pinned,
+            archived=excluded.archived, color=excluded.color, due_at=excluded.due_at,
+            folder_id=excluded.folder_id, position=excluded.position, deleted_at=excluded.deleted_at, dirty=0",
+        (&n.id, &n.content, n.updated_at, n.pinned, n.archived, &n.color, n.due_at, &n.folder_id, n.position, n.deleted_at),
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,6 +231,12 @@ mod tests {
     fn store() -> Store {
         let s = Store::open_in_memory().unwrap();
         migrate::run_migrations(&s.conn).unwrap();
+        s
+    }
+
+    fn mem() -> Store {
+        let s = Store::open_in_memory().unwrap();
+        crate::migrate::run_migrations(&s.conn).unwrap();
         s
     }
 
@@ -304,5 +371,59 @@ mod tests {
         assert_eq!(t[0].id, "new");
         s.purge_trashed(None).unwrap();
         assert!(s.load_trashed().unwrap().is_empty());
+    }
+
+    #[test]
+    fn sync_enabled_save_marks_dirty_and_bumps_updated_at() {
+        let mut s = mem();
+        s.sync_enabled = true;
+        let n = Note { id: "n1".into(), content: "<p>a</p>".into(), updated_at: 1, ..Default::default() };
+        s.save_note(&n).unwrap();
+        let saved = &s.load_notes().unwrap()[0];
+        assert!(saved.dirty);
+        assert!(saved.updated_at > 1); // bumped to ~now
+    }
+
+    #[test]
+    fn sync_disabled_save_leaves_clean() {
+        let s = mem();
+        let n = Note { id: "n1".into(), content: "<p>a</p>".into(), updated_at: 5, ..Default::default() };
+        s.save_note(&n).unwrap();
+        let saved = &s.load_notes().unwrap()[0];
+        assert!(!saved.dirty);
+        assert_eq!(saved.updated_at, 5);
+    }
+
+    #[test]
+    fn sync_delete_tombstones_instead_of_removing() {
+        let mut s = mem();
+        s.sync_enabled = true;
+        s.save_note(&Note { id: "n1".into(), content: "x".into(), updated_at: 1, ..Default::default() }).unwrap();
+        s.sync_delete_note("n1").unwrap();
+        assert!(s.load_notes().unwrap().is_empty());
+        let all = s.load_all_notes().unwrap();
+        assert_eq!(all.len(), 1);
+        assert!(all[0].deleted_at.is_some() && all[0].dirty);
+    }
+
+    #[test]
+    fn dirty_collect_and_clear() {
+        let mut s = mem();
+        s.sync_enabled = true;
+        s.save_note(&Note { id: "n1".into(), content: "x".into(), updated_at: 1, ..Default::default() }).unwrap();
+        assert_eq!(s.load_dirty_notes().unwrap().len(), 1);
+        s.clear_note_dirty(&["n1".into()]).unwrap();
+        assert!(s.load_dirty_notes().unwrap().is_empty());
+    }
+
+    #[test]
+    fn upsert_from_server_overwrites_and_is_clean() {
+        let mut s = mem();
+        s.sync_enabled = true;
+        s.save_note(&Note { id: "n1".into(), content: "local".into(), updated_at: 1, ..Default::default() }).unwrap();
+        s.upsert_note_from_server(&Note { id: "n1".into(), content: "server".into(), updated_at: 99, ..Default::default() }).unwrap();
+        let all = s.load_all_notes().unwrap();
+        assert_eq!(all[0].content, "server");
+        assert!(!all[0].dirty);
     }
 }
