@@ -100,6 +100,119 @@ pub fn apply_pulled(store: &Store, folders: &[Value], notes: &[Value]) -> rusqli
     tx.commit()
 }
 
+use serde::Serialize;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceInfo {
+    pub id: String,
+    pub name: String,
+    pub role: String,
+}
+
+/// Sync failure kinds. `Offline` is retryable (network/timeout/connection/401);
+/// `Fatal` is a payload/server error that retrying won't fix.
+#[derive(Debug)]
+pub enum SyncError {
+    Offline(String),
+    Fatal(String),
+}
+
+impl std::fmt::Display for SyncError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SyncError::Offline(m) | SyncError::Fatal(m) => write!(f, "{m}"),
+        }
+    }
+}
+
+fn client() -> Result<reqwest::Client, SyncError> {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|e| SyncError::Fatal(e.to_string()))
+}
+
+fn base(server_url: &str) -> String {
+    server_url.trim_end_matches('/').to_string()
+}
+
+/// GET /api/workspaces — the user's workspaces for the picker.
+pub async fn fetch_workspaces(server_url: &str, token: &str) -> Result<Vec<WorkspaceInfo>, SyncError> {
+    let url = format!("{}/api/workspaces", base(server_url));
+    let resp = client()?
+        .get(&url)
+        .bearer_auth(token)
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| SyncError::Offline(e.to_string()))?;
+    if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+        return Err(SyncError::Offline("unauthorized".into()));
+    }
+    if !resp.status().is_success() {
+        return Err(SyncError::Fatal(format!("workspaces HTTP {}", resp.status().as_u16())));
+    }
+    let body: Value = resp.json().await.map_err(|e| SyncError::Fatal(e.to_string()))?;
+    let rows = body["data"].as_array().cloned().unwrap_or_default();
+    Ok(rows
+        .iter()
+        .map(|w| WorkspaceInfo {
+            id: w["id"].as_str().unwrap_or_default().to_string(),
+            name: w["name"].as_str().unwrap_or_default().to_string(),
+            role: w["role"].as_str().unwrap_or_default().to_string(),
+        })
+        .collect())
+}
+
+/// GET …/changes?since= → (cursor, folders, notes) as raw wire values.
+pub async fn pull(server_url: &str, token: &str, workspace_id: &str, since: i64)
+    -> Result<(i64, Vec<Value>, Vec<Value>), SyncError>
+{
+    let url = format!("{}/api/workspaces/{}/changes?since={}", base(server_url), workspace_id, since);
+    let resp = client()?
+        .get(&url)
+        .bearer_auth(token)
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| SyncError::Offline(e.to_string()))?;
+    if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+        return Err(SyncError::Offline("unauthorized".into()));
+    }
+    if !resp.status().is_success() {
+        return Err(SyncError::Fatal(format!("pull HTTP {}", resp.status().as_u16())));
+    }
+    let body: Value = resp.json().await.map_err(|e| SyncError::Fatal(e.to_string()))?;
+    let cursor = body["cursor"].as_i64().unwrap_or(since);
+    let folders = body["folders"]["data"].as_array().or(body["folders"].as_array()).cloned().unwrap_or_default();
+    let notes = body["notes"]["data"].as_array().or(body["notes"].as_array()).cloned().unwrap_or_default();
+    Ok((cursor, folders, notes))
+}
+
+/// POST …/changes with dirty folders+notes; returns the server's new cursor.
+pub async fn push(server_url: &str, token: &str, workspace_id: &str, folders: Vec<Value>, notes: Vec<Value>)
+    -> Result<i64, SyncError>
+{
+    let url = format!("{}/api/workspaces/{}/changes", base(server_url), workspace_id);
+    let resp = client()?
+        .post(&url)
+        .bearer_auth(token)
+        .header("Accept", "application/json")
+        .json(&json!({ "folders": folders, "notes": notes }))
+        .send()
+        .await
+        .map_err(|e| SyncError::Offline(e.to_string()))?;
+    if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+        return Err(SyncError::Offline("unauthorized".into()));
+    }
+    if !resp.status().is_success() {
+        return Err(SyncError::Fatal(format!("push HTTP {}", resp.status().as_u16())));
+    }
+    let body: Value = resp.json().await.map_err(|e| SyncError::Fatal(e.to_string()))?;
+    Ok(body["cursor"].as_i64().unwrap_or(0))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -147,5 +260,11 @@ mod tests {
         let server_note = note_to_wire(&Note { id: "n1".into(), content: "server".into(), updated_at: 1_700_000_000_000, ..Default::default() });
         apply_pulled(&s, &[], &[server_note]).unwrap();
         assert_eq!(s.load_all_notes().unwrap()[0].content, "server");
+    }
+
+    #[test]
+    fn sync_error_display() {
+        assert_eq!(SyncError::Offline("x".into()).to_string(), "x");
+        assert_eq!(SyncError::Fatal("y".into()).to_string(), "y");
     }
 }
