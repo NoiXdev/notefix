@@ -175,12 +175,6 @@ pub fn touch_folder(conn: &Connection, id: &str) -> rusqlite::Result<()> {
     Ok(())
 }
 
-pub fn tombstone_folder(conn: &Connection, id: &str) -> rusqlite::Result<()> {
-    let now = now_ms();
-    conn.execute("UPDATE folders SET deleted_at = ?2, dirty = 1, updated_at = ?2 WHERE id = ?1", (id, now))?;
-    Ok(())
-}
-
 pub fn load_dirty_folders(conn: &Connection) -> rusqlite::Result<Vec<Folder>> {
     let mut stmt = conn.prepare("SELECT id, name, parent_id, position, icon, color, sort, updated_at, deleted_at, dirty FROM folders WHERE dirty = 1")?;
     let rows = stmt.query_map([], |r| Ok(Folder {

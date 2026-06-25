@@ -114,11 +114,6 @@ impl Store {
         tx.commit()
     }
 
-    /// Apply a note pulled from the server: server fields win, row is clean.
-    pub fn upsert_note_from_server(&self, n: &Note) -> rusqlite::Result<()> {
-        upsert_note_from_server_conn(&self.conn, n)
-    }
-
     pub fn set_pinned(&self, id: &str, pinned: bool) -> rusqlite::Result<()> {
         self.conn.execute("UPDATE notes SET pinned = ?2 WHERE id = ?1", (id, pinned))?;
         if self.sync_enabled {
@@ -421,7 +416,7 @@ mod tests {
         let mut s = mem();
         s.sync_enabled = true;
         s.save_note(&Note { id: "n1".into(), content: "local".into(), updated_at: 1, ..Default::default() }).unwrap();
-        s.upsert_note_from_server(&Note { id: "n1".into(), content: "server".into(), updated_at: 99, ..Default::default() }).unwrap();
+        upsert_note_from_server_conn(&s.conn, &Note { id: "n1".into(), content: "server".into(), updated_at: 99, ..Default::default() }).unwrap();
         let all = s.load_all_notes().unwrap();
         assert_eq!(all[0].content, "server");
         assert!(!all[0].dirty);

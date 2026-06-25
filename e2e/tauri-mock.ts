@@ -10,7 +10,7 @@ export interface MockData {
 
 export async function installTauriMock(page: Page, data: MockData = {}): Promise<void> {
   await page.addInitScript((d: MockData) => {
-    const singleContext = [{ id: 'local', label: '', kind: 'local', path: '/tmp/notefix.db', serverUrl: '', active: true }];
+    const singleContext = [{ id: 'local', label: '', kind: 'local', path: '/tmp/notefix.db', serverUrl: '', workspaceId: '', active: true }];
     const responses: Record<string, unknown> = {
       notes_load: d.notes ?? [],
       folders_load: d.folders ?? [],
@@ -29,6 +29,11 @@ export async function installTauriMock(page: Page, data: MockData = {}): Promise
       // A1 add-server: begin returns an authorize URL; complete echoes contexts.
       server_auth_begin: d.responses?.server_auth_begin ?? 'https://srv.example/oauth/authorize?state=x',
       server_auth_complete: d.responses?.server_auth_complete ?? singleContext,
+      // C1 sync: workspaces list, bind, status, manual trigger.
+      server_workspaces: d.responses?.server_workspaces ?? [{ id: 'ws-1', name: 'Privat', role: 'owner' }],
+      context_bind_workspace: d.responses?.context_bind_workspace ?? singleContext,
+      sync_status: d.responses?.sync_status ?? { state: 'synced', lastSyncedAt: 1, pending: 0 },
+      sync_now: undefined,
     };
     let cbId = 0;
     // Registry so tests can drive Tauri events (e.g. window "close-requested").

@@ -52,3 +52,23 @@ test('add-server flow: dialog → begin → auth-callback completes', async ({ p
 
   expect(errors).toEqual([]);
 });
+
+test('unbound server context opens the workspace picker and binds', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', e => errors.push(e.message));
+
+  await installTauriMock(page, {
+    responses: {
+      contexts_list: [{ id: 'srv', label: '', kind: 'server', path: '/s.db', serverUrl: 'https://s', workspaceId: '', active: true }],
+    },
+  });
+  await page.goto('/');
+
+  // App checks the active context on load; an unbound server context opens the picker.
+  await expect(page.getByText('Workspace wählen')).toBeVisible();
+  await page.getByText('Privat').click();
+
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __tauriCalls: string[] }).__tauriCalls))
+    .toContain('context_bind_workspace');
+  expect(errors).toEqual([]);
+});
