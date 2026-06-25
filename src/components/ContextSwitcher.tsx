@@ -5,11 +5,13 @@ import { faCheck, faPlus, faGear, faChevronDown } from '@fortawesome/free-solid-
 import { api } from '../api';
 import type { ContextInfo } from '../contexts';
 import ContextMenu, { type ContextMenuItem } from './ContextMenu';
+import PromptDialog from './PromptDialog';
 
 export default function ContextSwitcher({ onManage }: { onManage?: () => void }) {
   const { t } = useTranslation();
   const [ctx, setCtx] = useState<ContextInfo[]>([]);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [adding, setAdding] = useState(false);
 
   const refresh = () => { void api.contexts.list().then(setCtx); };
   useEffect(() => { refresh(); return api.onContextChanged(refresh); }, []);
@@ -26,7 +28,7 @@ export default function ContextSwitcher({ onManage }: { onManage?: () => void })
     {
       label: t('contexts.add'),
       icon: <FontAwesomeIcon icon={faPlus} />,
-      onClick: () => { const name = window.prompt(t('contexts.addPrompt')); if (name != null) void api.contexts.add(name); },
+      onClick: () => setAdding(true),
     },
     ...(onManage ? [{
       label: t('contexts.manage'),
@@ -47,6 +49,15 @@ export default function ContextSwitcher({ onManage }: { onManage?: () => void })
         <FontAwesomeIcon icon={faChevronDown} className="text-[10px] shrink-0 text-gray-500" />
       </button>
       {menu && <ContextMenu x={menu.x} y={menu.y} items={items} onClose={() => setMenu(null)} />}
+      {adding && (
+        <PromptDialog
+          title={t('contexts.add')}
+          confirmLabel={t('contexts.add')}
+          placeholder={t('contexts.addPrompt')}
+          onSubmit={name => { setAdding(false); void api.contexts.add(name); }}
+          onCancel={() => setAdding(false)}
+        />
+      )}
     </>
   );
 }

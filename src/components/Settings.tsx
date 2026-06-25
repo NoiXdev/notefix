@@ -9,6 +9,7 @@ import Logo from "./Logo";
 import Select from "./Select";
 import Toggle from "./Toggle";
 import ShortcutsSettings from "./ShortcutsSettings";
+import PromptDialog from "./PromptDialog";
 import { runSystemChecks } from "../systemChecks";
 import { OSS_LIBS } from "../licenses";
 
@@ -342,34 +343,24 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
   );
 }
 
+type CtxDialog =
+  | { mode: "add" }
+  | { mode: "rename"; c: ContextInfo }
+  | { mode: "remove"; c: ContextInfo }
+  | null;
+
 function ContextsPage() {
   const { t } = useTranslation();
   const [ctx, setCtx] = useState<ContextInfo[]>([]);
+  const [dialog, setDialog] = useState<CtxDialog>(null);
+  const [deleteFile, setDeleteFile] = useState(false);
 
   useEffect(() => {
     api.contexts.list().then(setCtx);
   }, []);
 
   const labelOf = (c: ContextInfo) => c.label || t("contexts.localDefault");
-
-  const rename = async (c: ContextInfo) => {
-    const name = window.prompt(t("contexts.rename"), c.label);
-    if (name == null) return;
-    setCtx(await api.contexts.rename(c.id, name));
-  };
-
-  const remove = async (c: ContextInfo) => {
-    if (c.active) return;
-    if (!window.confirm(`${t("contexts.remove")}: ${labelOf(c)}`)) return;
-    const deleteFile = window.confirm(t("contexts.removeFile"));
-    setCtx(await api.contexts.remove(c.id, deleteFile));
-  };
-
-  const add = async () => {
-    const name = window.prompt(t("contexts.addPrompt"));
-    if (name == null) return;
-    setCtx(await api.contexts.add(name));
-  };
+  const close = () => { setDialog(null); setDeleteFile(false); };
 
   return (
     <div>
@@ -388,13 +379,49 @@ function ContextsPage() {
               <div className="text-xs text-gray-500 break-all font-mono">{c.path}</div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              <button onClick={() => rename(c)} className="px-3 py-1 rounded text-xs font-medium border" style={{ borderColor: "#e7d27a", color: "#1c1917" }}>{t("contexts.rename")}</button>
-              <button onClick={() => remove(c)} disabled={c.active} className="px-3 py-1 rounded text-xs font-medium border disabled:opacity-40 disabled:cursor-not-allowed" style={{ borderColor: "#e7d27a", color: "#1c1917" }}>{t("contexts.remove")}</button>
+              <button onClick={() => setDialog({ mode: "rename", c })} className="px-3 py-1 rounded text-xs font-medium border" style={{ borderColor: "#e7d27a", color: "#1c1917" }}>{t("contexts.rename")}</button>
+              <button onClick={() => setDialog({ mode: "remove", c })} disabled={c.active} className="px-3 py-1 rounded text-xs font-medium border disabled:opacity-40 disabled:cursor-not-allowed" style={{ borderColor: "#e7d27a", color: "#1c1917" }}>{t("contexts.remove")}</button>
             </div>
           </div>
         ))}
       </div>
-      <button onClick={add} className="mt-4 px-4 py-1.5 rounded text-sm font-medium" style={{ background: "#fde047", color: "#1c1917" }}>{t("contexts.add")}</button>
+      <button onClick={() => setDialog({ mode: "add" })} className="mt-4 px-4 py-1.5 rounded text-sm font-medium" style={{ background: "#fde047", color: "#1c1917" }}>{t("contexts.add")}</button>
+
+      {dialog?.mode === "add" && (
+        <PromptDialog
+          title={t("contexts.add")}
+          confirmLabel={t("contexts.add")}
+          placeholder={t("contexts.addPrompt")}
+          onSubmit={async name => { setCtx(await api.contexts.add(name)); close(); }}
+          onCancel={close}
+        />
+      )}
+      {dialog?.mode === "rename" && (
+        <PromptDialog
+          title={t("contexts.rename")}
+          confirmLabel={t("contexts.rename")}
+          initialValue={dialog.c.label}
+          placeholder={t("contexts.addPrompt")}
+          onSubmit={async name => { setCtx(await api.contexts.rename(dialog.c.id, name)); close(); }}
+          onCancel={close}
+        />
+      )}
+      {dialog?.mode === "remove" && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.45)" }} onClick={close}>
+          <div className="w-96 rounded-lg bg-gray-900 border border-gray-700 p-5" onClick={e => e.stopPropagation()}>
+            <h2 className="text-gray-100 text-base font-semibold mb-2">{t("contexts.remove")}</h2>
+            <p className="text-gray-400 text-sm mb-4 break-all">{labelOf(dialog.c)}</p>
+            <label className="flex items-center gap-2 text-sm text-gray-300 mb-5">
+              <input type="checkbox" checked={deleteFile} onChange={e => setDeleteFile(e.target.checked)} />
+              {t("contexts.removeFile")}
+            </label>
+            <div className="flex justify-end gap-2">
+              <button onClick={close} className="px-3 py-1.5 rounded text-sm text-gray-300 hover:bg-gray-800">{t("dialogs.confirm.cancel")}</button>
+              <button onClick={async () => { const c = dialog.c; setCtx(await api.contexts.remove(c.id, deleteFile)); close(); }} className="px-3 py-1.5 rounded text-sm font-medium" style={{ background: "#dc2626", color: "white" }}>{t("contexts.remove")}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
