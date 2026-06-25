@@ -817,3 +817,56 @@ pub fn sync_status(
     let state = if last > 0 { "synced" } else { "syncing" };
     Ok(SyncStatus { state: state.into(), last_synced_at: last, pending })
 }
+
+/// One push-then-pull cycle for the active server context. Locks are released
+/// before every network `.await`. No-op for local/unbound/unauthenticated.
+pub async fn run_sync_cycle(app: &AppHandle) -> Result<(), String> {
+    let reg_state = app.state::<Mutex<crate::profiles::Registry>>();
+    let store_state = app.state::<Mutex<Store>>();
+
+    let ctx = { let r = reg_state.lock().map_err(|e| e.to_string())?; active_server(&r) };
+    let Some(ctx) = ctx else { return Ok(()); };
+    if ctx.workspace_id.is_empty() { return Ok(()); }
+    let Some(tokens) = crate::auth::load_tokens(&ctx.id)? else { return Ok(()); };
+
+    let _ = app.emit("sync-status", SyncStatus { state: "syncing".into(), last_synced_at: 0, pending: 0 });
+
+    // Collect dirty rows + cursor under the lock, then release it.
+    let (folders, notes, note_ids, folder_ids, since) = {
+        let s = store_state.lock().map_err(|e| e.to_string())?;
+        let dn = s.load_dirty_notes().map_err(|e| e.to_string())?;
+        let df = crate::folders::load_dirty_folders(&s.conn).map_err(|e| e.to_string())?;
+        let since = crate::migrate::get_meta_i64(&s.conn, "sync_cursor", 0);
+        let folders: Vec<_> = df.iter().map(crate::sync::folder_to_wire).collect();
+        let notes: Vec<_> = dn.iter().map(crate::sync::note_to_wire).collect();
+        let note_ids: Vec<String> = dn.iter().map(|n| n.id.clone()).collect();
+        let folder_ids: Vec<String> = df.iter().map(|f| f.id.clone()).collect();
+        (folders, notes, note_ids, folder_ids, since)
+    };
+
+    // Network: push then pull (no lock held).
+    let result = async {
+        crate::sync::push(&ctx.server_url, &tokens.access_token, &ctx.workspace_id, folders, notes).await?;
+        crate::sync::pull(&ctx.server_url, &tokens.access_token, &ctx.workspace_id, since).await
+    }.await;
+
+    match result {
+        Ok((cursor, pf, pn)) => {
+            {
+                let s = store_state.lock().map_err(|e| e.to_string())?;
+                s.clear_note_dirty(&note_ids).map_err(|e| e.to_string())?;
+                crate::folders::clear_folder_dirty(&s.conn, &folder_ids).map_err(|e| e.to_string())?;
+                crate::sync::apply_pulled(&s, &pf, &pn).map_err(|e| e.to_string())?;
+                crate::migrate::set_meta_i64(&s.conn, "sync_cursor", cursor).map_err(|e| e.to_string())?;
+                crate::migrate::set_meta_i64(&s.conn, "sync_last_at", now_ms()).map_err(|e| e.to_string())?;
+            }
+            broadcast_context_changed(app); // refresh the UI from the updated cache
+            let _ = app.emit("sync-status", SyncStatus { state: "synced".into(), last_synced_at: now_ms(), pending: 0 });
+            Ok(())
+        }
+        Err(e) => {
+            let _ = app.emit("sync-status", SyncStatus { state: "offline".into(), last_synced_at: 0, pending: 0 });
+            Err(e.to_string())
+        }
+    }
+}

@@ -167,6 +167,26 @@ pub fn run() {
 
             tray::build_tray(app.handle())?;
 
+            // Background sync: every 15s, or when an edit/manual trigger fires the
+            // Notify, run one sync cycle for the active server context.
+            {
+                let handle = app.handle().clone();
+                let notify = app
+                    .state::<std::sync::Arc<tokio::sync::Notify>>()
+                    .inner()
+                    .clone();
+                tauri::async_runtime::spawn(async move {
+                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
+                    loop {
+                        tokio::select! {
+                            _ = interval.tick() => {}
+                            _ = notify.notified() => {}
+                        }
+                        let _ = commands::run_sync_cycle(&handle).await;
+                    }
+                });
+            }
+
             if !start_minimized {
                 if let Some(w) = app.get_webview_window("main") {
                     let _ = w.show();
