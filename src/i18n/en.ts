@@ -28,6 +28,11 @@ export const en = {
       dateFormat: 'Date format',
       pinned: 'Pinned notes',
       folderColor: 'Folder color',
+      sidebarMode: 'Sidebar',
+      sidebarModes: {
+        switcher: 'Single context (switcher)',
+        combined: 'All contexts combined',
+      },
       treeView: 'Tree view',
       compactTree: 'Compact view (title only)',
       treeProgress: 'Show progress in the tree',
@@ -377,5 +382,8 @@ export const en = {
     title: 'Export note',
     text: 'Text',
     mdBundle: 'Markdown: images as a folder',
+  },
+  combined: {
+    allContexts: 'All contexts',
   },
 };

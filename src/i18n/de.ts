@@ -28,6 +28,11 @@ export const de = {
       dateFormat: 'Datumsformat',
       pinned: 'Angepinnte Notizen',
       folderColor: 'Ordnerfarbe',
+      sidebarMode: 'Seitenleiste',
+      sidebarModes: {
+        switcher: 'Ein Kontext (Umschalter)',
+        combined: 'Alle Kontexte kombiniert',
+      },
       treeView: 'Baum-Ansicht',
       compactTree: 'Kompakte Ansicht (nur Titel)',
       treeProgress: 'Fortschritt im Baum zeigen',
@@ -377,5 +382,8 @@ export const de = {
     title: 'Notiz exportieren',
     text: 'Text',
     mdBundle: 'Markdown: Bilder als Ordner',
+  },
+  combined: {
+    allContexts: 'Alle Kontexte',
   },
 };

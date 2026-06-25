@@ -5,6 +5,7 @@ import { useNotes } from './hooks/useNotes';
 import { useFolders } from './hooks/useFolders';
 import { useSettings } from './hooks/useSettings';
 import NoteList from './components/NoteList';
+import CombinedNoteList from './components/CombinedNoteList';
 import NoteEditor from './components/NoteEditor';
 import Logo from './components/Logo';
 import Settings, { type Page as SettingsPage } from './components/Settings';
@@ -43,8 +44,18 @@ export default function App() {
   const [sysProblems, setSysProblems] = useState<SystemCheck[] | null>(null);
   const [settingsPage, setSettingsPage] = useState<SettingsPage | undefined>(undefined);
   const [bindCtx, setBindCtx] = useState<string | null>(null);
+  const [activeContextId, setActiveContextId] = useState<string>('');
+  const pendingSelectRef = useRef<string | null>(null);
   const initView = useRef(false);
   const selectNote = (id: string) => { setSelectedId(id); setView('editor'); };
+  const selectCombined = (noteId: string, contextId: string) => {
+    if (contextId !== activeContextId) {
+      pendingSelectRef.current = noteId;
+      void api.contexts.switch(contextId);
+    } else {
+      selectNote(noteId);
+    }
+  };
 
   // Auto-select the first note on load
   useEffect(() => {
@@ -75,7 +86,12 @@ export default function App() {
 
   useEffect(() => {
     return api.onContextChanged(() => {
-      setSelectedId(null);
+      if (pendingSelectRef.current) {
+        setSelectedId(pendingSelectRef.current);
+        pendingSelectRef.current = null;
+      } else {
+        setSelectedId(null);
+      }
       setView('editor');
       void reloadNotes();
       void reloadFolders();
@@ -87,6 +103,7 @@ export default function App() {
   useEffect(() => {
     const check = () => void api.contexts.list().then(cs => {
       const active = cs.find(c => c.active);
+      setActiveContextId(active?.id ?? '');
       if (active?.kind === 'server' && !active.workspaceId) setBindCtx(active.id);
     });
     check(); // initial (e.g. app starts on an unbound server context)
@@ -207,6 +224,17 @@ export default function App() {
       )}
       {!showSettings && (
       <div className="flex h-screen overflow-hidden">
+      {settings.sidebarMode === 'combined' ? (
+        <CombinedNoteList
+          selectedId={selectedId}
+          activeContextId={activeContextId}
+          onSelectNote={selectCombined}
+          onCreate={handleCreate}
+          onOpenSettings={() => { setSettingsPage(undefined); setShowSettings(true); }}
+          onOpenContexts={() => { setSettingsPage('contexts'); setShowSettings(true); }}
+          dateFormat={settings.dateFormat}
+        />
+      ) : (
       <NoteList
         notes={notes}
         folders={folders}
@@ -241,6 +269,7 @@ export default function App() {
         onEmptyTrash={emptyTrash}
         onExportNote={(n) => setExportNoteState(n)}
       />
+      )}
       <main className="flex-1 overflow-hidden">
         {view === 'dashboard' ? (
           <Dashboard

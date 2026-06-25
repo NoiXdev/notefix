@@ -28,6 +28,11 @@ export const fr = {
       dateFormat: 'Format de date',
       pinned: 'Notes épinglées',
       folderColor: 'Couleur du dossier',
+      sidebarMode: 'Barre latérale',
+      sidebarModes: {
+        switcher: 'Un contexte (sélecteur)',
+        combined: 'Tous les contextes',
+      },
       treeView: 'Vue arborescente',
       compactTree: 'Vue compacte (titre seulement)',
       treeProgress: 'Afficher la progression dans l’arborescence',
@@ -377,5 +382,8 @@ export const fr = {
     title: 'Exporter la note',
     text: 'Texte',
     mdBundle: 'Markdown : images dans un dossier',
+  },
+  combined: {
+    allContexts: 'Tous les contextes',
   },
 };

@@ -81,6 +81,11 @@ const START_VIEWS: { value: import("../hooks/useSettings").StartView; labelKey: 
   { value: "dashboard", labelKey: "settings.system.startViews.dashboard" },
 ];
 
+const SIDEBAR_MODES: { value: import("../hooks/useSettings").SidebarMode; labelKey: string }[] = [
+  { value: "switcher", labelKey: "settings.appearance.sidebarModes.switcher" },
+  { value: "combined", labelKey: "settings.appearance.sidebarModes.combined" },
+];
+
 const CLOSE_ACTIONS: { value: import("../hooks/useSettings").CloseAction; labelKey: string }[] = [
   { value: "ask", labelKey: "settings.system.closeActions.ask" },
   { value: "minimize", labelKey: "settings.system.closeActions.minimize" },
@@ -203,6 +208,9 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
 
             <h2 className="text-sm font-semibold text-gray-800 mt-8 mb-2">{t("settings.appearance.language")}</h2>
             <div className="max-w-sm"><Select value={settings.language} options={LANGUAGES.map(l => ({ value: l.value, label: l.value === "system" ? t("settings.appearance.langAuto") : l.label }))} onChange={v => onSetSetting("language", v as import("../hooks/useSettings").LangSetting)} /></div>
+
+            <h2 className="text-sm font-semibold text-gray-800 mt-8 mb-2">{t("settings.appearance.sidebarMode")}</h2>
+            <div className="max-w-sm"><Select value={settings.sidebarMode} options={SIDEBAR_MODES.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("sidebarMode", v as import("../hooks/useSettings").SidebarMode)} /></div>
 
             <h2 className="text-sm font-semibold text-gray-800 mt-8 mb-2">{t("settings.appearance.pinned")}</h2>
             <div className="max-w-sm"><Select value={settings.pinnedScope} options={PIN_SCOPES.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("pinnedScope", v as import("../hooks/useSettings").PinnedScope)} /></div>

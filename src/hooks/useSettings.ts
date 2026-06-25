@@ -10,6 +10,7 @@ export type CloseAction = 'ask' | 'minimize' | 'quit';
 export type PinnedScope = 'perFolder' | 'global';
 export type FolderColorStyle = 'icon' | 'bar' | 'row';
 export type StartView = 'dashboard' | 'lastNote';
+export type SidebarMode = 'switcher' | 'combined';
 
 export interface DashboardWidget { key: string; x: number; y: number; w: number; h: number; }
 
@@ -21,6 +22,7 @@ export interface AppSettings {
   revisionLimit: number;
   autosaveDelay: number;
   startView: StartView;
+  sidebarMode: SidebarMode;
   dashboardLayout: DashboardWidget[];
   compactTree: boolean;
   treeProgress: boolean;
@@ -55,6 +57,7 @@ const DEFAULTS: AppSettings = {
   revisionLimit: 50,
   autosaveDelay: 400,
   startView: 'lastNote',
+  sidebarMode: 'switcher',
   dashboardLayout: DEFAULT_LAYOUT,
   compactTree: false,
   treeProgress: true,
@@ -118,6 +121,7 @@ export function useSettings() {
       revisionLimit: Number(raw.revisionLimit) > 0 ? Number(raw.revisionLimit) : 50,
       autosaveDelay: Number(raw.autosaveDelay) >= 100 ? Number(raw.autosaveDelay) : 400,
       startView: raw.startView === 'dashboard' ? 'dashboard' : 'lastNote',
+      sidebarMode: raw.sidebarMode === 'combined' ? 'combined' : 'switcher',
       dashboardLayout: parseLayout(raw.dashboardLayout),
       compactTree: raw.compactTree === 'true',
       treeProgress: raw.treeProgress !== 'false',
