@@ -115,8 +115,9 @@ pub fn run() {
             // fall back to the default DB here and GC the wrong folder.
             let active_images = images::images_root_for(&db_path);
             let _ = std::fs::create_dir_all(&active_images);
-            let store = Store::open(&db_path)?;
+            let mut store = Store::open(&db_path)?;
             migrate::run_migrations(&store.conn)?;
+            store.sync_enabled = reg.active().map(|c| c.kind == "server").unwrap_or(false);
             {
                 let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
                 let days = settings::get_int(&store.conn, "trashRetentionDays", 30);
@@ -144,6 +145,9 @@ pub fn run() {
             app.manage(Mutex::new(reg));
             // In-memory store of in-flight browser auth flows (A1).
             app.manage(commands::PendingAuthMap::default());
+            // Notify the background sync loop (Task 7) when an edit or manual
+            // trigger wants an out-of-cycle sync.
+            app.manage(std::sync::Arc::new(tokio::sync::Notify::new()));
 
             if mcp_enabled {
                 let handle = app.handle().clone();
@@ -236,6 +240,10 @@ pub fn run() {
             commands::context_remove,
             commands::server_auth_begin,
             commands::server_auth_complete,
+            commands::server_workspaces,
+            commands::context_bind_workspace,
+            commands::sync_now,
+            commands::sync_status,
             linkmeta::fetch_link_meta,
         ])
         .build(tauri::generate_context!())

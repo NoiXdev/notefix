@@ -11,6 +11,8 @@ pub struct ContextEntry {
     pub path: String,         // absoluter DB-Pfad (lokaler Cache bei "server")
     #[serde(default)]
     pub server_url: String,   // nur bei kind == "server"
+    #[serde(default)]
+    pub workspace_id: String, // nur bei kind == "server"; "" = noch nicht gebunden
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -31,19 +33,19 @@ impl Registry {
         Registry {
             version: 1,
             active_id: id.clone(),
-            contexts: vec![ContextEntry { id, label: String::new(), kind: "local".into(), path: db_path.into(), server_url: String::new() }],
+            contexts: vec![ContextEntry { id, label: String::new(), kind: "local".into(), path: db_path.into(), server_url: String::new(), workspace_id: String::new() }],
         }
     }
 
     pub fn add(&mut self, id: String, label: String, path: String) -> ContextEntry {
-        let e = ContextEntry { id, label, kind: "local".into(), path, server_url: String::new() };
+        let e = ContextEntry { id, label, kind: "local".into(), path, server_url: String::new(), workspace_id: String::new() };
         self.contexts.push(e.clone());
         e
     }
 
     /// Add a server-backed context (local cache DB at `path`, tokens in keychain).
     pub fn add_server(&mut self, id: String, label: String, path: String, server_url: String) -> ContextEntry {
-        let e = ContextEntry { id, label, kind: "server".into(), path, server_url };
+        let e = ContextEntry { id, label, kind: "server".into(), path, server_url, workspace_id: String::new() };
         self.contexts.push(e.clone());
         e
     }
@@ -57,6 +59,12 @@ impl Registry {
     pub fn rename(&mut self, id: &str, label: String) -> Result<(), String> {
         let c = self.contexts.iter_mut().find(|c| c.id == id).ok_or("unknown context")?;
         c.label = label;
+        Ok(())
+    }
+
+    pub fn bind_workspace(&mut self, id: &str, workspace_id: String) -> Result<(), String> {
+        let c = self.contexts.iter_mut().find(|c| c.id == id).ok_or("unknown context")?;
+        c.workspace_id = workspace_id;
         Ok(())
     }
 
@@ -97,7 +105,7 @@ mod tests {
     use super::*;
 
     fn entry(id: &str, path: &str) -> ContextEntry {
-        ContextEntry { id: id.into(), label: String::new(), kind: "local".into(), path: path.into(), server_url: String::new() }
+        ContextEntry { id: id.into(), label: String::new(), kind: "local".into(), path: path.into(), server_url: String::new(), workspace_id: String::new() }
     }
 
     #[test]
@@ -155,6 +163,14 @@ mod tests {
         assert_eq!(r.contexts.len(), 2);
         r.set_active("s").unwrap();
         assert_eq!(r.active().unwrap().kind, "server");
+    }
+
+    #[test]
+    fn bind_workspace_sets_id() {
+        let mut r = Registry::default_for("/d.db");
+        let e = r.add_server("s".into(), "srv".into(), "/s.db".into(), "https://s".into());
+        r.bind_workspace(&e.id, "ws-1".into()).unwrap();
+        assert_eq!(r.contexts.iter().find(|c| c.id == e.id).unwrap().workspace_id, "ws-1");
     }
 
     #[test]

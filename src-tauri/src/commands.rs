@@ -48,7 +48,9 @@ pub fn notes_save(
 pub fn notes_delete(app: AppHandle, webview: WebviewWindow, store: State<'_, Mutex<Store>>, id: String) -> Result<(), String> {
     {
         let store = store.lock().map_err(|e| e.to_string())?;
-        if crate::settings::get_bool_default(&store.conn, "trashEnabled", true) {
+        if store.sync_enabled {
+            store.sync_delete_note(&id).map_err(|e| e.to_string())?;
+        } else if crate::settings::get_bool_default(&store.conn, "trashEnabled", true) {
             store.trash_note(&id, now_ms()).map_err(|e| e.to_string())?;
         } else {
             store.delete_note(&id).map_err(|e| e.to_string())?;
@@ -229,28 +231,37 @@ fn notify(app: &AppHandle, webview: &WebviewWindow) {
 
 #[tauri::command]
 pub fn folder_create(app: AppHandle, webview: WebviewWindow, store: State<'_, Mutex<Store>>, id: String, name: String, parent_id: Option<String>) -> Result<(), String> {
-    { let store = store.lock().map_err(|e| e.to_string())?; crate::folders::create_folder(&store.conn, &id, &name, parent_id.as_deref()).map_err(|e| e.to_string())?; }
+    { let store = store.lock().map_err(|e| e.to_string())?; crate::folders::create_folder(&store.conn, &id, &name, parent_id.as_deref()).map_err(|e| e.to_string())?;
+      if store.sync_enabled { crate::folders::touch_folder(&store.conn, &id).map_err(|e| e.to_string())?; } }
     notify(&app, &webview);
     Ok(())
 }
 
 #[tauri::command]
 pub fn folder_rename(app: AppHandle, webview: WebviewWindow, store: State<'_, Mutex<Store>>, id: String, name: String) -> Result<(), String> {
-    { let store = store.lock().map_err(|e| e.to_string())?; crate::folders::rename_folder(&store.conn, &id, &name).map_err(|e| e.to_string())?; }
+    { let store = store.lock().map_err(|e| e.to_string())?; crate::folders::rename_folder(&store.conn, &id, &name).map_err(|e| e.to_string())?;
+      if store.sync_enabled { crate::folders::touch_folder(&store.conn, &id).map_err(|e| e.to_string())?; } }
     notify(&app, &webview);
     Ok(())
 }
 
 #[tauri::command]
 pub fn folder_move(app: AppHandle, webview: WebviewWindow, store: State<'_, Mutex<Store>>, id: String, parent_id: Option<String>) -> Result<(), String> {
-    { let store = store.lock().map_err(|e| e.to_string())?; crate::folders::move_folder(&store.conn, &id, parent_id.as_deref()).map_err(|e| e.to_string())?; }
+    { let store = store.lock().map_err(|e| e.to_string())?; crate::folders::move_folder(&store.conn, &id, parent_id.as_deref()).map_err(|e| e.to_string())?;
+      if store.sync_enabled { crate::folders::touch_folder(&store.conn, &id).map_err(|e| e.to_string())?; } }
     notify(&app, &webview);
     Ok(())
 }
 
 #[tauri::command]
 pub fn folder_delete(app: AppHandle, webview: WebviewWindow, store: State<'_, Mutex<Store>>, id: String, mode: String) -> Result<(), String> {
-    { let store = store.lock().map_err(|e| e.to_string())?; crate::folders::delete_folder(&store.conn, &id, crate::folders::DeleteMode::from_str(&mode)).map_err(|e| e.to_string())?; crate::images::run_gc(&app, &store); }
+    { let store = store.lock().map_err(|e| e.to_string())?;
+      if store.sync_enabled {
+          crate::folders::sync_delete_folder(&store.conn, &id, crate::folders::DeleteMode::from_str(&mode)).map_err(|e| e.to_string())?;
+      } else {
+          crate::folders::delete_folder(&store.conn, &id, crate::folders::DeleteMode::from_str(&mode)).map_err(|e| e.to_string())?;
+      }
+      crate::images::run_gc(&app, &store); }
     notify(&app, &webview);
     Ok(())
 }
@@ -278,14 +289,16 @@ pub fn folders_reorder(app: AppHandle, webview: WebviewWindow, store: State<'_, 
 
 #[tauri::command]
 pub fn folder_set_icon(app: AppHandle, webview: WebviewWindow, store: State<'_, Mutex<Store>>, id: String, icon: String) -> Result<(), String> {
-    { let store = store.lock().map_err(|e| e.to_string())?; crate::folders::set_folder_icon(&store.conn, &id, &icon).map_err(|e| e.to_string())?; }
+    { let store = store.lock().map_err(|e| e.to_string())?; crate::folders::set_folder_icon(&store.conn, &id, &icon).map_err(|e| e.to_string())?;
+      if store.sync_enabled { crate::folders::touch_folder(&store.conn, &id).map_err(|e| e.to_string())?; } }
     notify(&app, &webview);
     Ok(())
 }
 
 #[tauri::command]
 pub fn folder_set_color(app: AppHandle, webview: WebviewWindow, store: State<'_, Mutex<Store>>, id: String, color: String) -> Result<(), String> {
-    { let store = store.lock().map_err(|e| e.to_string())?; crate::folders::set_folder_color(&store.conn, &id, &color).map_err(|e| e.to_string())?; }
+    { let store = store.lock().map_err(|e| e.to_string())?; crate::folders::set_folder_color(&store.conn, &id, &color).map_err(|e| e.to_string())?;
+      if store.sync_enabled { crate::folders::touch_folder(&store.conn, &id).map_err(|e| e.to_string())?; } }
     notify(&app, &webview);
     Ok(())
 }
@@ -305,13 +318,15 @@ pub struct ContextInfo {
     pub kind: String,
     pub path: String,
     pub server_url: String,
+    pub workspace_id: String,
     pub active: bool,
 }
 
 fn to_infos(reg: &crate::profiles::Registry) -> Vec<ContextInfo> {
     reg.contexts.iter().map(|c| ContextInfo {
         id: c.id.clone(), label: c.label.clone(), kind: c.kind.clone(),
-        path: c.path.clone(), server_url: c.server_url.clone(), active: c.id == reg.active_id,
+        path: c.path.clone(), server_url: c.server_url.clone(),
+        workspace_id: c.workspace_id.clone(), active: c.id == reg.active_id,
     }).collect()
 }
 
@@ -343,7 +358,7 @@ pub fn context_add(
         crate::profiles::save(&crate::config::profiles_path(&app), &r).map_err(|e| e.to_string())?;
         to_infos(&r)
     };
-    swap_store_to(&store, &path)?;
+    swap_store_to(&store, &path, false)?;
     broadcast_context_changed(&app);
     Ok(infos)
 }
@@ -355,14 +370,15 @@ pub fn context_switch(
     store: State<'_, Mutex<Store>>,
     id: String,
 ) -> Result<(), String> {
-    let path = {
+    let (path, kind) = {
         let mut r = reg.lock().map_err(|e| e.to_string())?;
         r.set_active(&id)?;
         let p = r.active().unwrap().path.clone();
+        let kind = r.active().map(|c| c.kind.clone()).unwrap_or_default();
         crate::profiles::save(&crate::config::profiles_path(&app), &r).map_err(|e| e.to_string())?;
-        p
+        (p, kind)
     };
-    swap_store_to(&store, std::path::Path::new(&path))?;
+    swap_store_to(&store, std::path::Path::new(&path), kind == "server")?;
     broadcast_context_changed(&app);
     Ok(())
 }
@@ -493,16 +509,17 @@ pub async fn server_auth_complete(
         crate::profiles::save(&crate::config::profiles_path(&app), &r).map_err(|e| e.to_string())?;
         to_infos(&r)
     };
-    swap_store_to(&store, &path)?;
+    swap_store_to(&store, &path, true)?;
     broadcast_context_changed(&app);
     Ok(infos)
 }
 
 // Lock convention: never hold the Store and Registry locks simultaneously; if ever needed, lock Store before Registry.
-fn swap_store_to(store: &State<'_, Mutex<Store>>, path: &std::path::Path) -> Result<(), String> {
+fn swap_store_to(store: &State<'_, Mutex<Store>>, path: &std::path::Path, sync_enabled: bool) -> Result<(), String> {
     let mut s = store.lock().map_err(|e| e.to_string())?;
     let opened = Store::open(path).map_err(|e| e.to_string())?;
     s.conn = opened.conn;
+    s.sync_enabled = sync_enabled;
     crate::migrate::run_migrations(&s.conn).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -594,7 +611,8 @@ pub fn note_revision_content(store: State<'_, Mutex<Store>>, id: i64) -> Result<
 
 #[tauri::command]
 pub fn folder_set_sort(app: AppHandle, webview: WebviewWindow, store: State<'_, Mutex<Store>>, id: String, sort: String) -> Result<(), String> {
-    { let store = store.lock().map_err(|e| e.to_string())?; crate::folders::set_folder_sort(&store.conn, &id, &sort).map_err(|e| e.to_string())?; }
+    { let store = store.lock().map_err(|e| e.to_string())?; crate::folders::set_folder_sort(&store.conn, &id, &sort).map_err(|e| e.to_string())?;
+      if store.sync_enabled { crate::folders::touch_folder(&store.conn, &id).map_err(|e| e.to_string())?; } }
     notify(&app, &webview);
     Ok(())
 }
@@ -731,4 +749,71 @@ pub fn export_notes_bundle(store: State<'_, Mutex<Store>>, app: AppHandle, dir: 
     }
     let json = serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?;
     std::fs::write(dest.join("notes.json"), json).map_err(|e| e.to_string())
+}
+
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncStatus {
+    pub state: String, // "local" | "unbound" | "syncing" | "synced" | "offline"
+    pub last_synced_at: i64,
+    pub pending: i64,
+}
+
+fn active_server(reg: &crate::profiles::Registry) -> Option<crate::profiles::ContextEntry> {
+    reg.active().filter(|c| c.kind == "server").cloned()
+}
+
+#[tauri::command]
+pub async fn server_workspaces(
+    reg: State<'_, Mutex<crate::profiles::Registry>>,
+) -> Result<Vec<crate::sync::WorkspaceInfo>, String> {
+    let ctx = { let r = reg.lock().map_err(|e| e.to_string())?; active_server(&r).ok_or("no active server context")? };
+    let tokens = crate::auth::load_tokens(&ctx.id)?.ok_or("not authenticated")?;
+    crate::sync::fetch_workspaces(&ctx.server_url, &tokens.access_token).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn context_bind_workspace(
+    app: AppHandle,
+    reg: State<'_, Mutex<crate::profiles::Registry>>,
+    notify: State<'_, std::sync::Arc<tokio::sync::Notify>>,
+    id: String,
+    workspace_id: String,
+    label: String,
+) -> Result<Vec<ContextInfo>, String> {
+    let infos = {
+        let mut r = reg.lock().map_err(|e| e.to_string())?;
+        r.bind_workspace(&id, workspace_id)?;
+        if !label.is_empty() { r.rename(&id, label)?; }
+        crate::profiles::save(&crate::config::profiles_path(&app), &r).map_err(|e| e.to_string())?;
+        to_infos(&r)
+    };
+    notify.notify_one(); // kick an immediate sync of the freshly-bound context
+    Ok(infos)
+}
+
+#[tauri::command]
+pub fn sync_now(notify: State<'_, std::sync::Arc<tokio::sync::Notify>>) -> Result<(), String> {
+    notify.notify_one();
+    Ok(())
+}
+
+#[tauri::command]
+pub fn sync_status(
+    reg: State<'_, Mutex<crate::profiles::Registry>>,
+    store: State<'_, Mutex<Store>>,
+) -> Result<SyncStatus, String> {
+    let r = reg.lock().map_err(|e| e.to_string())?;
+    let Some(ctx) = active_server(&r) else {
+        return Ok(SyncStatus { state: "local".into(), last_synced_at: 0, pending: 0 });
+    };
+    if ctx.workspace_id.is_empty() {
+        return Ok(SyncStatus { state: "unbound".into(), last_synced_at: 0, pending: 0 });
+    }
+    let s = store.lock().map_err(|e| e.to_string())?;
+    let last = crate::migrate::get_meta_i64(&s.conn, "sync_last_at", 0);
+    let pending = s.load_dirty_notes().map_err(|e| e.to_string())?.len() as i64
+        + crate::folders::load_dirty_folders(&s.conn).map_err(|e| e.to_string())?.len() as i64;
+    let state = if last > 0 { "synced" } else { "syncing" };
+    Ok(SyncStatus { state: state.into(), last_synced_at: last, pending })
 }

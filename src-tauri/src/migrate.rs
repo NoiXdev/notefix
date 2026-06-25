@@ -128,6 +128,14 @@ pub fn set_meta(conn: &Connection, key: &str, value: &str) -> rusqlite::Result<(
     Ok(())
 }
 
+pub fn get_meta_i64(conn: &Connection, key: &str, default: i64) -> i64 {
+    get_meta(conn, key).ok().flatten().and_then(|s| s.parse().ok()).unwrap_or(default)
+}
+
+pub fn set_meta_i64(conn: &Connection, key: &str, value: i64) -> rusqlite::Result<()> {
+    set_meta(conn, key, &value.to_string())
+}
+
 use std::path::Path;
 
 use crate::storage::{Note, Store};

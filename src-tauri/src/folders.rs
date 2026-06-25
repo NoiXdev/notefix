@@ -129,6 +129,32 @@ pub fn delete_folder(conn: &Connection, id: &str, mode: DeleteMode) -> rusqlite:
     Ok(())
 }
 
+/// Server-context folder delete: tombstone the folder (and, recursively, its
+/// subtree's notes+folders) or reparent children, marking affected rows dirty.
+pub fn sync_delete_folder(conn: &Connection, id: &str, mode: DeleteMode) -> rusqlite::Result<()> {
+    let now = now_ms();
+    match mode {
+        DeleteMode::Reparent => {
+            let parent: Option<String> = conn
+                .query_row("SELECT parent_id FROM folders WHERE id = ?1", [id], |r| r.get(0))
+                .optional()?
+                .flatten();
+            conn.execute("UPDATE folders SET parent_id = ?2, updated_at = ?3, dirty = 1 WHERE parent_id = ?1", (id, parent.as_deref(), now))?;
+            conn.execute("UPDATE notes SET folder_id = ?2, updated_at = ?3, dirty = 1 WHERE folder_id = ?1", (id, parent.as_deref(), now))?;
+            conn.execute("UPDATE folders SET deleted_at = ?2, updated_at = ?2, dirty = 1 WHERE id = ?1", (id, now))?;
+        }
+        DeleteMode::Recursive => {
+            let mut ids = descendants(conn, id)?;
+            ids.push(id.to_string());
+            for fid in &ids {
+                conn.execute("UPDATE notes SET deleted_at = ?2, updated_at = ?2, dirty = 1 WHERE folder_id = ?1 AND deleted_at IS NULL", (fid, now))?;
+                conn.execute("UPDATE folders SET deleted_at = ?2, updated_at = ?2, dirty = 1 WHERE id = ?1", (fid, now))?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Set parent + position for each id in order. Rejects moving a folder under its own descendant.
 pub fn reorder_folders(conn: &Connection, parent_id: Option<&str>, ids: &[String]) -> rusqlite::Result<()> {
     if let Some(p) = parent_id {
