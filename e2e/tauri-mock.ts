@@ -34,6 +34,8 @@ export async function installTauriMock(page: Page, data: MockData = {}): Promise
       context_bind_workspace: d.responses?.context_bind_workspace ?? singleContext,
       sync_status: d.responses?.sync_status ?? { state: 'synced', lastSyncedAt: 1, pending: 0 },
       sync_now: undefined,
+      // C2 combined view: aggregated notes across all contexts.
+      notes_load_all: d.responses?.notes_load_all ?? [],
     };
     let cbId = 0;
     // Registry so tests can drive Tauri events (e.g. window "close-requested").
