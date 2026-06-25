@@ -74,6 +74,15 @@ pub fn save(path: &Path, reg: &Registry) -> std::io::Result<()> {
     std::fs::write(path, serde_json::to_string_pretty(reg).unwrap())
 }
 
+/// True if `path` is a legacy flat context DB sitting directly in the contexts
+/// dir (e.g. `<contexts>/<id>.db`). Those predate the per-context subdirectory
+/// layout (`<contexts>/<id>/notefix.db`) and must be relocated so each context
+/// gets its own isolated images folder. The default context (under app_data,
+/// not the contexts dir) and already-migrated contexts are not matched.
+pub fn is_flat_context_path(path: &Path, contexts_dir: &Path) -> bool {
+    path.parent() == Some(contexts_dir) && path.extension().map(|e| e == "db").unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -88,6 +97,16 @@ mod tests {
         assert_eq!(r.contexts.len(), 1);
         assert_eq!(r.active().unwrap().path, "/data/notefix.db");
         assert_eq!(r.active().unwrap().kind, "local");
+    }
+
+    #[test]
+    fn flat_context_path_detection() {
+        let cdir = Path::new("/data/contexts");
+        assert!(is_flat_context_path(Path::new("/data/contexts/abc.db"), cdir));
+        // already migrated (in its own subfolder)
+        assert!(!is_flat_context_path(Path::new("/data/contexts/abc/notefix.db"), cdir));
+        // default context lives next to app_data, not in the contexts dir
+        assert!(!is_flat_context_path(Path::new("/data/notefix.db"), cdir));
     }
 
     #[test]

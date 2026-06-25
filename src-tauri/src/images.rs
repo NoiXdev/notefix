@@ -1,12 +1,31 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 use base64::Engine;
 
+/// The images folder lives next to its database, so each context owns its own
+/// images (`<db-dir>/images`). Pure + testable.
+pub fn images_root_for(db: &Path) -> PathBuf {
+    db.parent().map(|p| p.to_path_buf()).unwrap_or_default().join("images")
+}
+
+/// Path of the currently active context's database. Resolves via the profiles
+/// registry (so it follows context switches); falls back to the legacy
+/// single-DB config path when the registry isn't available (e.g. early startup).
+fn active_db_path(app: &AppHandle) -> PathBuf {
+    if let Some(reg) = app.try_state::<std::sync::Mutex<crate::profiles::Registry>>() {
+        if let Ok(r) = reg.lock() {
+            if let Some(c) = r.active() {
+                return PathBuf::from(&c.path);
+            }
+        }
+    }
+    crate::config::read_db_path(app)
+}
+
 pub fn images_dir(app: &AppHandle) -> PathBuf {
-    let db = crate::config::read_db_path(app);
-    let dir = db.parent().map(|p| p.to_path_buf()).unwrap_or_default().join("images");
+    let dir = images_root_for(&active_db_path(app));
     let _ = std::fs::create_dir_all(&dir);
     dir
 }
@@ -162,6 +181,11 @@ mod tests {
     fn shard_splits_uuid_on_hyphens() {
         assert_eq!(shard("5061b1e2-bad1-4fc7-a4f6-e16577f5dca4"), "5061b1e2/bad1/4fc7/a4f6/e16577f5dca4");
         assert_eq!(shard("a"), "a");
+    }
+    #[test]
+    fn images_root_sits_next_to_its_db() {
+        assert_eq!(images_root_for(Path::new("/data/notefix.db")), Path::new("/data/images"));
+        assert_eq!(images_root_for(Path::new("/data/contexts/abc/notefix.db")), Path::new("/data/contexts/abc/images"));
     }
     #[test]
     fn safe_subpath_accepts_nested_rejects_traversal() {

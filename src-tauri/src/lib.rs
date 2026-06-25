@@ -57,14 +57,39 @@ pub fn run() {
             // users keep their database, then open the active context's DB.
             let default_db = config::read_db_path(app.handle());
             let prof_path = config::profiles_path(app.handle());
-            let reg = profiles::load(&prof_path, &default_db.to_string_lossy());
-            // First run / upgrade: persist the seeded registry so the file exists.
+            let mut reg = profiles::load(&prof_path, &default_db.to_string_lossy());
+            // Relocate legacy flat context DBs (<contexts>/<id>.db) into per-context
+            // subdirectories (<contexts>/<id>/notefix.db) so each context owns its
+            // own images folder (resolved as <db-dir>/images).
+            {
+                let cdir = config::contexts_dir(app.handle());
+                for c in reg.contexts.iter_mut() {
+                    let old = std::path::PathBuf::from(&c.path);
+                    if profiles::is_flat_context_path(&old, &cdir) {
+                        let new_dir = cdir.join(&c.id);
+                        let _ = std::fs::create_dir_all(&new_dir);
+                        let new_db = new_dir.join("notefix.db");
+                        for ext in ["", "-wal", "-shm"] {
+                            let from = std::path::PathBuf::from(format!("{}{}", old.to_string_lossy(), ext));
+                            let to = std::path::PathBuf::from(format!("{}{}", new_db.to_string_lossy(), ext));
+                            if from.exists() { let _ = std::fs::rename(&from, &to); }
+                        }
+                        c.path = new_db.to_string_lossy().into_owned();
+                    }
+                }
+            }
+            // First run / upgrade / post-migration: persist the registry.
             let _ = profiles::save(&prof_path, &reg);
 
             let db_path = std::path::PathBuf::from(&reg.active().expect("active context").path);
             if let Some(parent) = db_path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
+            // The active context's images folder. Computed directly from db_path
+            // because the registry isn't managed yet, so images_dir(app) would
+            // fall back to the default DB here and GC the wrong folder.
+            let active_images = images::images_root_for(&db_path);
+            let _ = std::fs::create_dir_all(&active_images);
             let store = Store::open(&db_path)?;
             migrate::run_migrations(&store.conn)?;
             {
@@ -73,10 +98,10 @@ pub fn run() {
                 let _ = store.purge_trashed(Some(now - days * 86_400_000));
             }
             if !settings::get_bool(&store.conn, "imagesMigrated") {
-                let _ = images::migrate_inline_images(&store, &images::images_dir(app.handle()));
+                let _ = images::migrate_inline_images(&store, &active_images);
                 let _ = settings::set_setting(&store.conn, "imagesMigrated", "true");
             }
-            let _ = images::gc_images(&images::images_dir(app.handle()), &images::collect_referenced(&store));
+            let _ = images::gc_images(&active_images, &images::collect_referenced(&store));
             if let Some(legacy) = legacy_notes_dir() {
                 let _ = migrate::import_legacy_if_needed(&store, &legacy);
             }

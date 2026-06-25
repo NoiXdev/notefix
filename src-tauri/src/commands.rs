@@ -328,8 +328,11 @@ pub fn context_add(
     label: String,
 ) -> Result<Vec<ContextInfo>, String> {
     let id = uuid::Uuid::new_v4().to_string();
-    let path = crate::config::contexts_dir(&app).join(format!("{id}.db"));
-    std::fs::create_dir_all(crate::config::contexts_dir(&app)).map_err(|e| e.to_string())?;
+    // Each context lives in its own directory so its images (resolved as
+    // <db-dir>/images) stay isolated from every other context.
+    let dir = crate::config::contexts_dir(&app).join(&id);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join("notefix.db");
     // Initialise the new DB.
     { let s = Store::open(&path).map_err(|e| e.to_string())?; crate::migrate::run_migrations(&s.conn).map_err(|e| e.to_string())?; }
     let infos = {
