@@ -17,6 +17,7 @@ mod storage;
 mod sync;
 mod syscheck;
 mod tray;
+mod widgetshare;
 
 use std::sync::Mutex;
 
@@ -79,6 +80,9 @@ pub fn run() {
                     }
                 });
             }
+
+            // Widget spike: publish a snapshot for the WidgetKit extension.
+            widgetshare::write_hello();
 
             // Seed a registry from the existing single-DB path so existing
             // users keep their database, then open the active context's DB.
