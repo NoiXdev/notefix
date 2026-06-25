@@ -3,7 +3,7 @@ use std::path::Path;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Note {
     pub id: String,
@@ -23,19 +23,21 @@ pub struct Note {
     pub position: i64,
     #[serde(default)]
     pub deleted_at: Option<i64>,
+    #[serde(default)]
+    pub dirty: bool,
 }
 
 pub struct Store {
     pub conn: Connection,
 }
 
-const COLS: &str = "id, content, updated_at, pinned, archived, color, due_at, folder_id, position, deleted_at";
+const COLS: &str = "id, content, updated_at, pinned, archived, color, due_at, folder_id, position, deleted_at, dirty";
 
 fn row_to_note(r: &rusqlite::Row) -> rusqlite::Result<Note> {
     Ok(Note {
         id: r.get(0)?, content: r.get(1)?, updated_at: r.get(2)?,
         pinned: r.get(3)?, archived: r.get(4)?, color: r.get(5)?, due_at: r.get(6)?,
-        folder_id: r.get(7)?, position: r.get(8)?, deleted_at: r.get(9)?,
+        folder_id: r.get(7)?, position: r.get(8)?, deleted_at: r.get(9)?, dirty: r.get(10)?,
     })
 }
 
@@ -172,7 +174,7 @@ mod tests {
     }
 
     fn note(id: &str, content: &str, updated_at: i64) -> Note {
-        Note { id: id.into(), content: content.into(), updated_at, pinned: false, archived: false, color: String::new(), due_at: None, folder_id: None, position: 0, deleted_at: None }
+        Note { id: id.into(), content: content.into(), updated_at, pinned: false, archived: false, color: String::new(), due_at: None, folder_id: None, position: 0, deleted_at: None, dirty: false }
     }
 
     #[test]

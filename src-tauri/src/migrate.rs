@@ -93,6 +93,23 @@ pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
         set_meta(conn, "schema_version", "10")?;
     }
 
+    if version < 11 {
+        // C1 sync: dirty-flag write queue + folder sync metadata.
+        // Backfill folders.updated_at so a first push isn't infinitely old.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        conn.execute_batch(
+            "ALTER TABLE notes   ADD COLUMN dirty      INTEGER NOT NULL DEFAULT 0;
+             ALTER TABLE folders ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;
+             ALTER TABLE folders ADD COLUMN deleted_at INTEGER;
+             ALTER TABLE folders ADD COLUMN dirty      INTEGER NOT NULL DEFAULT 0;",
+        )?;
+        conn.execute("UPDATE folders SET updated_at = ?1 WHERE updated_at = 0", [now])?;
+        set_meta(conn, "schema_version", "11")?;
+    }
+
     Ok(())
 }
 
@@ -156,14 +173,14 @@ mod tests {
     #[test]
     fn migration_sets_schema_version() {
         let s = store();
-        assert_eq!(get_meta(&s.conn, "schema_version").unwrap().as_deref(), Some("10"));
+        assert_eq!(get_meta(&s.conn, "schema_version").unwrap().as_deref(), Some("11"));
     }
 
     #[test]
     fn migration_is_idempotent() {
         let s = store();
         run_migrations(&s.conn).unwrap();
-        assert_eq!(get_meta(&s.conn, "schema_version").unwrap().as_deref(), Some("10"));
+        assert_eq!(get_meta(&s.conn, "schema_version").unwrap().as_deref(), Some("11"));
     }
 
     #[test]

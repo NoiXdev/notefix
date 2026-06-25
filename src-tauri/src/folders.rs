@@ -1,7 +1,7 @@
 use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Folder {
     pub id: String,
@@ -14,6 +14,12 @@ pub struct Folder {
     pub color: String,
     #[serde(default)]
     pub sort: String,
+    #[serde(default)]
+    pub updated_at: i64,
+    #[serde(default)]
+    pub deleted_at: Option<i64>,
+    #[serde(default)]
+    pub dirty: bool,
 }
 
 pub enum DeleteMode {
@@ -33,9 +39,10 @@ fn now_ms() -> i64 {
 }
 
 pub fn load_folders(conn: &Connection) -> rusqlite::Result<Vec<Folder>> {
-    let mut stmt = conn.prepare("SELECT id, name, parent_id, position, icon, color, sort FROM folders ORDER BY position, name")?;
+    let mut stmt = conn.prepare("SELECT id, name, parent_id, position, icon, color, sort, updated_at, deleted_at, dirty FROM folders WHERE deleted_at IS NULL ORDER BY position, name")?;
     let rows = stmt.query_map([], |r| Ok(Folder {
         id: r.get(0)?, name: r.get(1)?, parent_id: r.get(2)?, position: r.get(3)?, icon: r.get(4)?, color: r.get(5)?, sort: r.get(6)?,
+        updated_at: r.get(7)?, deleted_at: r.get(8)?, dirty: r.get(9)?,
     }))?;
     rows.collect()
 }
@@ -149,7 +156,7 @@ mod tests {
     }
 
     fn note_in(id: &str, folder: &str) -> Note {
-        Note { id: id.into(), content: "<p>x</p>".into(), updated_at: 1, pinned: false, archived: false, color: String::new(), due_at: None, folder_id: Some(folder.into()), position: 0, deleted_at: None }
+        Note { id: id.into(), content: "<p>x</p>".into(), updated_at: 1, pinned: false, archived: false, color: String::new(), due_at: None, folder_id: Some(folder.into()), position: 0, deleted_at: None, dirty: false }
     }
 
     #[test]

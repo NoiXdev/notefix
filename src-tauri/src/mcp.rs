@@ -144,6 +144,7 @@ impl NoteAccess for StoreAccess {
             folder_id: None,
             position: 0,
             deleted_at: None,
+            dirty: false,
         };
         let st = self.app.state::<Mutex<crate::storage::Store>>();
         {
