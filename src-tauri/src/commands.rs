@@ -863,6 +863,8 @@ pub async fn run_sync_cycle(app: &AppHandle) -> Result<(), String> {
                 crate::migrate::set_meta_i64(&s.conn, "sync_last_at", now_ms()).map_err(|e| e.to_string())?;
             }
             broadcast_context_changed(app); // refresh the UI from the updated cache
+            // S2b: transfer referenced images (non-fatal — notes already synced).
+            let _ = run_image_phase(app, &ctx, &tokens.access_token).await;
             let _ = app.emit("sync-status", SyncStatus { state: "synced".into(), last_synced_at: now_ms(), pending: 0 });
             Ok(())
         }
@@ -884,4 +886,52 @@ pub fn notes_load_all(
         }).collect()
     };
     Ok(crate::aggregate::aggregate(&contexts))
+}
+
+/// S2b: after the note phase, transfer referenced image blobs for a bound server
+/// context. Non-fatal — any failure is logged and retried next cycle; the note
+/// sync is already committed. No Store lock is held across a network `.await`.
+pub async fn run_image_phase(app: &AppHandle, ctx: &crate::profiles::ContextEntry, token: &str) -> Result<(), String> {
+    use std::collections::HashSet;
+
+    let store_state = app.state::<Mutex<Store>>();
+    let images_root = crate::images::images_dir(app);
+
+    // Referenced relpaths (under lock), then which of them exist locally.
+    let referenced: HashSet<String> = {
+        let s = store_state.lock().map_err(|e| e.to_string())?;
+        crate::images::collect_referenced(&s)
+    };
+    let local_present: HashSet<String> = referenced.iter()
+        .filter(|p| crate::images::safe_subpath(p).map(|sp| images_root.join(sp).is_file()).unwrap_or(false))
+        .cloned().collect();
+
+    // Manifest (network). On failure: skip the image phase (offline / not ready).
+    let server = crate::imagesync::fetch_manifest(&ctx.server_url, token, &ctx.workspace_id).await?;
+
+    // Upload local-only referenced images.
+    for path in crate::imagesync::to_upload(&local_present, &server) {
+        let Some(sp) = crate::images::safe_subpath(&path) else { continue };
+        let file = images_root.join(&sp);
+        if let Ok(bytes) = std::fs::read(&file) {
+            let mime = crate::images::mime_for(&path);
+            if let Err(e) = crate::imagesync::upload_image(&ctx.server_url, token, &ctx.workspace_id, &path, bytes, mime).await {
+                eprintln!("image upload {path} failed: {e}");
+            }
+        }
+    }
+
+    // Download referenced images we lack locally.
+    for path in crate::imagesync::to_download(&referenced, &local_present, &server) {
+        let Some(sp) = crate::images::safe_subpath(&path) else { continue };
+        match crate::imagesync::download_image(&ctx.server_url, token, &ctx.workspace_id, &path).await {
+            Ok(bytes) => {
+                let dest = images_root.join(&sp);
+                if let Some(parent) = dest.parent() { let _ = std::fs::create_dir_all(parent); }
+                let _ = std::fs::write(&dest, bytes);
+            }
+            Err(e) => eprintln!("image download {path} failed: {e}"),
+        }
+    }
+    Ok(())
 }
