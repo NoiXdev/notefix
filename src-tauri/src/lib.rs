@@ -1,3 +1,6 @@
+// A1 auth bridge plumbing; the `server_auth_*` commands (Task 4) consume it.
+#[allow(dead_code)]
+mod auth;
 mod commands;
 mod config;
 mod export;
