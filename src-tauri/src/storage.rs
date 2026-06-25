@@ -108,9 +108,13 @@ impl Store {
         rows.collect()
     }
 
-    pub fn clear_note_dirty(&self, ids: &[String]) -> rusqlite::Result<()> {
+    /// Clear the dirty flag for rows that were just pushed — but only if the row
+    /// hasn't been re-edited since we snapshotted it (`updated_at` still matches).
+    /// An edit landing during the push/pull network window bumps `updated_at`, so
+    /// it stays queued and is pushed next cycle instead of being silently dropped.
+    pub fn clear_note_dirty(&self, rows: &[(String, i64)]) -> rusqlite::Result<()> {
         let tx = self.conn.unchecked_transaction()?;
-        for id in ids { tx.execute("UPDATE notes SET dirty = 0 WHERE id = ?1", [id])?; }
+        for (id, updated_at) in rows { tx.execute("UPDATE notes SET dirty = 0 WHERE id = ?1 AND updated_at = ?2", (id, updated_at))?; }
         tx.commit()
     }
 
@@ -205,6 +209,10 @@ impl Store {
 }
 
 /// Upsert a server note against an arbitrary connection (used inside a tx).
+/// Last-write-wins: an existing row is overwritten only when the incoming
+/// server version is newer-or-equal (`updated_at`), so a local edit made during
+/// the sync window (which has a strictly greater `updated_at`) is preserved and
+/// pushed on the next cycle.
 pub fn upsert_note_from_server_conn(conn: &rusqlite::Connection, n: &Note) -> rusqlite::Result<()> {
     conn.execute(
         "INSERT INTO notes (id, content, updated_at, pinned, archived, color, due_at, folder_id, position, deleted_at, dirty)
@@ -212,7 +220,8 @@ pub fn upsert_note_from_server_conn(conn: &rusqlite::Connection, n: &Note) -> ru
          ON CONFLICT(id) DO UPDATE SET
             content=excluded.content, updated_at=excluded.updated_at, pinned=excluded.pinned,
             archived=excluded.archived, color=excluded.color, due_at=excluded.due_at,
-            folder_id=excluded.folder_id, position=excluded.position, deleted_at=excluded.deleted_at, dirty=0",
+            folder_id=excluded.folder_id, position=excluded.position, deleted_at=excluded.deleted_at, dirty=0
+         WHERE excluded.updated_at >= notes.updated_at",
         (&n.id, &n.content, n.updated_at, n.pinned, n.archived, &n.color, n.due_at, &n.folder_id, n.position, n.deleted_at),
     )?;
     Ok(())
@@ -406,9 +415,34 @@ mod tests {
         let mut s = mem();
         s.sync_enabled = true;
         s.save_note(&Note { id: "n1".into(), content: "x".into(), updated_at: 1, ..Default::default() }).unwrap();
-        assert_eq!(s.load_dirty_notes().unwrap().len(), 1);
-        s.clear_note_dirty(&["n1".into()]).unwrap();
+        let dirty = s.load_dirty_notes().unwrap();
+        assert_eq!(dirty.len(), 1);
+        s.clear_note_dirty(&[("n1".into(), dirty[0].updated_at)]).unwrap();
         assert!(s.load_dirty_notes().unwrap().is_empty());
+    }
+
+    #[test]
+    fn concurrent_edit_during_sync_is_not_dropped() {
+        // Reproduces the edit-during-network-window race: a row is snapshotted
+        // for push, then re-edited before the dirty-clear / pull-apply land.
+        let mut s = mem();
+        s.sync_enabled = true;
+        s.save_note(&Note { id: "n1".into(), content: "A".into(), updated_at: 1, ..Default::default() }).unwrap();
+        let pushed = s.load_dirty_notes().unwrap()[0].clone(); // snapshot (updated_at = T1)
+
+        // The user edits during the network window: content "B", updated_at bumps to T2 > T1.
+        s.set_content_silent("n1", "B").unwrap();
+        s.conn.execute("UPDATE notes SET updated_at = ?2, dirty = 1 WHERE id = ?1", ("n1", pushed.updated_at + 5)).unwrap();
+
+        // Post-sync clear uses the STALE snapshot — must NOT clear the re-edited row.
+        s.clear_note_dirty(&[("n1".into(), pushed.updated_at)]).unwrap();
+        assert_eq!(s.load_dirty_notes().unwrap().len(), 1, "re-edited row stays queued");
+
+        // Pull applies the OLDER server row (content "A", updated_at T1) — LWW must keep "B".
+        upsert_note_from_server_conn(&s.conn, &Note { id: "n1".into(), content: "A".into(), updated_at: pushed.updated_at, ..Default::default() }).unwrap();
+        let row = &s.load_all_notes().unwrap()[0];
+        assert_eq!(row.content, "B", "local edit survives a stale server pull");
+        assert!(row.dirty, "and stays dirty to push next cycle");
     }
 
     #[test]
@@ -416,7 +450,9 @@ mod tests {
         let mut s = mem();
         s.sync_enabled = true;
         s.save_note(&Note { id: "n1".into(), content: "local".into(), updated_at: 1, ..Default::default() }).unwrap();
-        upsert_note_from_server_conn(&s.conn, &Note { id: "n1".into(), content: "server".into(), updated_at: 99, ..Default::default() }).unwrap();
+        let local_ts = s.load_dirty_notes().unwrap()[0].updated_at;
+        // Server version is newer → wins under LWW, and the row becomes clean.
+        upsert_note_from_server_conn(&s.conn, &Note { id: "n1".into(), content: "server".into(), updated_at: local_ts + 1000, ..Default::default() }).unwrap();
         let all = s.load_all_notes().unwrap();
         assert_eq!(all[0].content, "server");
         assert!(!all[0].dirty);

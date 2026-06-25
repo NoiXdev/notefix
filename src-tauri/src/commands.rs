@@ -839,8 +839,10 @@ pub async fn run_sync_cycle(app: &AppHandle) -> Result<(), String> {
         let since = crate::migrate::get_meta_i64(&s.conn, "sync_cursor", 0);
         let folders: Vec<_> = df.iter().map(crate::sync::folder_to_wire).collect();
         let notes: Vec<_> = dn.iter().map(crate::sync::note_to_wire).collect();
-        let note_ids: Vec<String> = dn.iter().map(|n| n.id.clone()).collect();
-        let folder_ids: Vec<String> = df.iter().map(|f| f.id.clone()).collect();
+        // Snapshot (id, updated_at) so the post-sync dirty-clear skips any row
+        // re-edited during the network window (its updated_at will have changed).
+        let note_ids: Vec<(String, i64)> = dn.iter().map(|n| (n.id.clone(), n.updated_at)).collect();
+        let folder_ids: Vec<(String, i64)> = df.iter().map(|f| (f.id.clone(), f.updated_at)).collect();
         (folders, notes, note_ids, folder_ids, since)
     };
 

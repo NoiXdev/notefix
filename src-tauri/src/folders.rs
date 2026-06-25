@@ -184,8 +184,10 @@ pub fn load_dirty_folders(conn: &Connection) -> rusqlite::Result<Vec<Folder>> {
     rows.collect()
 }
 
-pub fn clear_folder_dirty(conn: &Connection, ids: &[String]) -> rusqlite::Result<()> {
-    for id in ids { conn.execute("UPDATE folders SET dirty = 0 WHERE id = ?1", [id])?; }
+/// Clear dirty only for rows unchanged since they were snapshotted (`updated_at`
+/// still matches), so an edit during the sync window stays queued.
+pub fn clear_folder_dirty(conn: &Connection, rows: &[(String, i64)]) -> rusqlite::Result<()> {
+    for (id, updated_at) in rows { conn.execute("UPDATE folders SET dirty = 0 WHERE id = ?1 AND updated_at = ?2", (id, updated_at))?; }
     Ok(())
 }
 
@@ -196,7 +198,8 @@ pub fn upsert_folder_from_server(conn: &Connection, f: &Folder) -> rusqlite::Res
          ON CONFLICT(id) DO UPDATE SET
             name=excluded.name, parent_id=excluded.parent_id, position=excluded.position,
             icon=excluded.icon, color=excluded.color, sort=excluded.sort,
-            updated_at=excluded.updated_at, deleted_at=excluded.deleted_at, dirty=0",
+            updated_at=excluded.updated_at, deleted_at=excluded.deleted_at, dirty=0
+         WHERE excluded.updated_at >= folders.updated_at",
         (&f.id, &f.name, &f.parent_id, f.position, &f.icon, &f.color, &f.sort, f.updated_at, f.deleted_at),
     )?;
     Ok(())
@@ -314,8 +317,9 @@ mod tests {
         crate::migrate::run_migrations(&s.conn).unwrap();
         create_folder(&s.conn, "f1", "Work", None).unwrap();
         touch_folder(&s.conn, "f1").unwrap();
-        assert_eq!(load_dirty_folders(&s.conn).unwrap().len(), 1);
-        clear_folder_dirty(&s.conn, &["f1".into()]).unwrap();
+        let dirty = load_dirty_folders(&s.conn).unwrap();
+        assert_eq!(dirty.len(), 1);
+        clear_folder_dirty(&s.conn, &[("f1".into(), dirty[0].updated_at)]).unwrap();
         assert!(load_dirty_folders(&s.conn).unwrap().is_empty());
     }
 }
