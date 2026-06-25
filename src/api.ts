@@ -124,6 +124,14 @@ export const api = {
     };
   },
 
+  /** Subscribe to `notefix://` auth-callback deep links. Returns an unsubscribe fn. */
+  onAuthCallback(callback: (url: string) => void): () => void {
+    const unlisten = listen<string>("auth-callback", (e) => callback(e.payload));
+    return () => {
+      void unlisten.then((un) => un());
+    };
+  },
+
   /** Subscribe to tray-menu actions. Returns an unsubscribe fn. */
   onTrayEvent(handlers: {
     newNote: () => void;

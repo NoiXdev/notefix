@@ -25,9 +25,10 @@ serde_json = "1"
 rusqlite = { version = "0.40.1", features = ["bundled"] }
 dirs = "6.0.0"
 tauri-plugin-autostart = "2.5.1"
-tauri-plugin-single-instance = "2.4.2"
+tauri-plugin-single-instance = { version = "2.4.2", features = ["deep-link"] }
 tauri-plugin-dialog = "2.7.1"
 tauri-plugin-process = "2.3.1"
+tauri-plugin-deep-link = "2"
 base64 = "0.22"
 regex = "1"
 uuid = { version = "1", features = ["v4"] }

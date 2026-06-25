@@ -41,10 +41,16 @@ pub fn run() {
                 None => tauri::http::Response::builder().status(404).body(Vec::new()).unwrap(),
             }
         })
-        // single-instance MUST be registered first.
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        // single-instance MUST be registered first. On Windows/Linux a
+        // `notefix://…` deep link arrives as an argv of the second instance;
+        // forward it to the running window as an `auth-callback` event.
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             tray::show_main(app);
+            if let Some(url) = args.iter().find(|a| a.starts_with("notefix://")) {
+                let _ = app.emit("auth-callback", url.clone());
+            }
         }))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -53,6 +59,23 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
+            // Deep-link auth bridge: when the OS hands the running app a
+            // `notefix://…` URL (browser sign-in redirect), forward it to the
+            // frontend as an `auth-callback` event. On Linux/Windows dev builds
+            // the scheme also has to be registered at runtime.
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                #[cfg(any(target_os = "linux", windows))]
+                let _ = app.deep_link().register_all();
+                let handle = app.handle().clone();
+                app.deep_link().on_open_url(move |event| {
+                    for url in event.urls() {
+                        tray::show_main(&handle);
+                        let _ = handle.emit("auth-callback", url.to_string());
+                    }
+                });
+            }
+
             // Seed a registry from the existing single-DB path so existing
             // users keep their database, then open the active context's DB.
             let default_db = config::read_db_path(app.handle());
