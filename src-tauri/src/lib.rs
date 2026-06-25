@@ -12,6 +12,7 @@ mod revisions;
 mod settings;
 mod stats;
 mod storage;
+mod sync;
 mod syscheck;
 mod tray;
 
