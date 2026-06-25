@@ -6,6 +6,7 @@ import { api } from '../api';
 import type { ContextInfo } from '../contexts';
 import ContextMenu, { type ContextMenuItem } from './ContextMenu';
 import PromptDialog from './PromptDialog';
+import SyncStatus from './SyncStatus';
 import { startServerAuth } from '../serverAuth';
 
 export default function ContextSwitcher({ onManage }: { onManage?: () => void }) {
@@ -79,6 +80,7 @@ export default function ContextSwitcher({ onManage }: { onManage?: () => void })
         <FontAwesomeIcon icon={faChevronDown} className="text-[10px] shrink-0 text-gray-500" />
       </button>
       {error && <div className="px-2 pb-1 text-[10px] text-red-400" role="alert">{error}</div>}
+      <SyncStatus />
       {menu && <ContextMenu x={menu.x} y={menu.y} items={items} onClose={() => setMenu(null)} />}
       {adding && (
         <PromptDialog

@@ -363,6 +363,16 @@ export const de = {
     removeFile: 'Datenbankdatei mitlöschen',
     active: 'aktiv',
   },
+  sync: {
+    pickWorkspace: 'Workspace wählen',
+    loading: 'Lade…',
+    loadError: 'Workspaces konnten nicht geladen werden',
+    syncing: 'Synchronisiere…',
+    synced: 'Synchronisiert',
+    offline: 'Offline',
+    unbound: 'Kein Workspace',
+    syncNow: 'Jetzt synchronisieren',
+  },
   export: {
     title: 'Notiz exportieren',
     text: 'Text',

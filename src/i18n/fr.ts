@@ -363,6 +363,16 @@ export const fr = {
     removeFile: 'Supprimer aussi le fichier',
     active: 'actif',
   },
+  sync: {
+    pickWorkspace: 'Choisir un espace',
+    loading: 'Chargement…',
+    loadError: 'Impossible de charger les espaces',
+    syncing: 'Synchronisation…',
+    synced: 'Synchronisé',
+    offline: 'Hors ligne',
+    unbound: 'Aucun espace',
+    syncNow: 'Synchroniser',
+  },
   export: {
     title: 'Exporter la note',
     text: 'Texte',

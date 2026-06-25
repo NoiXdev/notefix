@@ -18,9 +18,11 @@ vi.mock('../api', () => ({
       ]),
       switch: vi.fn().mockResolvedValue(undefined),
       serverAuthBegin,
+      syncStatus: vi.fn().mockResolvedValue({ state: 'local', lastSyncedAt: 0, pending: 0 }),
     },
     openExternal,
     onContextChanged: () => () => {},
+    onSyncStatus: () => () => {},
   },
 }));
 

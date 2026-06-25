@@ -9,8 +9,14 @@ vi.mock('emoji-picker-react', () => ({ default: () => null, Theme: { DARK: 'dark
 // stub it so jsdom doesn't blow up on real invoke/listen calls.
 vi.mock('../api', () => ({
   api: {
-    contexts: { list: vi.fn().mockResolvedValue([]), switch: vi.fn(), add: vi.fn() },
+    contexts: {
+      list: vi.fn().mockResolvedValue([]),
+      switch: vi.fn(),
+      add: vi.fn(),
+      syncStatus: vi.fn().mockResolvedValue({ state: 'local', lastSyncedAt: 0, pending: 0 }),
+    },
     onContextChanged: () => () => {},
+    onSyncStatus: () => () => {},
   },
 }));
 

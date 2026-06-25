@@ -77,6 +77,11 @@ export const api = {
     /** Complete add-server from a notefix://auth callback URL. */
     serverAuthComplete: (url: string): Promise<import("./contexts").ContextInfo[]> =>
       invoke("server_auth_complete", { url }),
+    serverWorkspaces: (): Promise<import("./syncStatus").WorkspaceInfo[]> => invoke("server_workspaces"),
+    bindWorkspace: (id: string, workspaceId: string, label: string): Promise<import("./contexts").ContextInfo[]> =>
+      invoke("context_bind_workspace", { id, workspaceId, label }),
+    syncNow: (): Promise<void> => invoke("sync_now"),
+    syncStatus: (): Promise<import("./syncStatus").SyncStatus> => invoke("sync_status"),
   },
 
   saveImage: (noteId: string, name: string, bytes: number[]): Promise<string> => invoke("save_image", { noteId, name, bytes }),
@@ -136,6 +141,12 @@ export const api = {
     return () => {
       void unlisten.then((un) => un());
     };
+  },
+
+  /** Subscribe to background sync-status updates. Returns an unsubscribe fn. */
+  onSyncStatus(callback: (s: import("./syncStatus").SyncStatus) => void): () => void {
+    const unlisten = listen<import("./syncStatus").SyncStatus>("sync-status", (e) => callback(e.payload));
+    return () => { void unlisten.then((un) => un()); };
   },
 
   /** Subscribe to tray-menu actions. Returns an unsubscribe fn. */

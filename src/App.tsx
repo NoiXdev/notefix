@@ -14,6 +14,7 @@ import ExportDialog from './components/ExportDialog';
 import ExportFormatModal from './components/ExportFormatModal';
 import Dashboard from './components/Dashboard';
 import SystemCheckModal from './components/SystemCheckModal';
+import WorkspacePicker from './components/WorkspacePicker';
 import { runSystemChecks, type SystemCheck } from './systemChecks';
 import { exportBase64, exportBundle } from './export';
 import { exportNote, type ExportFormat } from './export/exporters';
@@ -41,6 +42,7 @@ export default function App() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [sysProblems, setSysProblems] = useState<SystemCheck[] | null>(null);
   const [settingsPage, setSettingsPage] = useState<SettingsPage | undefined>(undefined);
+  const [bindCtx, setBindCtx] = useState<string | null>(null);
   const initView = useRef(false);
   const selectNote = (id: string) => { setSelectedId(id); setView('editor'); };
 
@@ -80,6 +82,16 @@ export default function App() {
       void reloadSettings();
     });
   }, [reloadNotes, reloadFolders, reloadSettings]);
+
+  // Prompt to bind a workspace when the active context is an unbound server context.
+  useEffect(() => {
+    const check = () => void api.contexts.list().then(cs => {
+      const active = cs.find(c => c.active);
+      if (active?.kind === 'server' && !active.workspaceId) setBindCtx(active.id);
+    });
+    check(); // initial (e.g. app starts on an unbound server context)
+    return api.onContextChanged(check);
+  }, []);
 
   // Complete add-server flows centrally: the browser redirect (notefix://auth)
   // arrives as an auth-callback event regardless of which UI started the flow.
@@ -292,6 +304,7 @@ export default function App() {
           onClose={() => setSysProblems(null)}
         />
       )}
+      {bindCtx && <WorkspacePicker contextId={bindCtx} onClose={() => setBindCtx(null)} />}
     </>
   );
 }

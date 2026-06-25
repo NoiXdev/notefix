@@ -363,6 +363,16 @@ export const en = {
     removeFile: 'Also delete the database file',
     active: 'active',
   },
+  sync: {
+    pickWorkspace: 'Choose workspace',
+    loading: 'Loading…',
+    loadError: 'Could not load workspaces',
+    syncing: 'Syncing…',
+    synced: 'Synced',
+    offline: 'Offline',
+    unbound: 'No workspace',
+    syncNow: 'Sync now',
+  },
   export: {
     title: 'Export note',
     text: 'Text',
