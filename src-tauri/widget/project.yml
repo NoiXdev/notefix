@@ -1,0 +1,20 @@
+name: NotefixWidget
+options:
+  bundleIdPrefix: dev.noidee.notefix
+  deploymentTarget:
+    macOS: "14.0"
+targets:
+  NotefixWidget:
+    type: app-extension
+    platform: macOS
+    sources:
+      - NotefixWidget
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.noidee.notefix.widget
+        INFOPLIST_FILE: NotefixWidget/Info.plist
+        CODE_SIGN_ENTITLEMENTS: NotefixWidget/NotefixWidget.entitlements
+        GENERATE_INFOPLIST_FILE: NO
+        SKIP_INSTALL: YES
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        SWIFT_VERSION: "5.0"
