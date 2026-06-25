@@ -1,3 +1,4 @@
+mod aggregate;
 mod auth;
 mod commands;
 mod config;
@@ -254,6 +255,7 @@ pub fn run() {
             commands::check_paths,
             commands::mcp_apply_config,
             commands::contexts_list,
+            commands::notes_load_all,
             commands::context_add,
             commands::context_switch,
             commands::context_rename,

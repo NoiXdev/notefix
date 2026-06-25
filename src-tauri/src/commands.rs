@@ -872,3 +872,16 @@ pub async fn run_sync_cycle(app: &AppHandle) -> Result<(), String> {
         }
     }
 }
+
+#[tauri::command]
+pub fn notes_load_all(
+    reg: State<'_, Mutex<crate::profiles::Registry>>,
+) -> Result<Vec<crate::aggregate::TaggedNote>, String> {
+    let contexts: Vec<crate::aggregate::Ctx> = {
+        let r = reg.lock().map_err(|e| e.to_string())?;
+        r.contexts.iter().map(|c| crate::aggregate::Ctx {
+            id: c.id.clone(), label: c.label.clone(), kind: c.kind.clone(), path: c.path.clone(),
+        }).collect()
+    };
+    Ok(crate::aggregate::aggregate(&contexts))
+}
