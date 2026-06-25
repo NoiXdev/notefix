@@ -16,7 +16,23 @@ pub fn hello_json(ts: i64) -> String {
     format!("{{\"hello\":\"from app {ts}\"}}")
 }
 
-/// Write the snapshot into the App Group container (creating the dir).
+// Swift shim (build.rs): WidgetCenter.shared.reloadAllTimelines(), so the widget
+// re-reads the snapshot we just wrote instead of showing a stale cached timeline.
+#[cfg(target_os = "macos")]
+extern "C" {
+    fn notefix_reload_widgets();
+}
+
+/// Ask WidgetKit to reload this app's widget timelines (macOS only).
+pub fn reload_widgets() {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        notefix_reload_widgets();
+    }
+}
+
+/// Write the snapshot into the App Group container (creating the dir), then ask
+/// the widget to refresh.
 pub fn write_hello() {
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -26,6 +42,7 @@ pub fn write_hello() {
         let _ = std::fs::create_dir_all(&dir);
         let _ = std::fs::write(dir.join("widget.json"), hello_json(ts));
     }
+    reload_widgets();
 }
 
 #[cfg(test)]
