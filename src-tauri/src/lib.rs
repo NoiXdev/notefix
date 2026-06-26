@@ -30,6 +30,25 @@ fn legacy_notes_dir() -> Option<std::path::PathBuf> {
     dirs::data_dir().map(|d| d.join("dginxNotes").join("notes"))
 }
 
+/// Route a `notefix://…` URL (from the widget, a browser sign-in redirect, or a
+/// second instance's argv) to the right in-app action.
+fn dispatch_widget_url(app: &tauri::AppHandle, url: &str) {
+    match commands::parse_widget_url(url) {
+        commands::WidgetAction::NewNote => {
+            tray::show_main(app);
+            let _ = app.emit("tray://new-note", ());
+        }
+        commands::WidgetAction::OpenNote(id) => {
+            tray::show_main(app);
+            let _ = app.emit("tray://open-note", id);
+        }
+        commands::WidgetAction::Auth => {
+            tray::show_main(app);
+            let _ = app.emit("auth-callback", url.to_string());
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -52,7 +71,7 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             tray::show_main(app);
             if let Some(url) = args.iter().find(|a| a.starts_with("notefix://")) {
-                let _ = app.emit("auth-callback", url.clone());
+                dispatch_widget_url(app, url);
             }
         }))
         .plugin(tauri_plugin_deep_link::init())
@@ -75,14 +94,10 @@ pub fn run() {
                 let handle = app.handle().clone();
                 app.deep_link().on_open_url(move |event| {
                     for url in event.urls() {
-                        tray::show_main(&handle);
-                        let _ = handle.emit("auth-callback", url.to_string());
+                        dispatch_widget_url(&handle, &url.to_string());
                     }
                 });
             }
-
-            // Widget spike: publish a snapshot for the WidgetKit extension.
-            widgetshare::write_hello();
 
             // Seed a registry from the existing single-DB path so existing
             // users keep their database, then open the active context's DB.
@@ -172,6 +187,10 @@ pub fn run() {
             }
 
             tray::build_tray(app.handle())?;
+
+            // Publish the initial widget snapshot now that the store + registry
+            // are managed (the widget reads {context,count,pinned,recent}).
+            widgetshare::publish(app.handle());
 
             // Background sync: every 15s, or when an edit/manual trigger fires the
             // Notify, run one sync cycle for the active server context.

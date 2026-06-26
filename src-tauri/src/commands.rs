@@ -9,6 +9,34 @@ fn now_ms() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
 
+/// What a `notefix://…` deep link should do.
+#[derive(Debug, PartialEq)]
+pub enum WidgetAction {
+    NewNote,
+    OpenNote(String),
+    Auth,
+}
+
+/// Route a `notefix://…` deep link. Host `new` → new note; host `note` with a
+/// non-empty path segment → open that id; everything else (browser auth
+/// redirects, junk) → `Auth`, preserving the existing sign-in bridge.
+pub fn parse_widget_url(url: &str) -> WidgetAction {
+    let rest = match url.strip_prefix("notefix://") {
+        Some(r) => r,
+        None => return WidgetAction::Auth,
+    };
+    let path = rest.split(['?', '#']).next().unwrap_or("");
+    let mut parts = path.split('/').filter(|s| !s.is_empty());
+    match parts.next() {
+        Some("new") => WidgetAction::NewNote,
+        Some("note") => match parts.next() {
+            Some(id) => WidgetAction::OpenNote(id.to_string()),
+            None => WidgetAction::Auth,
+        },
+        _ => WidgetAction::Auth,
+    }
+}
+
 /// Emit `notes-changed` to every window except the one that triggered the change,
 /// mirroring the original Electron broadcast that excluded the sender.
 fn broadcast_changed(app: &AppHandle, sender_label: &str) {
@@ -934,4 +962,27 @@ pub async fn run_image_phase(app: &AppHandle, ctx: &crate::profiles::ContextEntr
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod widget_url_tests {
+    use super::{parse_widget_url, WidgetAction};
+
+    #[test]
+    fn new_note_url() {
+        assert_eq!(parse_widget_url("notefix://new"), WidgetAction::NewNote);
+        assert_eq!(parse_widget_url("notefix://new/"), WidgetAction::NewNote);
+    }
+
+    #[test]
+    fn open_note_url() {
+        assert_eq!(parse_widget_url("notefix://note/abc-123"), WidgetAction::OpenNote("abc-123".into()));
+    }
+
+    #[test]
+    fn auth_and_junk_fall_back_to_auth() {
+        assert_eq!(parse_widget_url("notefix://auth?code=x"), WidgetAction::Auth);
+        assert_eq!(parse_widget_url("notefix://note"), WidgetAction::Auth); // no id
+        assert_eq!(parse_widget_url("garbage"), WidgetAction::Auth);
+    }
 }

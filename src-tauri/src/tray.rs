@@ -20,7 +20,7 @@ pub fn show_main(app: &AppHandle) {
 }
 
 /// Plain-text, single-line, length-capped label from a note's HTML content.
-fn note_title(html: &str) -> String {
+pub(crate) fn note_title(html: &str) -> String {
     let mut text = String::new();
     let mut in_tag = false;
     for c in html.chars() {
@@ -150,6 +150,10 @@ pub fn rebuild_menu(app: &AppHandle) {
             let _ = tray.set_menu(Some(menu));
         }
     }
+    // Notes/context changed → refresh the widget snapshot too. This is the
+    // single republish hook: rebuild_menu is called after every note mutation
+    // and from broadcast_context_changed (context switch / sync apply).
+    crate::widgetshare::publish(app);
 }
 
 #[cfg(test)]
