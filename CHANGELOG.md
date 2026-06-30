@@ -1,3 +1,9 @@
+## [0.1.1](https://github.com/NoiXdev/notefix/compare/v0.1.0...v0.1.1) (2026-06-30)
+
+### CI/CD
+
+* build, embed & notarize the macOS widget in the release ([021521a](https://github.com/NoiXdev/notefix/commit/021521a776a9732c3e9dc6b1bb9f6dd95706ef86))
+
 ## [0.1.0](https://github.com/NoiXdev/notefix/compare/50e04359e47ee063f34f4c86f0fea528bdee1c28...v0.1.0) (2026-06-30)
 
 ### Features
