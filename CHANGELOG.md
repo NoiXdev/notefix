@@ -173,6 +173,7 @@
 
 ### Bug Fixes
 
+* **build:** compile the macOS widget shim per target arch ([a820c81](https://github.com/NoiXdev/notefix/commit/a820c813e90056837d498657cf0ab09c9629fa82))
 * close note window via Tauri API instead of no-op DOM window.close() ([d185e91](https://github.com/NoiXdev/notefix/commit/d185e91a4c4e3618a51fde8ccab20c2a74c14d62))
 * context menu no longer closes itself on the opening right-click ([d81bda9](https://github.com/NoiXdev/notefix/commit/d81bda9889a6fafb0fc1fb1b3165d5239fe74c3b))
 * context menus close on new right-click; submenus open on click ([864cadf](https://github.com/NoiXdev/notefix/commit/864cadf600e287a1674373b0ba8b29db35eebcfb))
