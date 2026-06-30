@@ -17,7 +17,12 @@ pub fn strip_html(html: &str) -> String {
     let mut in_tag = false;
     for c in html.chars() {
         match c {
-            '<' => { in_tag = true; if !out.is_empty() && !out.ends_with(' ') { out.push(' '); } }
+            '<' => {
+                in_tag = true;
+                if !out.is_empty() && !out.ends_with(' ') {
+                    out.push(' ');
+                }
+            }
             '>' => in_tag = false,
             _ if !in_tag => out.push(c),
             _ => {}
@@ -38,7 +43,12 @@ pub fn compute(notes: &[Note]) -> Stats {
             archived += 1;
         }
     }
-    Stats { notes: notes.len() as i64, archived, characters, words }
+    Stats {
+        notes: notes.len() as i64,
+        archived,
+        characters,
+        words,
+    }
 }
 
 #[cfg(test)]
@@ -47,7 +57,19 @@ mod tests {
     use crate::storage::Note;
 
     fn note(content: &str, archived: bool) -> Note {
-        Note { id: "x".into(), content: content.into(), updated_at: 1, pinned: false, archived, color: String::new(), due_at: None, folder_id: None, position: 0, deleted_at: None, dirty: false }
+        Note {
+            id: "x".into(),
+            content: content.into(),
+            updated_at: 1,
+            pinned: false,
+            archived,
+            color: String::new(),
+            due_at: None,
+            folder_id: None,
+            position: 0,
+            deleted_at: None,
+            dirty: false,
+        }
     }
 
     #[test]
@@ -62,11 +84,22 @@ mod tests {
         assert_eq!(s.notes, 2);
         assert_eq!(s.archived, 1);
         assert_eq!(s.words, 3); // "eins zwei" + "drei"
-        assert_eq!(s.characters, "eins zwei".chars().count() as i64 + "drei".chars().count() as i64);
+        assert_eq!(
+            s.characters,
+            "eins zwei".chars().count() as i64 + "drei".chars().count() as i64
+        );
     }
 
     #[test]
     fn compute_empty_is_zero() {
-        assert_eq!(compute(&[]), Stats { notes: 0, archived: 0, characters: 0, words: 0 });
+        assert_eq!(
+            compute(&[]),
+            Stats {
+                notes: 0,
+                archived: 0,
+                characters: 0,
+                words: 0
+            }
+        );
     }
 }

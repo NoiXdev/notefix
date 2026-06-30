@@ -19,34 +19,57 @@ fn meta_content(html: &str, key: &str) -> Option<String> {
         format!(r#"<meta[^>]+content=["']([^"']*)["'][^>]+(?:property|name)=["']{k}["']"#),
     ];
     for p in pats {
-        if let Some(c) = regex::Regex::new(&p).ok().and_then(|re| re.captures(html)).and_then(|c| c.get(1)) {
+        if let Some(c) = regex::Regex::new(&p)
+            .ok()
+            .and_then(|re| re.captures(html))
+            .and_then(|c| c.get(1))
+        {
             let v = c.as_str().trim();
-            if !v.is_empty() { return Some(html_unescape(v)); }
+            if !v.is_empty() {
+                return Some(html_unescape(v));
+            }
         }
     }
     None
 }
 
 fn title_tag(html: &str) -> Option<String> {
-    regex::Regex::new(r"(?is)<title[^>]*>(.*?)</title>").ok()
-        .and_then(|re| re.captures(html)).and_then(|c| c.get(1))
+    regex::Regex::new(r"(?is)<title[^>]*>(.*?)</title>")
+        .ok()
+        .and_then(|re| re.captures(html))
+        .and_then(|c| c.get(1))
         .map(|m| html_unescape(m.as_str().trim()))
         .filter(|s| !s.is_empty())
 }
 
 fn host(url: &str) -> String {
-    url.split("://").nth(1).unwrap_or(url).split('/').next().unwrap_or("").trim_start_matches("www.").to_string()
+    url.split("://")
+        .nth(1)
+        .unwrap_or(url)
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .trim_start_matches("www.")
+        .to_string()
 }
 
 fn html_unescape(s: &str) -> String {
-    s.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&#39;", "'")
+    s.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
 }
 
 pub fn parse_og(html: &str, url: &str) -> LinkMeta {
     LinkMeta {
         url: url.to_string(),
-        title: meta_content(html, "og:title").or_else(|| title_tag(html)).unwrap_or_default(),
-        description: meta_content(html, "og:description").or_else(|| meta_content(html, "description")).unwrap_or_default(),
+        title: meta_content(html, "og:title")
+            .or_else(|| title_tag(html))
+            .unwrap_or_default(),
+        description: meta_content(html, "og:description")
+            .or_else(|| meta_content(html, "description"))
+            .unwrap_or_default(),
         image: meta_content(html, "og:image").unwrap_or_default(),
         site: meta_content(html, "og:site_name").unwrap_or_else(|| host(url)),
     }

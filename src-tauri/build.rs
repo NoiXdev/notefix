@@ -19,7 +19,11 @@ fn build_widget_reload() {
     let lib = format!("{out}/libnotefixreload.a");
 
     let sdk = String::from_utf8(
-        Command::new("xcrun").args(["--show-sdk-path"]).output().expect("xcrun").stdout,
+        Command::new("xcrun")
+            .args(["--show-sdk-path"])
+            .output()
+            .expect("xcrun")
+            .stdout,
     )
     .unwrap()
     .trim()
@@ -35,7 +39,11 @@ fn build_widget_reload() {
     );
     let _ = std::fs::remove_file(&lib);
     assert!(
-        Command::new("ar").args(["crus", &lib, &obj]).status().expect("ar").success(),
+        Command::new("ar")
+            .args(["crus", &lib, &obj])
+            .status()
+            .expect("ar")
+            .success(),
         "ar failed to archive the widget-reload shim"
     );
 

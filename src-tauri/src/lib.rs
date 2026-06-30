@@ -1,11 +1,11 @@
 mod aggregate;
-mod imagesync;
 mod auth;
 mod commands;
 mod config;
 mod export;
 mod folders;
 mod images;
+mod imagesync;
 mod linkmeta;
 mod mcp;
 mod migrate;
@@ -62,7 +62,10 @@ pub fn run() {
                     .header("Content-Type", images::mime_for(&name))
                     .body(bytes)
                     .unwrap(),
-                None => tauri::http::Response::builder().status(404).body(Vec::new()).unwrap(),
+                None => tauri::http::Response::builder()
+                    .status(404)
+                    .body(Vec::new())
+                    .unwrap(),
             }
         })
         // single-instance MUST be registered first. On Windows/Linux a
@@ -94,7 +97,7 @@ pub fn run() {
                 let handle = app.handle().clone();
                 app.deep_link().on_open_url(move |event| {
                     for url in event.urls() {
-                        dispatch_widget_url(&handle, &url.to_string());
+                        dispatch_widget_url(&handle, url.as_ref());
                     }
                 });
             }
@@ -116,9 +119,19 @@ pub fn run() {
                         let _ = std::fs::create_dir_all(&new_dir);
                         let new_db = new_dir.join("notefix.db");
                         for ext in ["", "-wal", "-shm"] {
-                            let from = std::path::PathBuf::from(format!("{}{}", old.to_string_lossy(), ext));
-                            let to = std::path::PathBuf::from(format!("{}{}", new_db.to_string_lossy(), ext));
-                            if from.exists() { let _ = std::fs::rename(&from, &to); }
+                            let from = std::path::PathBuf::from(format!(
+                                "{}{}",
+                                old.to_string_lossy(),
+                                ext
+                            ));
+                            let to = std::path::PathBuf::from(format!(
+                                "{}{}",
+                                new_db.to_string_lossy(),
+                                ext
+                            ));
+                            if from.exists() {
+                                let _ = std::fs::rename(&from, &to);
+                            }
                         }
                         c.path = new_db.to_string_lossy().into_owned();
                     }
@@ -140,7 +153,10 @@ pub fn run() {
             migrate::run_migrations(&store.conn)?;
             store.sync_enabled = reg.active().map(|c| c.kind == "server").unwrap_or(false);
             {
-                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as i64)
+                    .unwrap_or(0);
                 let days = settings::get_int(&store.conn, "trashRetentionDays", 30);
                 let _ = store.purge_trashed(Some(now - days * 86_400_000));
             }
@@ -159,7 +175,8 @@ pub fn run() {
             let mcp_bind = settings::get_string(&store.conn, "mcpBind", "internal");
             let mcp_port = settings::get_int(&store.conn, "mcpPort", 4357) as u16;
             let mcp_token = settings::get_string(&store.conn, "mcpToken", "");
-            let mcp_auth_required = settings::get_bool_default(&store.conn, "mcpAuthRequired", true);
+            let mcp_auth_required =
+                settings::get_bool_default(&store.conn, "mcpAuthRequired", true);
             let mcp_allow_write = settings::get_bool(&store.conn, "mcpAllowWrite");
 
             app.manage(Mutex::new(store));
@@ -229,9 +246,17 @@ pub fn run() {
                         settings::get_string(&store.conn, "closeAction", "ask")
                     };
                     match action.as_str() {
-                        "quit" => { window.app_handle().exit(0); }
-                        "minimize" => { api.prevent_close(); let _ = window.hide(); }
-                        _ => { api.prevent_close(); let _ = window.emit("close-requested", ()); }
+                        "quit" => {
+                            window.app_handle().exit(0);
+                        }
+                        "minimize" => {
+                            api.prevent_close();
+                            let _ = window.hide();
+                        }
+                        _ => {
+                            api.prevent_close();
+                            let _ = window.emit("close-requested", ());
+                        }
                     }
                 }
             }

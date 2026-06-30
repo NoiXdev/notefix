@@ -49,7 +49,13 @@ pub(crate) fn note_title(html: &str) -> String {
 
 fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let new = MenuItem::with_id(app, "tray_new", "Neue Notiz", true, None::<&str>)?;
-    let open_last = MenuItem::with_id(app, "tray_open_last", "Letzte Notiz öffnen", true, None::<&str>)?;
+    let open_last = MenuItem::with_id(
+        app,
+        "tray_open_last",
+        "Letzte Notiz öffnen",
+        true,
+        None::<&str>,
+    )?;
 
     let recent = Submenu::with_id(app, "tray_recent", "Zuletzt geöffnet", true)?;
     let notes = app
@@ -59,16 +65,34 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .and_then(|s| s.recent_notes(5).ok())
         .unwrap_or_default();
     if notes.is_empty() {
-        let empty = MenuItem::with_id(app, "tray_recent_empty", "(keine Notizen)", false, None::<&str>)?;
+        let empty = MenuItem::with_id(
+            app,
+            "tray_recent_empty",
+            "(keine Notizen)",
+            false,
+            None::<&str>,
+        )?;
         recent.append(&empty)?;
     } else {
         for n in notes {
-            let item = MenuItem::with_id(app, format!("tray_open:{}", n.id), note_title(&n.content), true, None::<&str>)?;
+            let item = MenuItem::with_id(
+                app,
+                format!("tray_open:{}", n.id),
+                note_title(&n.content),
+                true,
+                None::<&str>,
+            )?;
             recent.append(&item)?;
         }
     }
 
-    let toggle = MenuItem::with_id(app, "tray_toggle", "Fenster zeigen/verstecken", true, None::<&str>)?;
+    let toggle = MenuItem::with_id(
+        app,
+        "tray_toggle",
+        "Fenster zeigen/verstecken",
+        true,
+        None::<&str>,
+    )?;
     let settings = MenuItem::with_id(app, "tray_settings", "Einstellungen", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "tray_quit", "Beenden", true, None::<&str>)?;
 
@@ -134,7 +158,11 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
 pub fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let menu = build_menu(app)?;
     TrayIconBuilder::with_id(TRAY_ID)
-        .icon(app.default_window_icon().cloned().expect("app has a default icon"))
+        .icon(
+            app.default_window_icon()
+                .cloned()
+                .expect("app has a default icon"),
+        )
         .icon_as_template(false)
         .tooltip("Notefix")
         .menu(&menu)

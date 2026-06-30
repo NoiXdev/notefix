@@ -29,25 +29,47 @@ pub enum DeleteMode {
 
 impl DeleteMode {
     pub fn from_str(s: &str) -> Self {
-        if s == "recursive" { DeleteMode::Recursive } else { DeleteMode::Reparent }
+        if s == "recursive" {
+            DeleteMode::Recursive
+        } else {
+            DeleteMode::Reparent
+        }
     }
 }
 
 fn now_ms() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 pub fn load_folders(conn: &Connection) -> rusqlite::Result<Vec<Folder>> {
     let mut stmt = conn.prepare("SELECT id, name, parent_id, position, icon, color, sort, updated_at, deleted_at, dirty FROM folders WHERE deleted_at IS NULL ORDER BY position, name")?;
-    let rows = stmt.query_map([], |r| Ok(Folder {
-        id: r.get(0)?, name: r.get(1)?, parent_id: r.get(2)?, position: r.get(3)?, icon: r.get(4)?, color: r.get(5)?, sort: r.get(6)?,
-        updated_at: r.get(7)?, deleted_at: r.get(8)?, dirty: r.get(9)?,
-    }))?;
+    let rows = stmt.query_map([], |r| {
+        Ok(Folder {
+            id: r.get(0)?,
+            name: r.get(1)?,
+            parent_id: r.get(2)?,
+            position: r.get(3)?,
+            icon: r.get(4)?,
+            color: r.get(5)?,
+            sort: r.get(6)?,
+            updated_at: r.get(7)?,
+            deleted_at: r.get(8)?,
+            dirty: r.get(9)?,
+        })
+    })?;
     rows.collect()
 }
 
-pub fn create_folder(conn: &Connection, id: &str, name: &str, parent_id: Option<&str>) -> rusqlite::Result<()> {
+pub fn create_folder(
+    conn: &Connection,
+    id: &str,
+    name: &str,
+    parent_id: Option<&str>,
+) -> rusqlite::Result<()> {
     let position: i64 = conn.query_row(
         "SELECT COALESCE(MAX(position), 0) + 1 FROM folders WHERE parent_id IS ?1",
         [parent_id],
@@ -86,7 +108,9 @@ pub fn descendants(conn: &Connection, id: &str) -> rusqlite::Result<Vec<String>>
     let mut queue = vec![id.to_string()];
     while let Some(cur) = queue.pop() {
         let mut stmt = conn.prepare("SELECT id FROM folders WHERE parent_id = ?1")?;
-        let kids: Vec<String> = stmt.query_map([&cur], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+        let kids: Vec<String> = stmt
+            .query_map([&cur], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
         for k in kids {
             out.push(k.clone());
             queue.push(k);
@@ -96,13 +120,20 @@ pub fn descendants(conn: &Connection, id: &str) -> rusqlite::Result<Vec<String>>
 }
 
 /// Re-parent a folder. Rejects moving a folder into itself or a descendant.
-pub fn move_folder(conn: &Connection, id: &str, new_parent_id: Option<&str>) -> rusqlite::Result<()> {
+pub fn move_folder(
+    conn: &Connection,
+    id: &str,
+    new_parent_id: Option<&str>,
+) -> rusqlite::Result<()> {
     if let Some(p) = new_parent_id {
         if p == id || descendants(conn, id)?.iter().any(|d| d == p) {
             return Err(rusqlite::Error::InvalidQuery);
         }
     }
-    conn.execute("UPDATE folders SET parent_id = ?2 WHERE id = ?1", (id, new_parent_id))?;
+    conn.execute(
+        "UPDATE folders SET parent_id = ?2 WHERE id = ?1",
+        (id, new_parent_id),
+    )?;
     Ok(())
 }
 
@@ -110,11 +141,19 @@ pub fn delete_folder(conn: &Connection, id: &str, mode: DeleteMode) -> rusqlite:
     match mode {
         DeleteMode::Reparent => {
             let parent: Option<String> = conn
-                .query_row("SELECT parent_id FROM folders WHERE id = ?1", [id], |r| r.get(0))
+                .query_row("SELECT parent_id FROM folders WHERE id = ?1", [id], |r| {
+                    r.get(0)
+                })
                 .optional()?
                 .flatten();
-            conn.execute("UPDATE folders SET parent_id = ?2 WHERE parent_id = ?1", (id, parent.as_deref()))?;
-            conn.execute("UPDATE notes SET folder_id = ?2 WHERE folder_id = ?1", (id, parent.as_deref()))?;
+            conn.execute(
+                "UPDATE folders SET parent_id = ?2 WHERE parent_id = ?1",
+                (id, parent.as_deref()),
+            )?;
+            conn.execute(
+                "UPDATE notes SET folder_id = ?2 WHERE folder_id = ?1",
+                (id, parent.as_deref()),
+            )?;
             conn.execute("DELETE FROM folders WHERE id = ?1", [id])?;
         }
         DeleteMode::Recursive => {
@@ -136,19 +175,30 @@ pub fn sync_delete_folder(conn: &Connection, id: &str, mode: DeleteMode) -> rusq
     match mode {
         DeleteMode::Reparent => {
             let parent: Option<String> = conn
-                .query_row("SELECT parent_id FROM folders WHERE id = ?1", [id], |r| r.get(0))
+                .query_row("SELECT parent_id FROM folders WHERE id = ?1", [id], |r| {
+                    r.get(0)
+                })
                 .optional()?
                 .flatten();
             conn.execute("UPDATE folders SET parent_id = ?2, updated_at = ?3, dirty = 1 WHERE parent_id = ?1", (id, parent.as_deref(), now))?;
-            conn.execute("UPDATE notes SET folder_id = ?2, updated_at = ?3, dirty = 1 WHERE folder_id = ?1", (id, parent.as_deref(), now))?;
-            conn.execute("UPDATE folders SET deleted_at = ?2, updated_at = ?2, dirty = 1 WHERE id = ?1", (id, now))?;
+            conn.execute(
+                "UPDATE notes SET folder_id = ?2, updated_at = ?3, dirty = 1 WHERE folder_id = ?1",
+                (id, parent.as_deref(), now),
+            )?;
+            conn.execute(
+                "UPDATE folders SET deleted_at = ?2, updated_at = ?2, dirty = 1 WHERE id = ?1",
+                (id, now),
+            )?;
         }
         DeleteMode::Recursive => {
             let mut ids = descendants(conn, id)?;
             ids.push(id.to_string());
             for fid in &ids {
                 conn.execute("UPDATE notes SET deleted_at = ?2, updated_at = ?2, dirty = 1 WHERE folder_id = ?1 AND deleted_at IS NULL", (fid, now))?;
-                conn.execute("UPDATE folders SET deleted_at = ?2, updated_at = ?2, dirty = 1 WHERE id = ?1", (fid, now))?;
+                conn.execute(
+                    "UPDATE folders SET deleted_at = ?2, updated_at = ?2, dirty = 1 WHERE id = ?1",
+                    (fid, now),
+                )?;
             }
         }
     }
@@ -156,7 +206,11 @@ pub fn sync_delete_folder(conn: &Connection, id: &str, mode: DeleteMode) -> rusq
 }
 
 /// Set parent + position for each id in order. Rejects moving a folder under its own descendant.
-pub fn reorder_folders(conn: &Connection, parent_id: Option<&str>, ids: &[String]) -> rusqlite::Result<()> {
+pub fn reorder_folders(
+    conn: &Connection,
+    parent_id: Option<&str>,
+    ids: &[String],
+) -> rusqlite::Result<()> {
     if let Some(p) = parent_id {
         for id in ids {
             if p == id || descendants(conn, id)?.iter().any(|d| d == p) {
@@ -165,29 +219,50 @@ pub fn reorder_folders(conn: &Connection, parent_id: Option<&str>, ids: &[String
         }
     }
     for (i, id) in ids.iter().enumerate() {
-        conn.execute("UPDATE folders SET parent_id = ?2, position = ?3 WHERE id = ?1", (id, parent_id, i as i64))?;
+        conn.execute(
+            "UPDATE folders SET parent_id = ?2, position = ?3 WHERE id = ?1",
+            (id, parent_id, i as i64),
+        )?;
     }
     Ok(())
 }
 
 pub fn touch_folder(conn: &Connection, id: &str) -> rusqlite::Result<()> {
-    conn.execute("UPDATE folders SET updated_at = ?2, dirty = 1 WHERE id = ?1", (id, now_ms()))?;
+    conn.execute(
+        "UPDATE folders SET updated_at = ?2, dirty = 1 WHERE id = ?1",
+        (id, now_ms()),
+    )?;
     Ok(())
 }
 
 pub fn load_dirty_folders(conn: &Connection) -> rusqlite::Result<Vec<Folder>> {
     let mut stmt = conn.prepare("SELECT id, name, parent_id, position, icon, color, sort, updated_at, deleted_at, dirty FROM folders WHERE dirty = 1")?;
-    let rows = stmt.query_map([], |r| Ok(Folder {
-        id: r.get(0)?, name: r.get(1)?, parent_id: r.get(2)?, position: r.get(3)?, icon: r.get(4)?, color: r.get(5)?, sort: r.get(6)?,
-        updated_at: r.get(7)?, deleted_at: r.get(8)?, dirty: r.get(9)?,
-    }))?;
+    let rows = stmt.query_map([], |r| {
+        Ok(Folder {
+            id: r.get(0)?,
+            name: r.get(1)?,
+            parent_id: r.get(2)?,
+            position: r.get(3)?,
+            icon: r.get(4)?,
+            color: r.get(5)?,
+            sort: r.get(6)?,
+            updated_at: r.get(7)?,
+            deleted_at: r.get(8)?,
+            dirty: r.get(9)?,
+        })
+    })?;
     rows.collect()
 }
 
 /// Clear dirty only for rows unchanged since they were snapshotted (`updated_at`
 /// still matches), so an edit during the sync window stays queued.
 pub fn clear_folder_dirty(conn: &Connection, rows: &[(String, i64)]) -> rusqlite::Result<()> {
-    for (id, updated_at) in rows { conn.execute("UPDATE folders SET dirty = 0 WHERE id = ?1 AND updated_at = ?2", (id, updated_at))?; }
+    for (id, updated_at) in rows {
+        conn.execute(
+            "UPDATE folders SET dirty = 0 WHERE id = ?1 AND updated_at = ?2",
+            (id, updated_at),
+        )?;
+    }
     Ok(())
 }
 
@@ -208,7 +283,10 @@ pub fn upsert_folder_from_server(conn: &Connection, f: &Folder) -> rusqlite::Res
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{migrate, storage::{Note, Store}};
+    use crate::{
+        migrate,
+        storage::{Note, Store},
+    };
 
     fn store() -> Store {
         let s = Store::open_in_memory().unwrap();
@@ -217,7 +295,19 @@ mod tests {
     }
 
     fn note_in(id: &str, folder: &str) -> Note {
-        Note { id: id.into(), content: "<p>x</p>".into(), updated_at: 1, pinned: false, archived: false, color: String::new(), due_at: None, folder_id: Some(folder.into()), position: 0, deleted_at: None, dirty: false }
+        Note {
+            id: id.into(),
+            content: "<p>x</p>".into(),
+            updated_at: 1,
+            pinned: false,
+            archived: false,
+            color: String::new(),
+            due_at: None,
+            folder_id: Some(folder.into()),
+            position: 0,
+            deleted_at: None,
+            dirty: false,
+        }
     }
 
     #[test]
@@ -225,7 +315,11 @@ mod tests {
         let s = store();
         create_folder(&s.conn, "a", "A", None).unwrap();
         create_folder(&s.conn, "b", "B", None).unwrap();
-        let ids: Vec<String> = load_folders(&s.conn).unwrap().into_iter().map(|f| f.id).collect();
+        let ids: Vec<String> = load_folders(&s.conn)
+            .unwrap()
+            .into_iter()
+            .map(|f| f.id)
+            .collect();
         assert_eq!(ids, vec!["a", "b"]);
     }
 
@@ -271,7 +365,15 @@ mod tests {
         // g now under p, n now under p, c gone
         let folders = load_folders(&s.conn).unwrap();
         assert!(folders.iter().all(|f| f.id != "c"));
-        assert_eq!(folders.iter().find(|f| f.id == "g").unwrap().parent_id.as_deref(), Some("p"));
+        assert_eq!(
+            folders
+                .iter()
+                .find(|f| f.id == "g")
+                .unwrap()
+                .parent_id
+                .as_deref(),
+            Some("p")
+        );
         assert_eq!(s.load_notes().unwrap()[0].folder_id.as_deref(), Some("p"));
     }
 

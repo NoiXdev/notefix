@@ -11,18 +11,44 @@ pub trait NoteAccess: Send + Sync {
 }
 
 pub fn html_to_text(html: &str) -> String {
-    let nl = regex::Regex::new(r"(?is)</(p|div|h[1-6]|li)>|<br\s*/?>").unwrap().replace_all(html, "\n");
-    let stripped = regex::Regex::new(r"(?is)<[^>]+>").unwrap().replace_all(&nl, "");
-    stripped.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&#39;", "'").trim().to_string()
+    let nl = regex::Regex::new(r"(?is)</(p|div|h[1-6]|li)>|<br\s*/?>")
+        .unwrap()
+        .replace_all(html, "\n");
+    let stripped = regex::Regex::new(r"(?is)<[^>]+>")
+        .unwrap()
+        .replace_all(&nl, "");
+    stripped
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .trim()
+        .to_string()
 }
 
 pub fn text_to_html(text: &str) -> String {
-    if text.is_empty() { return "<p></p>".to_string(); }
-    text.lines().map(|l| format!("<p>{}</p>", l.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;"))).collect()
+    if text.is_empty() {
+        return "<p></p>".to_string();
+    }
+    text.lines()
+        .map(|l| {
+            format!(
+                "<p>{}</p>",
+                l.replace('&', "&amp;")
+                    .replace('<', "&lt;")
+                    .replace('>', "&gt;")
+            )
+        })
+        .collect()
 }
 
-fn ok(id: &Value, result: Value) -> Value { json!({ "jsonrpc": "2.0", "id": id, "result": result }) }
-fn rpc_err(id: &Value, code: i64, msg: &str) -> Value { json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": msg } }) }
+fn ok(id: &Value, result: Value) -> Value {
+    json!({ "jsonrpc": "2.0", "id": id, "result": result })
+}
+fn rpc_err(id: &Value, code: i64, msg: &str) -> Value {
+    json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": msg } })
+}
 
 fn tool_defs() -> Value {
     json!([
@@ -34,36 +60,90 @@ fn tool_defs() -> Value {
     ])
 }
 
-fn call_tool(name: &str, args: &Value, store: &dyn NoteAccess, allow_write: bool) -> Result<String, String> {
-    let s = |k: &str| args.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+fn call_tool(
+    name: &str,
+    args: &Value,
+    store: &dyn NoteAccess,
+    allow_write: bool,
+) -> Result<String, String> {
+    let s = |k: &str| {
+        args.get(k)
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
     match name {
-        "list_notes" => Ok(store.list().into_iter().map(|(id, t)| format!("{id}\t{t}")).collect::<Vec<_>>().join("\n")),
-        "get_note" => store.get(&s("id")).ok_or_else(|| "note not found".to_string()),
-        "search_notes" => Ok(store.search(&s("query")).into_iter().map(|(id, t)| format!("{id}\t{t}")).collect::<Vec<_>>().join("\n")),
-        "create_note" => { if !allow_write { return Err("writing disabled".into()); } store.create(&s("content")).map(|id| format!("created {id}")) }
-        "append_note" => { if !allow_write { return Err("writing disabled".into()); } store.append(&s("id"), &s("text")).map(|_| "ok".to_string()) }
+        "list_notes" => Ok(store
+            .list()
+            .into_iter()
+            .map(|(id, t)| format!("{id}\t{t}"))
+            .collect::<Vec<_>>()
+            .join("\n")),
+        "get_note" => store
+            .get(&s("id"))
+            .ok_or_else(|| "note not found".to_string()),
+        "search_notes" => Ok(store
+            .search(&s("query"))
+            .into_iter()
+            .map(|(id, t)| format!("{id}\t{t}"))
+            .collect::<Vec<_>>()
+            .join("\n")),
+        "create_note" => {
+            if !allow_write {
+                return Err("writing disabled".into());
+            }
+            store
+                .create(&s("content"))
+                .map(|id| format!("created {id}"))
+        }
+        "append_note" => {
+            if !allow_write {
+                return Err("writing disabled".into());
+            }
+            store.append(&s("id"), &s("text")).map(|_| "ok".to_string())
+        }
         _ => Err(format!("unknown tool {name}")),
     }
 }
 
 /// Returns None for notifications (no response).
-pub fn handle_rpc(req: &Value, store: &dyn NoteAccess, allow_write: bool, version: &str) -> Option<Value> {
+pub fn handle_rpc(
+    req: &Value,
+    store: &dyn NoteAccess,
+    allow_write: bool,
+    version: &str,
+) -> Option<Value> {
     let id = req.get("id").cloned().unwrap_or(Value::Null);
     match req.get("method").and_then(|m| m.as_str()).unwrap_or("") {
-        "initialize" => Some(ok(&id, json!({
-            "protocolVersion": "2024-11-05",
-            "capabilities": { "tools": {}, "resources": {} },
-            "serverInfo": { "name": "Notefix", "version": version }
-        }))),
+        "initialize" => Some(ok(
+            &id,
+            json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": { "tools": {}, "resources": {} },
+                "serverInfo": { "name": "Notefix", "version": version }
+            }),
+        )),
         "notifications/initialized" => None,
         "ping" => Some(ok(&id, json!({}))),
         "tools/list" => Some(ok(&id, json!({ "tools": tool_defs() }))),
         "tools/call" => {
-            let name = req.pointer("/params/name").and_then(|n| n.as_str()).unwrap_or("");
-            let args = req.pointer("/params/arguments").cloned().unwrap_or(json!({}));
+            let name = req
+                .pointer("/params/name")
+                .and_then(|n| n.as_str())
+                .unwrap_or("");
+            let args = req
+                .pointer("/params/arguments")
+                .cloned()
+                .unwrap_or(json!({}));
             Some(match call_tool(name, &args, store, allow_write) {
-                Ok(text) => ok(&id, json!({ "content": [{ "type": "text", "text": text }] })),
-                Err(e) => ok(&id, json!({ "content": [{ "type": "text", "text": e }], "isError": true })),
+                Ok(text) => ok(
+                    &id,
+                    json!({ "content": [{ "type": "text", "text": text }] }),
+                ),
+                Err(e) => ok(
+                    &id,
+                    json!({ "content": [{ "type": "text", "text": e }], "isError": true }),
+                ),
             })
         }
         "resources/list" => {
@@ -71,9 +151,15 @@ pub fn handle_rpc(req: &Value, store: &dyn NoteAccess, allow_write: bool, versio
             Some(ok(&id, json!({ "resources": res })))
         }
         "resources/read" => {
-            let uri = req.pointer("/params/uri").and_then(|u| u.as_str()).unwrap_or("");
+            let uri = req
+                .pointer("/params/uri")
+                .and_then(|u| u.as_str())
+                .unwrap_or("");
             match store.get(uri.strip_prefix("note://").unwrap_or("")) {
-                Some(text) => Some(ok(&id, json!({ "contents": [{ "uri": uri, "mimeType": "text/plain", "text": text }] }))),
+                Some(text) => Some(ok(
+                    &id,
+                    json!({ "contents": [{ "uri": uri, "mimeType": "text/plain", "text": text }] }),
+                )),
                 None => Some(rpc_err(&id, -32602, "note not found")),
             }
         }
@@ -202,7 +288,9 @@ async fn mcp_route(
             return (axum::http::StatusCode::UNAUTHORIZED, "unauthorized").into_response();
         }
     }
-    let access = StoreAccess { app: state.app.clone() };
+    let access = StoreAccess {
+        app: state.app.clone(),
+    };
     match handle_rpc(&req, &access, state.allow_write, &state.version) {
         Some(resp) => axum::Json(resp).into_response(),
         None => axum::http::StatusCode::ACCEPTED.into_response(),
@@ -226,7 +314,11 @@ pub async fn apply(
     if !enabled {
         return Ok(());
     }
-    let host = if bind == "external" { "0.0.0.0" } else { "127.0.0.1" };
+    let host = if bind == "external" {
+        "0.0.0.0"
+    } else {
+        "127.0.0.1"
+    };
     let addr: std::net::SocketAddr = format!("{host}:{port}")
         .parse()
         .map_err(|e: std::net::AddrParseError| e.to_string())?;
@@ -241,9 +333,15 @@ pub async fn apply(
     let router = axum::Router::new()
         .route("/mcp", axum::routing::post(mcp_route))
         .with_state(state);
-    let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| e.to_string())?;
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .map_err(|e| e.to_string())?;
     let (tx, rx) = tokio::sync::oneshot::channel();
-    SHUTDOWN.get_or_init(|| Mutex::new(None)).lock().unwrap().replace(tx);
+    SHUTDOWN
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap()
+        .replace(tx);
     tauri::async_runtime::spawn(async move {
         let _ = axum::serve(listener, router)
             .with_graceful_shutdown(async {
@@ -257,16 +355,58 @@ pub async fn apply(
 #[cfg(test)]
 mod tests {
     use super::*;
-    struct Fake { notes: std::sync::Mutex<Vec<(String, String)>> } // (id, text)
+    struct Fake {
+        notes: std::sync::Mutex<Vec<(String, String)>>,
+    } // (id, text)
     impl NoteAccess for Fake {
-        fn list(&self) -> Vec<(String, String)> { self.notes.lock().unwrap().iter().map(|(i, t)| (i.clone(), t.lines().next().unwrap_or("").to_string())).collect() }
-        fn get(&self, id: &str) -> Option<String> { self.notes.lock().unwrap().iter().find(|(i, _)| i == id).map(|(_, t)| t.clone()) }
-        fn search(&self, q: &str) -> Vec<(String, String)> { let ql = q.to_lowercase(); self.notes.lock().unwrap().iter().filter(|(_, t)| t.to_lowercase().contains(&ql)).map(|(i, t)| (i.clone(), t.lines().next().unwrap_or("").to_string())).collect() }
-        fn create(&self, content: &str) -> Result<String, String> { self.notes.lock().unwrap().push(("new".into(), content.into())); Ok("new".into()) }
-        fn append(&self, id: &str, text: &str) -> Result<(), String> { let mut n = self.notes.lock().unwrap(); let e = n.iter_mut().find(|(i, _)| i == id).ok_or("nf")?; e.1.push_str(text); Ok(()) }
+        fn list(&self) -> Vec<(String, String)> {
+            self.notes
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(i, t)| (i.clone(), t.lines().next().unwrap_or("").to_string()))
+                .collect()
+        }
+        fn get(&self, id: &str) -> Option<String> {
+            self.notes
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|(i, _)| i == id)
+                .map(|(_, t)| t.clone())
+        }
+        fn search(&self, q: &str) -> Vec<(String, String)> {
+            let ql = q.to_lowercase();
+            self.notes
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(_, t)| t.to_lowercase().contains(&ql))
+                .map(|(i, t)| (i.clone(), t.lines().next().unwrap_or("").to_string()))
+                .collect()
+        }
+        fn create(&self, content: &str) -> Result<String, String> {
+            self.notes
+                .lock()
+                .unwrap()
+                .push(("new".into(), content.into()));
+            Ok("new".into())
+        }
+        fn append(&self, id: &str, text: &str) -> Result<(), String> {
+            let mut n = self.notes.lock().unwrap();
+            let e = n.iter_mut().find(|(i, _)| i == id).ok_or("nf")?;
+            e.1.push_str(text);
+            Ok(())
+        }
     }
-    fn fake() -> Fake { Fake { notes: std::sync::Mutex::new(vec![("a".into(), "Hello world".into())]) } }
-    fn call(method: &str, params: Value) -> Value { json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params }) }
+    fn fake() -> Fake {
+        Fake {
+            notes: std::sync::Mutex::new(vec![("a".into(), "Hello world".into())]),
+        }
+    }
+    fn call(method: &str, params: Value) -> Value {
+        json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params })
+    }
 
     #[test]
     fn initialize_reports_version_and_caps() {
@@ -282,22 +422,58 @@ mod tests {
     }
     #[test]
     fn search_filters() {
-        let r = handle_rpc(&call("tools/call", json!({ "name": "search_notes", "arguments": { "query": "hello" } })), &fake(), false, "v").unwrap();
-        assert!(r["result"]["content"][0]["text"].as_str().unwrap().contains("a"));
+        let r = handle_rpc(
+            &call(
+                "tools/call",
+                json!({ "name": "search_notes", "arguments": { "query": "hello" } }),
+            ),
+            &fake(),
+            false,
+            "v",
+        )
+        .unwrap();
+        assert!(r["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("a"));
     }
     #[test]
     fn write_blocked_when_disabled() {
-        let r = handle_rpc(&call("tools/call", json!({ "name": "create_note", "arguments": { "content": "x" } })), &fake(), false, "v").unwrap();
+        let r = handle_rpc(
+            &call(
+                "tools/call",
+                json!({ "name": "create_note", "arguments": { "content": "x" } }),
+            ),
+            &fake(),
+            false,
+            "v",
+        )
+        .unwrap();
         assert_eq!(r["result"]["isError"], true);
     }
     #[test]
     fn write_allowed_when_enabled() {
-        let r = handle_rpc(&call("tools/call", json!({ "name": "create_note", "arguments": { "content": "x" } })), &fake(), true, "v").unwrap();
+        let r = handle_rpc(
+            &call(
+                "tools/call",
+                json!({ "name": "create_note", "arguments": { "content": "x" } }),
+            ),
+            &fake(),
+            true,
+            "v",
+        )
+        .unwrap();
         assert!(r["result"].get("isError").is_none());
     }
     #[test]
     fn notification_has_no_response() {
-        assert!(handle_rpc(&call("notifications/initialized", json!({})), &fake(), false, "v").is_none());
+        assert!(handle_rpc(
+            &call("notifications/initialized", json!({})),
+            &fake(),
+            false,
+            "v"
+        )
+        .is_none());
     }
     #[test]
     fn html_text_roundtrip_helpers() {

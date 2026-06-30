@@ -20,14 +20,22 @@ pub fn set_setting(conn: &Connection, key: &str, value: &str) -> rusqlite::Resul
 pub fn get_int(conn: &Connection, key: &str, default: i64) -> i64 {
     load_settings(conn)
         .ok()
-        .and_then(|all| all.into_iter().find(|(k, _)| k == key).and_then(|(_, v)| v.parse().ok()))
+        .and_then(|all| {
+            all.into_iter()
+                .find(|(k, _)| k == key)
+                .and_then(|(_, v)| v.parse().ok())
+        })
         .unwrap_or(default)
 }
 
 pub fn get_bool_default(conn: &Connection, key: &str, default: bool) -> bool {
     load_settings(conn)
         .ok()
-        .and_then(|all| all.into_iter().find(|(k, _)| k == key).map(|(_, v)| v == "true"))
+        .and_then(|all| {
+            all.into_iter()
+                .find(|(k, _)| k == key)
+                .map(|(_, v)| v == "true")
+        })
         .unwrap_or(default)
 }
 
@@ -42,7 +50,11 @@ pub fn get_string(conn: &Connection, key: &str, default: &str) -> String {
 pub fn get_bool(conn: &Connection, key: &str) -> bool {
     load_settings(conn)
         .ok()
-        .and_then(|all| all.into_iter().find(|(k, _)| k == key).map(|(_, v)| v == "true"))
+        .and_then(|all| {
+            all.into_iter()
+                .find(|(k, _)| k == key)
+                .map(|(_, v)| v == "true")
+        })
         .unwrap_or(false)
 }
 
@@ -68,7 +80,10 @@ mod tests {
         let s = conn();
         set_setting(&s.conn, "pinnedDisplayMode", "sections").unwrap();
         let all = load_settings(&s.conn).unwrap();
-        assert_eq!(all, vec![("pinnedDisplayMode".to_string(), "sections".to_string())]);
+        assert_eq!(
+            all,
+            vec![("pinnedDisplayMode".to_string(), "sections".to_string())]
+        );
     }
 
     #[test]

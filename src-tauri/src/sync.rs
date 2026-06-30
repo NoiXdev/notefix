@@ -138,7 +138,10 @@ fn base(server_url: &str) -> String {
 }
 
 /// GET /api/workspaces — the user's workspaces for the picker.
-pub async fn fetch_workspaces(server_url: &str, token: &str) -> Result<Vec<WorkspaceInfo>, SyncError> {
+pub async fn fetch_workspaces(
+    server_url: &str,
+    token: &str,
+) -> Result<Vec<WorkspaceInfo>, SyncError> {
     let url = format!("{}/api/workspaces", base(server_url));
     let resp = client()?
         .get(&url)
@@ -151,9 +154,15 @@ pub async fn fetch_workspaces(server_url: &str, token: &str) -> Result<Vec<Works
         return Err(SyncError::Offline("unauthorized".into()));
     }
     if !resp.status().is_success() {
-        return Err(SyncError::Fatal(format!("workspaces HTTP {}", resp.status().as_u16())));
+        return Err(SyncError::Fatal(format!(
+            "workspaces HTTP {}",
+            resp.status().as_u16()
+        )));
     }
-    let body: Value = resp.json().await.map_err(|e| SyncError::Fatal(e.to_string()))?;
+    let body: Value = resp
+        .json()
+        .await
+        .map_err(|e| SyncError::Fatal(e.to_string()))?;
     let rows = body["data"].as_array().cloned().unwrap_or_default();
     Ok(rows
         .iter()
@@ -166,10 +175,18 @@ pub async fn fetch_workspaces(server_url: &str, token: &str) -> Result<Vec<Works
 }
 
 /// GET …/changes?since= → (cursor, folders, notes) as raw wire values.
-pub async fn pull(server_url: &str, token: &str, workspace_id: &str, since: i64)
-    -> Result<(i64, Vec<Value>, Vec<Value>), SyncError>
-{
-    let url = format!("{}/api/workspaces/{}/changes?since={}", base(server_url), workspace_id, since);
+pub async fn pull(
+    server_url: &str,
+    token: &str,
+    workspace_id: &str,
+    since: i64,
+) -> Result<(i64, Vec<Value>, Vec<Value>), SyncError> {
+    let url = format!(
+        "{}/api/workspaces/{}/changes?since={}",
+        base(server_url),
+        workspace_id,
+        since
+    );
     let resp = client()?
         .get(&url)
         .bearer_auth(token)
@@ -181,20 +198,42 @@ pub async fn pull(server_url: &str, token: &str, workspace_id: &str, since: i64)
         return Err(SyncError::Offline("unauthorized".into()));
     }
     if !resp.status().is_success() {
-        return Err(SyncError::Fatal(format!("pull HTTP {}", resp.status().as_u16())));
+        return Err(SyncError::Fatal(format!(
+            "pull HTTP {}",
+            resp.status().as_u16()
+        )));
     }
-    let body: Value = resp.json().await.map_err(|e| SyncError::Fatal(e.to_string()))?;
+    let body: Value = resp
+        .json()
+        .await
+        .map_err(|e| SyncError::Fatal(e.to_string()))?;
     let cursor = body["cursor"].as_i64().unwrap_or(since);
-    let folders = body["folders"]["data"].as_array().or(body["folders"].as_array()).cloned().unwrap_or_default();
-    let notes = body["notes"]["data"].as_array().or(body["notes"].as_array()).cloned().unwrap_or_default();
+    let folders = body["folders"]["data"]
+        .as_array()
+        .or(body["folders"].as_array())
+        .cloned()
+        .unwrap_or_default();
+    let notes = body["notes"]["data"]
+        .as_array()
+        .or(body["notes"].as_array())
+        .cloned()
+        .unwrap_or_default();
     Ok((cursor, folders, notes))
 }
 
 /// POST …/changes with dirty folders+notes; returns the server's new cursor.
-pub async fn push(server_url: &str, token: &str, workspace_id: &str, folders: Vec<Value>, notes: Vec<Value>)
-    -> Result<i64, SyncError>
-{
-    let url = format!("{}/api/workspaces/{}/changes", base(server_url), workspace_id);
+pub async fn push(
+    server_url: &str,
+    token: &str,
+    workspace_id: &str,
+    folders: Vec<Value>,
+    notes: Vec<Value>,
+) -> Result<i64, SyncError> {
+    let url = format!(
+        "{}/api/workspaces/{}/changes",
+        base(server_url),
+        workspace_id
+    );
     let resp = client()?
         .post(&url)
         .bearer_auth(token)
@@ -207,9 +246,15 @@ pub async fn push(server_url: &str, token: &str, workspace_id: &str, folders: Ve
         return Err(SyncError::Offline("unauthorized".into()));
     }
     if !resp.status().is_success() {
-        return Err(SyncError::Fatal(format!("push HTTP {}", resp.status().as_u16())));
+        return Err(SyncError::Fatal(format!(
+            "push HTTP {}",
+            resp.status().as_u16()
+        )));
     }
-    let body: Value = resp.json().await.map_err(|e| SyncError::Fatal(e.to_string()))?;
+    let body: Value = resp
+        .json()
+        .await
+        .map_err(|e| SyncError::Fatal(e.to_string()))?;
     Ok(body["cursor"].as_i64().unwrap_or(0))
 }
 
@@ -226,14 +271,27 @@ mod tests {
     #[test]
     fn parses_carbon_style_numeric_offset() {
         // Carbon's toIso8601String() emits a +00:00 offset, not Z.
-        assert_eq!(iso8601_to_ms("2023-11-14T22:13:20+00:00"), 1_700_000_000_000);
+        assert_eq!(
+            iso8601_to_ms("2023-11-14T22:13:20+00:00"),
+            1_700_000_000_000
+        );
     }
 
     #[test]
     fn note_wire_roundtrip() {
-        let n = Note { id: "n1".into(), content: "<p>x</p>".into(), updated_at: 1_700_000_000_000,
-            pinned: true, archived: false, color: "red".into(), due_at: Some(1_700_000_001_000),
-            folder_id: Some("f1".into()), position: 3, deleted_at: None, dirty: true };
+        let n = Note {
+            id: "n1".into(),
+            content: "<p>x</p>".into(),
+            updated_at: 1_700_000_000_000,
+            pinned: true,
+            archived: false,
+            color: "red".into(),
+            due_at: Some(1_700_000_001_000),
+            folder_id: Some("f1".into()),
+            position: 3,
+            deleted_at: None,
+            dirty: true,
+        };
         let back = note_from_wire(&note_to_wire(&n));
         assert_eq!(back.id, "n1");
         assert_eq!(back.updated_at, n.updated_at);
@@ -244,9 +302,18 @@ mod tests {
 
     #[test]
     fn folder_wire_roundtrip_and_tombstone() {
-        let f = Folder { id: "f1".into(), name: "Work".into(), parent_id: None, position: 2,
-            icon: "star".into(), color: "blue".into(), sort: "manual".into(),
-            updated_at: 1_700_000_000_000, deleted_at: Some(1_700_000_005_000), dirty: true };
+        let f = Folder {
+            id: "f1".into(),
+            name: "Work".into(),
+            parent_id: None,
+            position: 2,
+            icon: "star".into(),
+            color: "blue".into(),
+            sort: "manual".into(),
+            updated_at: 1_700_000_000_000,
+            deleted_at: Some(1_700_000_005_000),
+            dirty: true,
+        };
         let back = folder_from_wire(&folder_to_wire(&f));
         assert_eq!(back.name, "Work");
         assert_eq!(back.deleted_at, f.deleted_at);
@@ -256,8 +323,19 @@ mod tests {
     fn apply_pulled_overwrites_local() {
         let s = Store::open_in_memory().unwrap();
         crate::migrate::run_migrations(&s.conn).unwrap();
-        s.save_note(&Note { id: "n1".into(), content: "local".into(), updated_at: 1, ..Default::default() }).unwrap();
-        let server_note = note_to_wire(&Note { id: "n1".into(), content: "server".into(), updated_at: 1_700_000_000_000, ..Default::default() });
+        s.save_note(&Note {
+            id: "n1".into(),
+            content: "local".into(),
+            updated_at: 1,
+            ..Default::default()
+        })
+        .unwrap();
+        let server_note = note_to_wire(&Note {
+            id: "n1".into(),
+            content: "server".into(),
+            updated_at: 1_700_000_000_000,
+            ..Default::default()
+        });
         apply_pulled(&s, &[], &[server_note]).unwrap();
         assert_eq!(s.load_all_notes().unwrap()[0].content, "server");
     }
