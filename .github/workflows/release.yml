@@ -74,6 +74,9 @@ jobs:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           body_path: RELEASE_NOTES.md
 
+  # Windows + Linux build straight from tauri-action. macOS is handled by the
+  # dedicated build-macos job below, because it has to embed and inside-out-sign
+  # the WidgetKit extension, which tauri-action's one-shot signing can't do.
   build:
     name: Build – ${{ matrix.name }}
     needs: changelog
@@ -81,18 +84,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: macOS (Universal)
-            os: macos-latest
-            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
-            args: --target universal-apple-darwin
           - name: Windows x64
             os: windows-latest
-            rust_targets: ''
-            args: ''
           - name: Linux x64
             os: ubuntu-22.04
-            rust_targets: ''
-            args: ''
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -105,8 +100,6 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.rust_targets }}
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
@@ -137,12 +130,49 @@ jobs:
           TAG='${{ github.event.inputs.tag || github.ref_name }}'
           npm version "${TAG#v}" --no-git-tag-version --allow-same-version
 
-      - name: Set up code signing (macOS)
+      - name: Build & upload (tauri-action)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          releaseId: ${{ needs.changelog.outputs.release_id }}
+
+  build-macos:
+    name: Build – macOS (Universal)
+    needs: changelog
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Sync package version to release tag
+        run: |
+          TAG='${{ github.event.inputs.tag || github.ref_name }}'
+          npm version "${TAG#v}" --no-git-tag-version --allow-same-version
+
+      - name: Set up code signing
         # Import the Developer ID cert into a dedicated keychain, derive the
-        # signing identity from it, and stage the notarization key. When the
-        # signing secrets are absent (e.g. on a fork) this is skipped and the
-        # build is produced unsigned. See docs/macos-signing.md.
-        if: matrix.os == 'macos-latest' && env.MACOS_CERTIFICATE != ''
+        # signing identity, and stage the notarization key. Skipped when the
+        # signing secrets are absent (e.g. a fork); the build then runs unsigned.
+        # See docs/macos-signing.md.
+        if: env.MACOS_CERTIFICATE != ''
         env:
           MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
@@ -166,20 +196,27 @@ jobs:
           echo "APPLE_API_KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
           rm -f "$CERT_PATH"
 
-      - name: Build & upload (tauri-action)
-        uses: tauri-apps/tauri-action@v0
+      - name: Build, embed widget, sign, notarize & package
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Empty on non-macOS / unsigned builds; Tauri then skips signing.
-          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
+          # APPLE_SIGNING_IDENTITY and APPLE_API_KEY_PATH come from $GITHUB_ENV
+          # (set by the signing step); these two are the remaining notary inputs.
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          # Tauri's APPLE_API_KEY is the 10-char Key ID; the .p8 path is separate.
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY_ID }}
-          APPLE_API_KEY_PATH: ${{ env.APPLE_API_KEY_PATH }}
-        with:
-          releaseId: ${{ needs.changelog.outputs.release_id }}
-          args: ${{ matrix.args }}
+        run: |
+          TAG='${{ github.event.inputs.tag || github.ref_name }}'
+          export VERSION="${TAG#v}"
+          bash scripts/macos-release.sh
 
-      - name: Clean up notarization key (macOS)
-        if: always() && matrix.os == 'macos-latest'
+      - name: Upload macOS artifact to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG='${{ github.event.inputs.tag || github.ref_name }}'
+          VERSION="${TAG#v}"
+          gh release upload "$TAG" \
+            "src-tauri/target/universal-apple-darwin/release/bundle/macos/Notefix_${VERSION}_universal.dmg" \
+            --clobber --repo "${{ github.repository }}"
+
+      - name: Clean up notarization key
+        if: always()
         run: rm -f "$RUNNER_TEMP/apple_api_key.p8"
