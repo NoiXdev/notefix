@@ -1,0 +1,185 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v1.0.0) — must already exist'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  changelog:
+    name: Generate changelog & create release
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.release.outputs.id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history + tags are required for conventional-changelog.
+          fetch-depth: 0
+          # Releases land on main: the CHANGELOG commit is pushed back here.
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        # --ignore-scripts: this job never builds the Tauri app, just the changelog.
+        run: npm ci --ignore-scripts
+
+      - name: Sync package version to release tag
+        # conventional-changelog labels commits-since-the-last-tag with the
+        # package.json version. Derive the version from the tag (strip "v") and
+        # write it back so the newest section is labeled correctly.
+        # --allow-same-version makes this a no-op when they already agree.
+        run: |
+          TAG='${{ github.event.inputs.tag || github.ref_name }}'
+          npm version "${TAG#v}" --no-git-tag-version --allow-same-version
+
+      - name: Generate full CHANGELOG.md
+        run: |
+          npm run changelog
+          # conventional-changelog can prepend blank lines; drop leading blanks
+          # so the file always starts at the first version heading.
+          sed -i '/./,$!d' CHANGELOG.md
+
+      - name: Extract latest release notes
+        run: awk '/^#{1,3} \[?v?[0-9]+\.[0-9]+/{c++} c==1' CHANGELOG.md > RELEASE_NOTES.md
+
+      - name: Commit version + CHANGELOG back to main
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add package.json CHANGELOG.md
+          if git diff --cached --quiet; then
+            echo 'Version and CHANGELOG.md unchanged — nothing to commit.'
+          else
+            git commit -m "chore(release): ${{ github.event.inputs.tag || github.ref_name }} [skip ci]"
+            git push origin HEAD:main
+          fi
+
+      - name: Create GitHub Release
+        id: release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          body_path: RELEASE_NOTES.md
+
+  build:
+    name: Build – ${{ matrix.name }}
+    needs: changelog
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS (Universal)
+            os: macos-latest
+            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
+            args: --target universal-apple-darwin
+          - name: Windows x64
+            os: windows-latest
+            rust_targets: ''
+            args: ''
+          - name: Linux x64
+            os: ubuntu-22.04
+            rust_targets: ''
+            args: ''
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_targets }}
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install Tauri system dependencies (Linux)
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            libgtk-3-dev \
+            libssl-dev \
+            libxdo-dev \
+            patchelf \
+            build-essential \
+            file
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Sync package version to release tag
+        shell: bash
+        run: |
+          TAG='${{ github.event.inputs.tag || github.ref_name }}'
+          npm version "${TAG#v}" --no-git-tag-version --allow-same-version
+
+      - name: Set up code signing (macOS)
+        # Import the Developer ID cert into a dedicated keychain, derive the
+        # signing identity from it, and stage the notarization key. When the
+        # signing secrets are absent (e.g. on a fork) this is skipped and the
+        # build is produced unsigned. See docs/macos-signing.md.
+        if: matrix.os == 'macos-latest' && env.MACOS_CERTIFICATE != ''
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY_B64: ${{ secrets.APPLE_API_KEY }}
+        run: |
+          set -euo pipefail
+          CERT_PATH="$RUNNER_TEMP/cert.p12"
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PWD="$(openssl rand -base64 24)"
+          echo "$MACOS_CERTIFICATE" | base64 --decode > "$CERT_PATH"
+          security create-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN"
+          security import "$CERT_PATH" -k "$KEYCHAIN" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PWD" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | sed s/\"//g)
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN" | awk -F'"' '/Developer ID Application/{print $2; exit}')
+          echo "APPLE_SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+          KEY_PATH="$RUNNER_TEMP/apple_api_key.p8"
+          echo "$APPLE_API_KEY_B64" | base64 --decode > "$KEY_PATH"
+          echo "APPLE_API_KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
+          rm -f "$CERT_PATH"
+
+      - name: Build & upload (tauri-action)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Empty on non-macOS / unsigned builds; Tauri then skips signing.
+          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          # Tauri's APPLE_API_KEY is the 10-char Key ID; the .p8 path is separate.
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_KEY_PATH: ${{ env.APPLE_API_KEY_PATH }}
+        with:
+          releaseId: ${{ needs.changelog.outputs.release_id }}
+          args: ${{ matrix.args }}
+
+      - name: Clean up notarization key (macOS)
+        if: always() && matrix.os == 'macos-latest'
+        run: rm -f "$RUNNER_TEMP/apple_api_key.p8"
