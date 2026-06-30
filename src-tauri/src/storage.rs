@@ -36,29 +36,48 @@ const COLS: &str = "id, content, updated_at, pinned, archived, color, due_at, fo
 
 fn now_ms() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 fn row_to_note(r: &rusqlite::Row) -> rusqlite::Result<Note> {
     Ok(Note {
-        id: r.get(0)?, content: r.get(1)?, updated_at: r.get(2)?,
-        pinned: r.get(3)?, archived: r.get(4)?, color: r.get(5)?, due_at: r.get(6)?,
-        folder_id: r.get(7)?, position: r.get(8)?, deleted_at: r.get(9)?, dirty: r.get(10)?,
+        id: r.get(0)?,
+        content: r.get(1)?,
+        updated_at: r.get(2)?,
+        pinned: r.get(3)?,
+        archived: r.get(4)?,
+        color: r.get(5)?,
+        due_at: r.get(6)?,
+        folder_id: r.get(7)?,
+        position: r.get(8)?,
+        deleted_at: r.get(9)?,
+        dirty: r.get(10)?,
     })
 }
 
 impl Store {
     pub fn open(path: &Path) -> rusqlite::Result<Self> {
-        Ok(Self { conn: Connection::open(path)?, sync_enabled: false })
+        Ok(Self {
+            conn: Connection::open(path)?,
+            sync_enabled: false,
+        })
     }
 
     #[cfg(test)]
     pub fn open_in_memory() -> rusqlite::Result<Self> {
-        Ok(Self { conn: Connection::open_in_memory()?, sync_enabled: false })
+        Ok(Self {
+            conn: Connection::open_in_memory()?,
+            sync_enabled: false,
+        })
     }
 
     pub fn load_notes(&self) -> rusqlite::Result<Vec<Note>> {
-        let sql = format!("SELECT {COLS} FROM notes WHERE deleted_at IS NULL ORDER BY pinned DESC, position ASC");
+        let sql = format!(
+            "SELECT {COLS} FROM notes WHERE deleted_at IS NULL ORDER BY pinned DESC, position ASC"
+        );
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map([], row_to_note)?;
         rows.collect()
@@ -74,12 +93,17 @@ impl Store {
 
     /// Nur den Content setzen — ohne `updated_at`-Bump und ohne Revision.
     pub fn set_content_silent(&self, id: &str, content: &str) -> rusqlite::Result<()> {
-        self.conn.execute("UPDATE notes SET content = ?2 WHERE id = ?1", (id, content))?;
+        self.conn
+            .execute("UPDATE notes SET content = ?2 WHERE id = ?1", (id, content))?;
         Ok(())
     }
 
     pub fn save_note(&self, note: &Note) -> rusqlite::Result<()> {
-        let (updated_at, dirty) = if self.sync_enabled { (now_ms(), 1) } else { (note.updated_at, 0) };
+        let (updated_at, dirty) = if self.sync_enabled {
+            (now_ms(), 1)
+        } else {
+            (note.updated_at, 0)
+        };
         self.conn.execute(
             "INSERT INTO notes (id, content, updated_at, pinned, archived, color, due_at, folder_id, position, dirty)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
@@ -90,14 +114,18 @@ impl Store {
     }
 
     pub fn delete_note(&self, id: &str) -> rusqlite::Result<()> {
-        self.conn.execute("DELETE FROM note_revisions WHERE note_id = ?1", [id])?;
+        self.conn
+            .execute("DELETE FROM note_revisions WHERE note_id = ?1", [id])?;
         self.conn.execute("DELETE FROM notes WHERE id = ?1", [id])?;
         Ok(())
     }
 
     /// Server-context delete: tombstone + mark dirty (pushed as a tombstone).
     pub fn sync_delete_note(&self, id: &str) -> rusqlite::Result<()> {
-        self.conn.execute("UPDATE notes SET deleted_at = ?2, dirty = 1, updated_at = ?2 WHERE id = ?1", (id, now_ms()))?;
+        self.conn.execute(
+            "UPDATE notes SET deleted_at = ?2, dirty = 1, updated_at = ?2 WHERE id = ?1",
+            (id, now_ms()),
+        )?;
         Ok(())
     }
 
@@ -114,48 +142,77 @@ impl Store {
     /// it stays queued and is pushed next cycle instead of being silently dropped.
     pub fn clear_note_dirty(&self, rows: &[(String, i64)]) -> rusqlite::Result<()> {
         let tx = self.conn.unchecked_transaction()?;
-        for (id, updated_at) in rows { tx.execute("UPDATE notes SET dirty = 0 WHERE id = ?1 AND updated_at = ?2", (id, updated_at))?; }
+        for (id, updated_at) in rows {
+            tx.execute(
+                "UPDATE notes SET dirty = 0 WHERE id = ?1 AND updated_at = ?2",
+                (id, updated_at),
+            )?;
+        }
         tx.commit()
     }
 
     pub fn set_pinned(&self, id: &str, pinned: bool) -> rusqlite::Result<()> {
-        self.conn.execute("UPDATE notes SET pinned = ?2 WHERE id = ?1", (id, pinned))?;
+        self.conn
+            .execute("UPDATE notes SET pinned = ?2 WHERE id = ?1", (id, pinned))?;
         if self.sync_enabled {
-            self.conn.execute("UPDATE notes SET updated_at = ?2, dirty = 1 WHERE id = ?1", (id, now_ms()))?;
+            self.conn.execute(
+                "UPDATE notes SET updated_at = ?2, dirty = 1 WHERE id = ?1",
+                (id, now_ms()),
+            )?;
         }
         Ok(())
     }
 
     pub fn set_archived(&self, id: &str, archived: bool) -> rusqlite::Result<()> {
-        self.conn.execute("UPDATE notes SET archived = ?2 WHERE id = ?1", (id, archived))?;
+        self.conn.execute(
+            "UPDATE notes SET archived = ?2 WHERE id = ?1",
+            (id, archived),
+        )?;
         if self.sync_enabled {
-            self.conn.execute("UPDATE notes SET updated_at = ?2, dirty = 1 WHERE id = ?1", (id, now_ms()))?;
+            self.conn.execute(
+                "UPDATE notes SET updated_at = ?2, dirty = 1 WHERE id = ?1",
+                (id, now_ms()),
+            )?;
         }
         Ok(())
     }
 
     pub fn set_color(&self, id: &str, color: &str) -> rusqlite::Result<()> {
-        self.conn.execute("UPDATE notes SET color = ?2 WHERE id = ?1", (id, color))?;
+        self.conn
+            .execute("UPDATE notes SET color = ?2 WHERE id = ?1", (id, color))?;
         if self.sync_enabled {
-            self.conn.execute("UPDATE notes SET updated_at = ?2, dirty = 1 WHERE id = ?1", (id, now_ms()))?;
+            self.conn.execute(
+                "UPDATE notes SET updated_at = ?2, dirty = 1 WHERE id = ?1",
+                (id, now_ms()),
+            )?;
         }
         Ok(())
     }
 
     /// Set or clear the due date. Does NOT touch `updated_at`.
     pub fn set_due(&self, id: &str, due_at: Option<i64>) -> rusqlite::Result<()> {
-        self.conn.execute("UPDATE notes SET due_at = ?2 WHERE id = ?1", (id, due_at))?;
+        self.conn
+            .execute("UPDATE notes SET due_at = ?2 WHERE id = ?1", (id, due_at))?;
         if self.sync_enabled {
-            self.conn.execute("UPDATE notes SET updated_at = ?2, dirty = 1 WHERE id = ?1", (id, now_ms()))?;
+            self.conn.execute(
+                "UPDATE notes SET updated_at = ?2, dirty = 1 WHERE id = ?1",
+                (id, now_ms()),
+            )?;
         }
         Ok(())
     }
 
     /// Move a note to a folder (None = root). Does NOT touch `updated_at`.
     pub fn set_folder(&self, id: &str, folder_id: Option<&str>) -> rusqlite::Result<()> {
-        self.conn.execute("UPDATE notes SET folder_id = ?2 WHERE id = ?1", (id, folder_id))?;
+        self.conn.execute(
+            "UPDATE notes SET folder_id = ?2 WHERE id = ?1",
+            (id, folder_id),
+        )?;
         if self.sync_enabled {
-            self.conn.execute("UPDATE notes SET updated_at = ?2, dirty = 1 WHERE id = ?1", (id, now_ms()))?;
+            self.conn.execute(
+                "UPDATE notes SET updated_at = ?2, dirty = 1 WHERE id = ?1",
+                (id, now_ms()),
+            )?;
         }
         Ok(())
     }
@@ -163,7 +220,10 @@ impl Store {
     /// Set folder + position for each id in the given order.
     pub fn reorder_notes(&self, folder_id: Option<&str>, ids: &[String]) -> rusqlite::Result<()> {
         for (i, id) in ids.iter().enumerate() {
-            self.conn.execute("UPDATE notes SET folder_id = ?2, position = ?3 WHERE id = ?1", (id, folder_id, i as i64))?;
+            self.conn.execute(
+                "UPDATE notes SET folder_id = ?2, position = ?3 WHERE id = ?1",
+                (id, folder_id, i as i64),
+            )?;
         }
         Ok(())
     }
@@ -177,17 +237,21 @@ impl Store {
     }
 
     pub fn trash_note(&self, id: &str, ts: i64) -> rusqlite::Result<()> {
-        self.conn.execute("UPDATE notes SET deleted_at = ?2 WHERE id = ?1", (id, ts))?;
+        self.conn
+            .execute("UPDATE notes SET deleted_at = ?2 WHERE id = ?1", (id, ts))?;
         Ok(())
     }
 
     pub fn restore_note(&self, id: &str) -> rusqlite::Result<()> {
-        self.conn.execute("UPDATE notes SET deleted_at = NULL WHERE id = ?1", [id])?;
+        self.conn
+            .execute("UPDATE notes SET deleted_at = NULL WHERE id = ?1", [id])?;
         Ok(())
     }
 
     pub fn load_trashed(&self) -> rusqlite::Result<Vec<Note>> {
-        let sql = format!("SELECT {COLS} FROM notes WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC");
+        let sql = format!(
+            "SELECT {COLS} FROM notes WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC"
+        );
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map([], row_to_note)?;
         rows.collect()
@@ -197,11 +261,15 @@ impl Store {
         match before {
             Some(t) => {
                 self.conn.execute("DELETE FROM note_revisions WHERE note_id IN (SELECT id FROM notes WHERE deleted_at IS NOT NULL AND deleted_at < ?1)", [t])?;
-                self.conn.execute("DELETE FROM notes WHERE deleted_at IS NOT NULL AND deleted_at < ?1", [t])?;
+                self.conn.execute(
+                    "DELETE FROM notes WHERE deleted_at IS NOT NULL AND deleted_at < ?1",
+                    [t],
+                )?;
             }
             None => {
                 self.conn.execute("DELETE FROM note_revisions WHERE note_id IN (SELECT id FROM notes WHERE deleted_at IS NOT NULL)", [])?;
-                self.conn.execute("DELETE FROM notes WHERE deleted_at IS NOT NULL", [])?;
+                self.conn
+                    .execute("DELETE FROM notes WHERE deleted_at IS NOT NULL", [])?;
             }
         }
         Ok(())
@@ -245,7 +313,19 @@ mod tests {
     }
 
     fn note(id: &str, content: &str, updated_at: i64) -> Note {
-        Note { id: id.into(), content: content.into(), updated_at, pinned: false, archived: false, color: String::new(), due_at: None, folder_id: None, position: 0, deleted_at: None, dirty: false }
+        Note {
+            id: id.into(),
+            content: content.into(),
+            updated_at,
+            pinned: false,
+            archived: false,
+            color: String::new(),
+            due_at: None,
+            folder_id: None,
+            position: 0,
+            deleted_at: None,
+            dirty: false,
+        }
     }
 
     #[test]
@@ -317,10 +397,14 @@ mod tests {
         let s = store();
         s.save_note(&note("a", "<p>a</p>", 1)).unwrap();
         s.save_note(&note("b", "<p>b</p>", 2)).unwrap();
-        s.reorder_notes(Some("f1"), &["b".to_string(), "a".to_string()]).unwrap();
+        s.reorder_notes(Some("f1"), &["b".to_string(), "a".to_string()])
+            .unwrap();
         let loaded = s.load_notes().unwrap();
         // both now in f1, ordered b(pos0) then a(pos1)
-        assert_eq!(loaded.iter().map(|n| n.id.clone()).collect::<Vec<_>>(), vec!["b", "a"]);
+        assert_eq!(
+            loaded.iter().map(|n| n.id.clone()).collect::<Vec<_>>(),
+            vec!["b", "a"]
+        );
         assert!(loaded.iter().all(|n| n.folder_id.as_deref() == Some("f1")));
         assert_eq!(loaded[0].position, 0);
         assert_eq!(loaded[1].position, 1);
@@ -332,7 +416,12 @@ mod tests {
         s.save_note(&note("a", "<p>a</p>", 1000)).unwrap();
         s.save_note(&note("b", "<p>b</p>", 2000)).unwrap();
         s.set_archived("b", true).unwrap();
-        let ids: Vec<String> = s.recent_notes(5).unwrap().into_iter().map(|n| n.id).collect();
+        let ids: Vec<String> = s
+            .recent_notes(5)
+            .unwrap()
+            .into_iter()
+            .map(|n| n.id)
+            .collect();
         assert_eq!(ids, vec!["a"]);
     }
 
@@ -381,7 +470,12 @@ mod tests {
     fn sync_enabled_save_marks_dirty_and_bumps_updated_at() {
         let mut s = mem();
         s.sync_enabled = true;
-        let n = Note { id: "n1".into(), content: "<p>a</p>".into(), updated_at: 1, ..Default::default() };
+        let n = Note {
+            id: "n1".into(),
+            content: "<p>a</p>".into(),
+            updated_at: 1,
+            ..Default::default()
+        };
         s.save_note(&n).unwrap();
         let saved = &s.load_notes().unwrap()[0];
         assert!(saved.dirty);
@@ -391,7 +485,12 @@ mod tests {
     #[test]
     fn sync_disabled_save_leaves_clean() {
         let s = mem();
-        let n = Note { id: "n1".into(), content: "<p>a</p>".into(), updated_at: 5, ..Default::default() };
+        let n = Note {
+            id: "n1".into(),
+            content: "<p>a</p>".into(),
+            updated_at: 5,
+            ..Default::default()
+        };
         s.save_note(&n).unwrap();
         let saved = &s.load_notes().unwrap()[0];
         assert!(!saved.dirty);
@@ -402,7 +501,13 @@ mod tests {
     fn sync_delete_tombstones_instead_of_removing() {
         let mut s = mem();
         s.sync_enabled = true;
-        s.save_note(&Note { id: "n1".into(), content: "x".into(), updated_at: 1, ..Default::default() }).unwrap();
+        s.save_note(&Note {
+            id: "n1".into(),
+            content: "x".into(),
+            updated_at: 1,
+            ..Default::default()
+        })
+        .unwrap();
         s.sync_delete_note("n1").unwrap();
         assert!(s.load_notes().unwrap().is_empty());
         let all = s.load_all_notes().unwrap();
@@ -414,10 +519,17 @@ mod tests {
     fn dirty_collect_and_clear() {
         let mut s = mem();
         s.sync_enabled = true;
-        s.save_note(&Note { id: "n1".into(), content: "x".into(), updated_at: 1, ..Default::default() }).unwrap();
+        s.save_note(&Note {
+            id: "n1".into(),
+            content: "x".into(),
+            updated_at: 1,
+            ..Default::default()
+        })
+        .unwrap();
         let dirty = s.load_dirty_notes().unwrap();
         assert_eq!(dirty.len(), 1);
-        s.clear_note_dirty(&[("n1".into(), dirty[0].updated_at)]).unwrap();
+        s.clear_note_dirty(&[("n1".into(), dirty[0].updated_at)])
+            .unwrap();
         assert!(s.load_dirty_notes().unwrap().is_empty());
     }
 
@@ -427,19 +539,44 @@ mod tests {
         // for push, then re-edited before the dirty-clear / pull-apply land.
         let mut s = mem();
         s.sync_enabled = true;
-        s.save_note(&Note { id: "n1".into(), content: "A".into(), updated_at: 1, ..Default::default() }).unwrap();
+        s.save_note(&Note {
+            id: "n1".into(),
+            content: "A".into(),
+            updated_at: 1,
+            ..Default::default()
+        })
+        .unwrap();
         let pushed = s.load_dirty_notes().unwrap()[0].clone(); // snapshot (updated_at = T1)
 
         // The user edits during the network window: content "B", updated_at bumps to T2 > T1.
         s.set_content_silent("n1", "B").unwrap();
-        s.conn.execute("UPDATE notes SET updated_at = ?2, dirty = 1 WHERE id = ?1", ("n1", pushed.updated_at + 5)).unwrap();
+        s.conn
+            .execute(
+                "UPDATE notes SET updated_at = ?2, dirty = 1 WHERE id = ?1",
+                ("n1", pushed.updated_at + 5),
+            )
+            .unwrap();
 
         // Post-sync clear uses the STALE snapshot — must NOT clear the re-edited row.
-        s.clear_note_dirty(&[("n1".into(), pushed.updated_at)]).unwrap();
-        assert_eq!(s.load_dirty_notes().unwrap().len(), 1, "re-edited row stays queued");
+        s.clear_note_dirty(&[("n1".into(), pushed.updated_at)])
+            .unwrap();
+        assert_eq!(
+            s.load_dirty_notes().unwrap().len(),
+            1,
+            "re-edited row stays queued"
+        );
 
         // Pull applies the OLDER server row (content "A", updated_at T1) — LWW must keep "B".
-        upsert_note_from_server_conn(&s.conn, &Note { id: "n1".into(), content: "A".into(), updated_at: pushed.updated_at, ..Default::default() }).unwrap();
+        upsert_note_from_server_conn(
+            &s.conn,
+            &Note {
+                id: "n1".into(),
+                content: "A".into(),
+                updated_at: pushed.updated_at,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         let row = &s.load_all_notes().unwrap()[0];
         assert_eq!(row.content, "B", "local edit survives a stale server pull");
         assert!(row.dirty, "and stays dirty to push next cycle");
@@ -449,10 +586,25 @@ mod tests {
     fn upsert_from_server_overwrites_and_is_clean() {
         let mut s = mem();
         s.sync_enabled = true;
-        s.save_note(&Note { id: "n1".into(), content: "local".into(), updated_at: 1, ..Default::default() }).unwrap();
+        s.save_note(&Note {
+            id: "n1".into(),
+            content: "local".into(),
+            updated_at: 1,
+            ..Default::default()
+        })
+        .unwrap();
         let local_ts = s.load_dirty_notes().unwrap()[0].updated_at;
         // Server version is newer → wins under LWW, and the row becomes clean.
-        upsert_note_from_server_conn(&s.conn, &Note { id: "n1".into(), content: "server".into(), updated_at: local_ts + 1000, ..Default::default() }).unwrap();
+        upsert_note_from_server_conn(
+            &s.conn,
+            &Note {
+                id: "n1".into(),
+                content: "server".into(),
+                updated_at: local_ts + 1000,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         let all = s.load_all_notes().unwrap();
         assert_eq!(all[0].content, "server");
         assert!(!all[0].dirty);

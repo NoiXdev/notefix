@@ -37,25 +37,40 @@ pub struct WidgetSnapshot {
 /// Pinned keeps list order (≤6); recent is newest-first by `updated_at` (≤8);
 /// both exclude archived. `count` = active (non-archived, non-deleted) notes.
 pub fn build_snapshot(label: &str, notes: &[Note]) -> WidgetSnapshot {
-    let context = if label.trim().is_empty() { "Lokal".to_string() } else { label.to_string() };
+    let context = if label.trim().is_empty() {
+        "Lokal".to_string()
+    } else {
+        label.to_string()
+    };
     let active: Vec<&Note> = notes.iter().filter(|n| !n.archived).collect();
 
     let pinned = active
         .iter()
         .filter(|n| n.pinned)
         .take(MAX_PINNED)
-        .map(|n| WidgetItem { id: n.id.clone(), title: crate::tray::note_title(&n.content) })
+        .map(|n| WidgetItem {
+            id: n.id.clone(),
+            title: crate::tray::note_title(&n.content),
+        })
         .collect();
 
     let mut by_recent: Vec<&&Note> = active.iter().collect();
-    by_recent.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    by_recent.sort_by_key(|n| std::cmp::Reverse(n.updated_at));
     let recent = by_recent
         .iter()
         .take(MAX_RECENT)
-        .map(|n| WidgetItem { id: n.id.clone(), title: crate::tray::note_title(&n.content) })
+        .map(|n| WidgetItem {
+            id: n.id.clone(),
+            title: crate::tray::note_title(&n.content),
+        })
         .collect();
 
-    WidgetSnapshot { context, count: active.len(), pinned, recent }
+    WidgetSnapshot {
+        context,
+        count: active.len(),
+        pinned,
+        recent,
+    }
 }
 
 // Swift shim (build.rs): WidgetCenter.shared.reloadAllTimelines(), so the widget
@@ -135,9 +150,15 @@ mod tests {
         let s = build_snapshot("Lokal", &notes);
         assert_eq!(s.context, "Lokal");
         assert_eq!(s.count, 3); // archived excluded
-        assert_eq!(s.pinned.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(), ["p1"]);
+        assert_eq!(
+            s.pinned.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(),
+            ["p1"]
+        );
         // recent newest-first, archived excluded (pinned note still appears in recent)
-        assert_eq!(s.recent.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(), ["r1", "r2", "p1"]);
+        assert_eq!(
+            s.recent.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(),
+            ["r1", "r2", "p1"]
+        );
         assert_eq!(s.pinned[0].title, "Pinned A");
     }
 
@@ -161,7 +182,10 @@ mod tests {
         let j = serde_json::to_string(&s).unwrap();
         assert!(j.contains("\"context\":\"Lokal\""), "{j}");
         assert!(j.contains("\"count\":1"), "{j}");
-        assert!(j.contains("\"pinned\":[{\"id\":\"x\",\"title\":\"Hi\"}]"), "{j}");
+        assert!(
+            j.contains("\"pinned\":[{\"id\":\"x\",\"title\":\"Hi\"}]"),
+            "{j}"
+        );
         assert!(j.contains("\"recent\":["), "{j}");
     }
 

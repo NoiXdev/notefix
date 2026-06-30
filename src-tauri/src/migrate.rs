@@ -106,7 +106,10 @@ pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
              ALTER TABLE folders ADD COLUMN deleted_at INTEGER;
              ALTER TABLE folders ADD COLUMN dirty      INTEGER NOT NULL DEFAULT 0;",
         )?;
-        conn.execute("UPDATE folders SET updated_at = ?1 WHERE updated_at = 0", [now])?;
+        conn.execute(
+            "UPDATE folders SET updated_at = ?1 WHERE updated_at = 0",
+            [now],
+        )?;
         set_meta(conn, "schema_version", "11")?;
     }
 
@@ -129,7 +132,11 @@ pub fn set_meta(conn: &Connection, key: &str, value: &str) -> rusqlite::Result<(
 }
 
 pub fn get_meta_i64(conn: &Connection, key: &str, default: i64) -> i64 {
-    get_meta(conn, key).ok().flatten().and_then(|s| s.parse().ok()).unwrap_or(default)
+    get_meta(conn, key)
+        .ok()
+        .flatten()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(default)
 }
 
 pub fn set_meta_i64(conn: &Connection, key: &str, value: i64) -> rusqlite::Result<()> {
@@ -181,14 +188,20 @@ mod tests {
     #[test]
     fn migration_sets_schema_version() {
         let s = store();
-        assert_eq!(get_meta(&s.conn, "schema_version").unwrap().as_deref(), Some("11"));
+        assert_eq!(
+            get_meta(&s.conn, "schema_version").unwrap().as_deref(),
+            Some("11")
+        );
     }
 
     #[test]
     fn migration_is_idempotent() {
         let s = store();
         run_migrations(&s.conn).unwrap();
-        assert_eq!(get_meta(&s.conn, "schema_version").unwrap().as_deref(), Some("11"));
+        assert_eq!(
+            get_meta(&s.conn, "schema_version").unwrap().as_deref(),
+            Some("11")
+        );
     }
 
     #[test]
@@ -197,7 +210,8 @@ mod tests {
         std::fs::write(
             dir.path().join("n1.json"),
             r#"{"id":"n1","content":"<p>legacy</p>","updatedAt":1234}"#,
-        ).unwrap();
+        )
+        .unwrap();
         let s = store();
         let count = import_legacy_if_needed(&s, dir.path()).unwrap();
         assert_eq!(count, 1);
@@ -213,7 +227,8 @@ mod tests {
         std::fs::write(
             dir.path().join("n1.json"),
             r#"{"id":"n1","content":"<p>x</p>","updatedAt":1}"#,
-        ).unwrap();
+        )
+        .unwrap();
         let s = store();
         assert_eq!(import_legacy_if_needed(&s, dir.path()).unwrap(), 1);
         assert_eq!(import_legacy_if_needed(&s, dir.path()).unwrap(), 0);

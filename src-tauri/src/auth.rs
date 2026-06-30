@@ -35,10 +35,14 @@ fn random_b64url(n_bytes: usize) -> String {
 pub fn pkce() -> Pkce {
     // 32 random bytes → 43 base64url chars, within the spec's 43..=128 range.
     let verifier = random_b64url(32);
-    let challenge =
-        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+    let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .encode(Sha256::digest(verifier.as_bytes()));
     let state = random_b64url(16);
-    Pkce { verifier, challenge, state }
+    Pkce {
+        verifier,
+        challenge,
+        state,
+    }
 }
 
 /// OAuth discovery payload from `GET /api/oauth/config`.
@@ -79,7 +83,11 @@ fn http_client() -> Result<reqwest::Client, String> {
 /// Discover the server's OAuth endpoints + public client id.
 pub async fn fetch_oauth_config(server_url: &str) -> Result<OAuthConfig, String> {
     let url = format!("{}/api/oauth/config", normalize_server_url(server_url));
-    let resp = http_client()?.get(&url).send().await.map_err(|e| e.to_string())?;
+    let resp = http_client()?
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     if !resp.status().is_success() {
         return Err(format!("oauth config: HTTP {}", resp.status().as_u16()));
     }
@@ -123,14 +131,18 @@ fn entry(context_id: &str) -> Result<keyring::Entry, String> {
 
 pub fn store_tokens(context_id: &str, tokens: &Tokens) -> Result<(), String> {
     let json = serde_json::to_string(tokens).map_err(|e| e.to_string())?;
-    entry(context_id)?.set_password(&json).map_err(|e| e.to_string())
+    entry(context_id)?
+        .set_password(&json)
+        .map_err(|e| e.to_string())
 }
 
 // Consumed by the C1 sync engine (reading the access token for API calls).
 #[allow(dead_code)]
 pub fn load_tokens(context_id: &str) -> Result<Option<Tokens>, String> {
     match entry(context_id)?.get_password() {
-        Ok(json) => serde_json::from_str::<Tokens>(&json).map(Some).map_err(|e| e.to_string()),
+        Ok(json) => serde_json::from_str::<Tokens>(&json)
+            .map(Some)
+            .map_err(|e| e.to_string()),
         Err(keyring::Error::NoEntry) => Ok(None),
         Err(e) => Err(e.to_string()),
     }
@@ -155,7 +167,9 @@ mod tests {
         assert_eq!(p.challenge, expect);
         // S256: sha256 → 32 bytes → 43 unpadded base64url chars, no +/=
         assert_eq!(p.challenge.len(), 43);
-        assert!(!p.challenge.contains('=') && !p.challenge.contains('+') && !p.challenge.contains('/'));
+        assert!(
+            !p.challenge.contains('=') && !p.challenge.contains('+') && !p.challenge.contains('/')
+        );
     }
 
     #[test]

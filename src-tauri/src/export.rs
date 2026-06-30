@@ -18,19 +18,26 @@ pub fn notes_to_json(notes: &[Note], ids: &[String]) -> serde_json::Result<Strin
 pub fn inline_images<F: Fn(&str) -> Option<(String, Vec<u8>)>>(content: &str, read: F) -> String {
     let re = regex::Regex::new(r#"noteimg://localhost/([^"'\s\\)]+)"#).unwrap();
     re.replace_all(content, |c: &regex::Captures| match read(&c[1]) {
-        Some((mime, bytes)) => format!("data:{};base64,{}", mime, base64::engine::general_purpose::STANDARD.encode(bytes)),
+        Some((mime, bytes)) => format!(
+            "data:{};base64,{}",
+            mime,
+            base64::engine::general_purpose::STANDARD.encode(bytes)
+        ),
         None => c[0].to_string(),
-    }).to_string()
+    })
+    .to_string()
 }
 
 /// Ersetzt `noteimg://localhost/<pfad>` durch `images/<pfad>` und sammelt die Pfade.
 pub fn to_bundle(content: &str) -> (String, Vec<String>) {
     let re = regex::Regex::new(r#"noteimg://localhost/([^"'\s\\)]+)"#).unwrap();
     let mut paths = Vec::new();
-    let new = re.replace_all(content, |c: &regex::Captures| {
-        paths.push(c[1].to_string());
-        format!("images/{}", &c[1])
-    }).to_string();
+    let new = re
+        .replace_all(content, |c: &regex::Captures| {
+            paths.push(c[1].to_string());
+            format!("images/{}", &c[1])
+        })
+        .to_string();
     (new, paths)
 }
 
@@ -40,7 +47,19 @@ mod tests {
     use crate::storage::Note;
 
     fn note(id: &str) -> Note {
-        Note { id: id.into(), content: "<p>x</p>".into(), updated_at: 1, pinned: false, archived: false, color: String::new(), due_at: None, folder_id: None, position: 0, deleted_at: None, dirty: false }
+        Note {
+            id: id.into(),
+            content: "<p>x</p>".into(),
+            updated_at: 1,
+            pinned: false,
+            archived: false,
+            color: String::new(),
+            due_at: None,
+            folder_id: None,
+            position: 0,
+            deleted_at: None,
+            dirty: false,
+        }
     }
 
     #[test]
@@ -69,7 +88,10 @@ mod tests {
     #[test]
     fn inline_images_replaces_with_data_url() {
         let c = "<img src=\"noteimg://localhost/a/b/x.png\">";
-        let out = inline_images(c, |rel| { assert_eq!(rel, "a/b/x.png"); Some(("image/png".into(), vec![1,2,3])) });
+        let out = inline_images(c, |rel| {
+            assert_eq!(rel, "a/b/x.png");
+            Some(("image/png".into(), vec![1, 2, 3]))
+        });
         assert!(out.contains("data:image/png;base64,"));
         assert!(!out.contains("noteimg://"));
     }

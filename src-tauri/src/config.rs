@@ -68,6 +68,9 @@ mod tests {
         let p = Path::new("/x/notefix.db");
         let json = serialize_db_path(p);
         assert!(json.contains("dbPath"));
-        assert_eq!(parse_db_path(&json, Path::new("/def/notefix.db")), p.to_path_buf());
+        assert_eq!(
+            parse_db_path(&json, Path::new("/def/notefix.db")),
+            p.to_path_buf()
+        );
     }
 }

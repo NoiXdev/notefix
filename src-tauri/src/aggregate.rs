@@ -31,9 +31,15 @@ pub struct Ctx {
 pub fn aggregate(contexts: &[Ctx]) -> Vec<TaggedNote> {
     let mut out = Vec::new();
     for c in contexts {
-        let Ok(store) = Store::open(std::path::Path::new(&c.path)) else { continue };
-        if crate::migrate::run_migrations(&store.conn).is_err() { continue; }
-        let Ok(notes) = store.load_notes() else { continue };
+        let Ok(store) = Store::open(std::path::Path::new(&c.path)) else {
+            continue;
+        };
+        if crate::migrate::run_migrations(&store.conn).is_err() {
+            continue;
+        }
+        let Ok(notes) = store.load_notes() else {
+            continue;
+        };
         for note in notes {
             out.push(TaggedNote {
                 context_id: c.id.clone(),
@@ -44,7 +50,10 @@ pub fn aggregate(contexts: &[Ctx]) -> Vec<TaggedNote> {
         }
     }
     out.sort_by(|a, b| {
-        b.note.pinned.cmp(&a.note.pinned).then(b.note.updated_at.cmp(&a.note.updated_at))
+        b.note
+            .pinned
+            .cmp(&a.note.pinned)
+            .then(b.note.updated_at.cmp(&a.note.updated_at))
     });
     out
 }
@@ -56,7 +65,9 @@ mod tests {
     fn seed(path: &std::path::Path, notes: &[Note]) {
         let s = Store::open(path).unwrap();
         crate::migrate::run_migrations(&s.conn).unwrap();
-        for n in notes { s.save_note(n).unwrap(); }
+        for n in notes {
+            s.save_note(n).unwrap();
+        }
     }
 
     #[test]
@@ -64,15 +75,47 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let p1 = dir.path().join("a.db");
         let p2 = dir.path().join("b.db");
-        seed(&p1, &[Note { id: "a1".into(), content: "alpha".into(), updated_at: 10, ..Default::default() }]);
-        seed(&p2, &[
-            Note { id: "b1".into(), content: "beta".into(), updated_at: 30, ..Default::default() },
-            Note { id: "b2".into(), content: "pinned".into(), updated_at: 5, pinned: true, ..Default::default() },
-        ]);
+        seed(
+            &p1,
+            &[Note {
+                id: "a1".into(),
+                content: "alpha".into(),
+                updated_at: 10,
+                ..Default::default()
+            }],
+        );
+        seed(
+            &p2,
+            &[
+                Note {
+                    id: "b1".into(),
+                    content: "beta".into(),
+                    updated_at: 30,
+                    ..Default::default()
+                },
+                Note {
+                    id: "b2".into(),
+                    content: "pinned".into(),
+                    updated_at: 5,
+                    pinned: true,
+                    ..Default::default()
+                },
+            ],
+        );
 
         let ctxs = vec![
-            Ctx { id: "c1".into(), label: "Local".into(), kind: "local".into(), path: p1.to_string_lossy().into() },
-            Ctx { id: "c2".into(), label: "srv".into(), kind: "server".into(), path: p2.to_string_lossy().into() },
+            Ctx {
+                id: "c1".into(),
+                label: "Local".into(),
+                kind: "local".into(),
+                path: p1.to_string_lossy().into(),
+            },
+            Ctx {
+                id: "c2".into(),
+                label: "srv".into(),
+                kind: "server".into(),
+                path: p2.to_string_lossy().into(),
+            },
         ];
         let got = aggregate(&ctxs);
 
@@ -90,10 +133,28 @@ mod tests {
     fn skips_unreadable_context() {
         let dir = tempfile::tempdir().unwrap();
         let good = dir.path().join("good.db");
-        seed(&good, &[Note { id: "g".into(), content: "x".into(), updated_at: 1, ..Default::default() }]);
+        seed(
+            &good,
+            &[Note {
+                id: "g".into(),
+                content: "x".into(),
+                updated_at: 1,
+                ..Default::default()
+            }],
+        );
         let ctxs = vec![
-            Ctx { id: "bad".into(), label: "".into(), kind: "local".into(), path: "/no/such/dir/x.db".into() },
-            Ctx { id: "ok".into(), label: "".into(), kind: "local".into(), path: good.to_string_lossy().into() },
+            Ctx {
+                id: "bad".into(),
+                label: "".into(),
+                kind: "local".into(),
+                path: "/no/such/dir/x.db".into(),
+            },
+            Ctx {
+                id: "ok".into(),
+                label: "".into(),
+                kind: "local".into(),
+                path: good.to_string_lossy().into(),
+            },
         ];
         let got = aggregate(&ctxs);
         assert_eq!(got.len(), 1);

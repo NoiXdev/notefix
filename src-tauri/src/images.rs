@@ -7,7 +7,10 @@ use base64::Engine;
 /// The images folder lives next to its database, so each context owns its own
 /// images (`<db-dir>/images`). Pure + testable.
 pub fn images_root_for(db: &Path) -> PathBuf {
-    db.parent().map(|p| p.to_path_buf()).unwrap_or_default().join("images")
+    db.parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_default()
+        .join("images")
 }
 
 /// Path of the currently active context's database. Resolves via the profiles
@@ -38,7 +41,9 @@ pub fn shard(id: &str) -> String {
 /// Validiert einen images-relativen Subpfad: erlaubt `a/b/c.ext`, lehnt
 /// leere/`.`/`..`/absolute/Backslash-Segmente ab. Gibt den normalisierten Pfad zurück.
 pub fn safe_subpath(path: &str) -> Option<String> {
-    if path.is_empty() { return None; }
+    if path.is_empty() {
+        return None;
+    }
     let mut parts = Vec::new();
     for seg in path.split('/') {
         if seg.is_empty() || seg == "." || seg == ".." || seg.contains('\\') {
@@ -46,7 +51,9 @@ pub fn safe_subpath(path: &str) -> Option<String> {
         }
         parts.push(seg);
     }
-    if parts.is_empty() { return None; }
+    if parts.is_empty() {
+        return None;
+    }
     Some(parts.join("/"))
 }
 
@@ -57,12 +64,19 @@ pub fn note_image_url(note_id: &str, name: &str) -> String {
 
 pub fn mime_for(name: &str) -> &'static str {
     let l = name.to_lowercase();
-    if l.ends_with(".png") { "image/png" }
-    else if l.ends_with(".jpg") || l.ends_with(".jpeg") { "image/jpeg" }
-    else if l.ends_with(".gif") { "image/gif" }
-    else if l.ends_with(".webp") { "image/webp" }
-    else if l.ends_with(".svg") { "image/svg+xml" }
-    else { "application/octet-stream" }
+    if l.ends_with(".png") {
+        "image/png"
+    } else if l.ends_with(".jpg") || l.ends_with(".jpeg") {
+        "image/jpeg"
+    } else if l.ends_with(".gif") {
+        "image/gif"
+    } else if l.ends_with(".webp") {
+        "image/webp"
+    } else if l.ends_with(".svg") {
+        "image/svg+xml"
+    } else {
+        "application/octet-stream"
+    }
 }
 
 fn ext_for_mime(mime: &str) -> &'static str {
@@ -101,19 +115,30 @@ pub fn rewrite_data_urls(content: &str, note_id: &str) -> (String, Vec<(String, 
 }
 
 /// Lagert alle base64-Bilder aller Notizen als Dateien aus (best effort).
-pub fn migrate_inline_images(store: &crate::storage::Store, images_root: &std::path::Path) -> Result<(), String> {
+pub fn migrate_inline_images(
+    store: &crate::storage::Store,
+    images_root: &std::path::Path,
+) -> Result<(), String> {
     for note in store.load_all_notes().map_err(|e| e.to_string())? {
-        if !note.content.contains("data:image/") { continue; }
+        if !note.content.contains("data:image/") {
+            continue;
+        }
         let (new_content, files) = rewrite_data_urls(&note.content, &note.id);
-        if files.is_empty() { continue; }
+        if files.is_empty() {
+            continue;
+        }
         for (rel, bytes) in files {
             if let Some(safe) = safe_subpath(&rel) {
                 let path = images_root.join(&safe);
-                if let Some(parent) = path.parent() { let _ = std::fs::create_dir_all(parent); }
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
                 std::fs::write(path, bytes).map_err(|e| e.to_string())?;
             }
         }
-        store.set_content_silent(&note.id, &new_content).map_err(|e| e.to_string())?;
+        store
+            .set_content_silent(&note.id, &new_content)
+            .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -121,14 +146,20 @@ pub fn migrate_inline_images(store: &crate::storage::Store, images_root: &std::p
 /// Alle in einem Content referenzierten noteimg-Relativpfade.
 pub fn referenced_paths(content: &str) -> Vec<String> {
     let re = regex::Regex::new(r#"noteimg://localhost/([^"'\s\\)]+)"#).unwrap();
-    re.captures_iter(content).map(|c| c[1].to_string()).collect()
+    re.captures_iter(content)
+        .map(|c| c[1].to_string())
+        .collect()
 }
 
 /// Set aller referenzierten Pfade über alle Notizen (inkl. Papierkorb).
 pub fn collect_referenced(store: &crate::storage::Store) -> HashSet<String> {
     let mut set = HashSet::new();
     if let Ok(notes) = store.load_all_notes() {
-        for n in notes { for p in referenced_paths(&n.content) { set.insert(p); } }
+        for n in notes {
+            for p in referenced_paths(&n.content) {
+                set.insert(p);
+            }
+        }
     }
     set
 }
@@ -137,31 +168,43 @@ fn prune_empty_dirs(dir: &Path, root: &Path) {
     if let Ok(entries) = std::fs::read_dir(dir) {
         for e in entries.flatten() {
             let p = e.path();
-            if p.is_dir() { prune_empty_dirs(&p, root); }
+            if p.is_dir() {
+                prune_empty_dirs(&p, root);
+            }
         }
     }
     if dir != root {
         if let Ok(mut it) = std::fs::read_dir(dir) {
-            if it.next().is_none() { let _ = std::fs::remove_dir(dir); }
+            if it.next().is_none() {
+                let _ = std::fs::remove_dir(dir);
+            }
         }
     }
 }
 
 /// Löscht alle Dateien unter `images_root`, deren Relativpfad nicht referenziert ist.
 pub fn gc_images(images_root: &Path, referenced: &HashSet<String>) -> std::io::Result<()> {
-    if !images_root.exists() { return Ok(()); }
+    if !images_root.exists() {
+        return Ok(());
+    }
     let mut stack = vec![images_root.to_path_buf()];
     let mut files = Vec::new();
     while let Some(dir) = stack.pop() {
         for entry in std::fs::read_dir(&dir)? {
             let p = entry?.path();
-            if p.is_dir() { stack.push(p); } else { files.push(p); }
+            if p.is_dir() {
+                stack.push(p);
+            } else {
+                files.push(p);
+            }
         }
     }
     for f in &files {
         if let Ok(rel) = f.strip_prefix(images_root) {
             let rel_str = rel.to_string_lossy().replace('\\', "/");
-            if !referenced.contains(&rel_str) { let _ = std::fs::remove_file(f); }
+            if !referenced.contains(&rel_str) {
+                let _ = std::fs::remove_file(f);
+            }
         }
     }
     prune_empty_dirs(images_root, images_root);
@@ -179,13 +222,22 @@ mod tests {
     use super::*;
     #[test]
     fn shard_splits_uuid_on_hyphens() {
-        assert_eq!(shard("5061b1e2-bad1-4fc7-a4f6-e16577f5dca4"), "5061b1e2/bad1/4fc7/a4f6/e16577f5dca4");
+        assert_eq!(
+            shard("5061b1e2-bad1-4fc7-a4f6-e16577f5dca4"),
+            "5061b1e2/bad1/4fc7/a4f6/e16577f5dca4"
+        );
         assert_eq!(shard("a"), "a");
     }
     #[test]
     fn images_root_sits_next_to_its_db() {
-        assert_eq!(images_root_for(Path::new("/data/notefix.db")), Path::new("/data/images"));
-        assert_eq!(images_root_for(Path::new("/data/contexts/abc/notefix.db")), Path::new("/data/contexts/abc/images"));
+        assert_eq!(
+            images_root_for(Path::new("/data/notefix.db")),
+            Path::new("/data/images")
+        );
+        assert_eq!(
+            images_root_for(Path::new("/data/contexts/abc/notefix.db")),
+            Path::new("/data/contexts/abc/images")
+        );
     }
     #[test]
     fn safe_subpath_accepts_nested_rejects_traversal() {
@@ -206,8 +258,10 @@ mod tests {
     }
     #[test]
     fn note_image_url_builds_sharded_url() {
-        assert_eq!(note_image_url("5061b1e2-bad1-4fc7-a4f6-e16577f5dca4", "x.png"),
-            "noteimg://localhost/5061b1e2/bad1/4fc7/a4f6/e16577f5dca4/x.png");
+        assert_eq!(
+            note_image_url("5061b1e2-bad1-4fc7-a4f6-e16577f5dca4", "x.png"),
+            "noteimg://localhost/5061b1e2/bad1/4fc7/a4f6/e16577f5dca4/x.png"
+        );
     }
     #[test]
     fn rewrite_data_urls_extracts_one_png() {
@@ -218,7 +272,9 @@ mod tests {
         assert!(!new.contains("data:image"));
         assert!(new.contains("noteimg://localhost/5061b1e2/bad1/4fc7/a4f6/e16577f5dca4/"));
         assert_eq!(files.len(), 1);
-        assert!(files[0].0.starts_with("5061b1e2/bad1/4fc7/a4f6/e16577f5dca4/"));
+        assert!(files[0]
+            .0
+            .starts_with("5061b1e2/bad1/4fc7/a4f6/e16577f5dca4/"));
         assert!(files[0].0.ends_with(".png"));
         assert!(!files[0].1.is_empty());
     }
@@ -230,7 +286,8 @@ mod tests {
     }
     #[test]
     fn referenced_paths_finds_sharded_refs() {
-        let c = "<img src=\"noteimg://localhost/a/b/x.png\"><img src=\"noteimg://localhost/y.png\">";
+        let c =
+            "<img src=\"noteimg://localhost/a/b/x.png\"><img src=\"noteimg://localhost/y.png\">";
         let r = referenced_paths(c);
         assert!(r.contains(&"a/b/x.png".to_string()));
         assert!(r.contains(&"y.png".to_string()));
