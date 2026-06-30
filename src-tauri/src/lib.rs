@@ -319,10 +319,12 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app, event| {
+        .run(|_app, _event| {
             // macOS: clicking the dock icon when no window is visible re-shows it.
-            if let tauri::RunEvent::Reopen { .. } = event {
-                tray::show_main(app);
+            // `RunEvent::Reopen` only exists on macOS, so gate the whole arm.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = _event {
+                tray::show_main(_app);
             }
         });
 }
