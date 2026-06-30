@@ -10,7 +10,7 @@ use serde::Serialize;
 
 use crate::storage::Note;
 
-const APP_GROUP: &str = "group.dev.noidee.notefix";
+const APP_GROUP: &str = "group.dev.noix.notefix";
 const MAX_PINNED: usize = 6;
 const MAX_RECENT: usize = 8;
 
