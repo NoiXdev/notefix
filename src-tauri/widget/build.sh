@@ -12,7 +12,10 @@ APP_ENT="$ROOT/src-tauri/entitlements.plist"
 WIDGET_ENT="$WIDGET_DIR/NotefixWidget/NotefixWidget.entitlements"
 
 # Resolve a Developer ID signing identity (first matching cert hash).
-IDENTITY="$(security find-identity -v -p codesigning | awk '/Developer ID Application: Tim/ {print $2; exit}')"
+# Override the match string by exporting SIGNING_IDENTITY, e.g.
+#   SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID)"
+SIGN_MATCH="${SIGNING_IDENTITY:-Developer ID Application}"
+IDENTITY="$(security find-identity -v -p codesigning | awk -v m="$SIGN_MATCH" 'index($0, m) {print $2; exit}')"
 [ -n "$IDENTITY" ] || { echo "No Developer ID Application identity found"; exit 1; }
 echo "Signing with $IDENTITY"
 
