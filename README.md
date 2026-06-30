@@ -139,4 +139,4 @@ src-tauri/                 # Rust backend (Tauri)
 
 ## License
 
-[MIT](LICENSE) © noidee.dev
+[MIT](LICENSE) © noix.dev

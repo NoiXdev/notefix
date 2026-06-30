@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "A lightweight, local-first sticky-note desktop app built with Tauri.",
   "license": "MIT",
-  "author": "noidee.dev",
+  "author": "noix.dev",
   "homepage": "https://github.com/NoiXdev/notefix",
   "repository": {
     "type": "git",
