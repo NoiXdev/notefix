@@ -29,9 +29,35 @@ fn build_widget_reload() {
     .trim()
     .to_string();
 
+    // Compile the shim for the arch Cargo is currently targeting, not the host
+    // arch — otherwise a `universal-apple-darwin` build produces an arm64-only
+    // object and the x86_64 slice fails to link (`_notefix_reload_widgets`
+    // undefined). The deployment target is 14.0 (matching the widget extension):
+    // at 13.0+ swiftc no longer force-loads the Swift back-deployment
+    // compatibility static libs, which are not on the link line and would
+    // otherwise fail to resolve.
+    let arch = match std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() {
+        Ok("x86_64") => "x86_64".to_string(),
+        Ok("aarch64") => "arm64".to_string(),
+        Ok(other) => other.to_string(),
+        Err(_) => "arm64".to_string(),
+    };
+    let target = format!("{arch}-apple-macosx14.0");
+
     assert!(
         Command::new("swiftc")
-            .args(["-emit-object", "-parse-as-library", "-O", src, "-o", &obj])
+            .args([
+                "-emit-object",
+                "-parse-as-library",
+                "-O",
+                "-target",
+                &target,
+                "-sdk",
+                &sdk,
+                src,
+                "-o",
+                &obj,
+            ])
             .status()
             .expect("swiftc")
             .success(),
