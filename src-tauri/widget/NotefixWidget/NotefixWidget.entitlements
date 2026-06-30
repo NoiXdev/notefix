@@ -6,7 +6,7 @@
     <true/>
     <key>com.apple.security.application-groups</key>
     <array>
-        <string>group.dev.noidee.notefix</string>
+        <string>group.dev.noix.notefix</string>
     </array>
 </dict>
 </plist>

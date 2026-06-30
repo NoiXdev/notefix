@@ -9,7 +9,7 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-const KEYCHAIN_SERVICE: &str = "dev.noidee.notefix";
+const KEYCHAIN_SERVICE: &str = "dev.noix.notefix";
 
 /// The native redirect URI registered with the deep-link scheme. The server's
 /// public desktop client is created with exactly this redirect.

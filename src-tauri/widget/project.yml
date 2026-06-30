@@ -1,6 +1,6 @@
 name: NotefixWidget
 options:
-  bundleIdPrefix: dev.noidee.notefix
+  bundleIdPrefix: dev.noix.notefix
   deploymentTarget:
     macOS: "14.0"
 targets:
@@ -11,7 +11,7 @@ targets:
       - NotefixWidget
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.noidee.notefix.widget
+        PRODUCT_BUNDLE_IDENTIFIER: dev.noix.notefix.widget
         INFOPLIST_FILE: NotefixWidget/Info.plist
         CODE_SIGN_ENTITLEMENTS: NotefixWidget/NotefixWidget.entitlements
         GENERATE_INFOPLIST_FILE: NO
