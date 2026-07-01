@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { eventToCombo, matchesCombo, comboLabel, resolveBindings, parseShortcuts } from './shortcuts';
+import { eventToCombo, matchesCombo, comboLabel, resolveBindings, parseShortcuts, SHORTCUT_ACTIONS } from './shortcuts';
 
 const ev = (init: Partial<KeyboardEvent>): KeyboardEvent =>
   ({ key: '', metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, ...init } as KeyboardEvent);
@@ -29,5 +29,13 @@ describe('shortcuts helpers', () => {
     expect(parseShortcuts(JSON.stringify({ newNote: 'Mod+J', bogus: 'X' }))).toEqual({ newNote: 'Mod+J' });
     expect(parseShortcuts('nope')).toEqual({});
     expect(parseShortcuts(undefined)).toEqual({});
+  });
+  it('registers the context-switching shortcuts with defaults', () => {
+    const byId = Object.fromEntries(SHORTCUT_ACTIONS.map(a => [a.id, a]));
+    expect(byId.switchContextNext?.defaultCombo).toBe('Mod+Shift+K');
+    expect(byId.openContextPicker?.defaultCombo).toBe('Mod+K');
+    const b = resolveBindings({});
+    expect(b.switchContextNext).toBe('Mod+Shift+K');
+    expect(b.openContextPicker).toBe('Mod+K');
   });
 });

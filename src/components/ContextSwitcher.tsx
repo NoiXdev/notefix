@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { OPEN_CONTEXTS_EVENT } from '../shortcuts';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faCheck, faPlus, faServer, faGlobe, faGear, faChevronDown } from '@fortawesome/free-solid-svg-icons';
 import { api } from '../api';
@@ -17,10 +18,21 @@ export default function ContextSwitcher({ onManage }: { onManage?: () => void })
   const [addingServer, setAddingServer] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
 
   const refresh = () => { void api.contexts.list().then(setCtx); };
   // A completed server auth emits context-changed; clear the pending state then.
   useEffect(() => { refresh(); return api.onContextChanged(() => { setConnecting(false); refresh(); }); }, []);
+
+  // The context-picker hotkey opens the menu anchored to the switcher button.
+  useEffect(() => {
+    const open = () => {
+      const r = btnRef.current?.getBoundingClientRect();
+      if (r) { setError(null); setMenu({ x: r.left, y: r.bottom }); }
+    };
+    window.addEventListener(OPEN_CONTEXTS_EVENT, open);
+    return () => window.removeEventListener(OPEN_CONTEXTS_EVENT, open);
+  }, []);
 
   const labelOf = (c: ContextInfo) =>
     c.label || (c.kind === 'server' ? c.serverUrl : t('contexts.localDefault'));
@@ -68,6 +80,7 @@ export default function ContextSwitcher({ onManage }: { onManage?: () => void })
   return (
     <>
       <button
+        ref={btnRef}
         aria-label={t('contexts.switch')}
         title={t('contexts.switch')}
         onClick={e => { setError(null); setMenu({ x: e.clientX, y: e.clientY }); }}

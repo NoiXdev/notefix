@@ -40,6 +40,8 @@ export interface AppSettings {
   mcpAuthRequired: boolean;
   mcpToken: string;
   mcpAllowWrite: boolean;
+  checkUpdatesOnStart: boolean;
+  updateDismissedVersion: string;
 }
 
 const DEFAULT_LAYOUT: DashboardWidget[] = [
@@ -75,6 +77,8 @@ const DEFAULTS: AppSettings = {
   mcpAuthRequired: true,
   mcpToken: '',
   mcpAllowWrite: false,
+  checkUpdatesOnStart: true,
+  updateDismissedVersion: '',
 };
 
 function isGridWidget(x: unknown): x is DashboardWidget {
@@ -139,6 +143,8 @@ export function useSettings() {
       mcpAuthRequired: raw.mcpAuthRequired !== 'false',
       mcpToken: typeof raw.mcpToken === 'string' ? raw.mcpToken : '',
       mcpAllowWrite: raw.mcpAllowWrite === 'true',
+      checkUpdatesOnStart: raw.checkUpdatesOnStart !== 'false',
+      updateDismissedVersion: typeof raw.updateDismissedVersion === 'string' ? raw.updateDismissedVersion : '',
     });
     setLoaded(true);
   }, []);

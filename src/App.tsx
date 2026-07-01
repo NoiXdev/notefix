@@ -16,10 +16,14 @@ import ExportFormatModal from './components/ExportFormatModal';
 import Dashboard from './components/Dashboard';
 import SystemCheckModal from './components/SystemCheckModal';
 import WorkspacePicker from './components/WorkspacePicker';
+import UpdateBanner from './components/UpdateBanner';
+import { shouldShowUpdateBanner } from './updateCheck';
+import type { UpdateInfo } from './api';
 import { runSystemChecks, type SystemCheck } from './systemChecks';
 import { exportBase64, exportBundle } from './export';
 import { exportNote, type ExportFormat } from './export/exporters';
-import { resolveBindings, eventToCombo } from './shortcuts';
+import { resolveBindings, eventToCombo, OPEN_CONTEXTS_EVENT } from './shortcuts';
+import { nextContextId, type ContextInfo } from './contexts';
 import i18n from './i18n';
 import { resolveLang } from './i18n/lang';
 import type { Folder, Stats } from './types';
@@ -45,6 +49,8 @@ export default function App() {
   const [settingsPage, setSettingsPage] = useState<SettingsPage | undefined>(undefined);
   const [bindCtx, setBindCtx] = useState<string | null>(null);
   const [activeContextId, setActiveContextId] = useState<string>('');
+  const [contexts, setContexts] = useState<ContextInfo[]>([]);
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const pendingSelectRef = useRef<string | null>(null);
   const initView = useRef(false);
   const selectNote = (id: string) => { setSelectedId(id); setView('editor'); };
@@ -102,6 +108,7 @@ export default function App() {
   // Prompt to bind a workspace when the active context is an unbound server context.
   useEffect(() => {
     const check = () => void api.contexts.list().then(cs => {
+      setContexts(cs);
       const active = cs.find(c => c.active);
       setActiveContextId(active?.id ?? '');
       if (active?.kind === 'server' && !active.workspaceId) setBindCtx(active.id);
@@ -118,6 +125,18 @@ export default function App() {
   }), []);
 
   useEffect(() => { void i18n.changeLanguage(resolveLang(settings.language, navigator.language)); }, [settings.language]);
+
+  // On launch: one silent GitHub-release check (opt-out via checkUpdatesOnStart).
+  const updateCheckedRef = useRef(false);
+  useEffect(() => {
+    if (!loaded || updateCheckedRef.current) return;
+    updateCheckedRef.current = true;
+    if (!settings.checkUpdatesOnStart) return;
+    // Never let the update check break the app (network error, missing backend).
+    try {
+      void api.checkForUpdate().then(setUpdateInfo).catch(() => {});
+    } catch { /* ignore */ }
+  }, [loaded, settings.checkUpdatesOnStart]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -164,6 +183,17 @@ export default function App() {
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
       if (combo === bindings.newFolder) { e.preventDefault(); void createFolder(i18n.t('noteList.newFolderName'), null); return; }
       if (combo === bindings.newNote) { e.preventDefault(); void handleCreate(); return; }
+      if (combo === bindings.switchContextNext) {
+        e.preventDefault();
+        const nextId = nextContextId(contexts);
+        if (nextId) void api.contexts.switch(nextId);
+        return;
+      }
+      if (combo === bindings.openContextPicker) {
+        e.preventDefault();
+        window.dispatchEvent(new Event(OPEN_CONTEXTS_EVENT));
+        return;
+      }
       if (combo === bindings.archive && selectedNote) { e.preventDefault(); setArchived(selectedNote.id, !selectedNote.archived); return; }
       if (combo === bindings.navPrev || combo === bindings.navNext) {
         const list = notes.filter(n => !n.archived && !n.deletedAt);
@@ -177,7 +207,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [notes, selectedId, selectedNote, showSettings, createFolder, handleCreate, setArchived, settings.shortcuts]);
+  }, [notes, selectedId, selectedNote, showSettings, createFolder, handleCreate, setArchived, settings.shortcuts, contexts]);
 
   if (windowNoteId) {
     if (loading) {
@@ -223,7 +253,15 @@ export default function App() {
         <Settings onClose={() => setShowSettings(false)} settings={settings} onSetSetting={setSetting} onExport={requestExport} initialPage={settingsPage} />
       )}
       {!showSettings && (
-      <div className="flex h-screen overflow-hidden">
+      <div className="flex flex-col h-screen overflow-hidden">
+      {shouldShowUpdateBanner(updateInfo, settings.updateDismissedVersion) && updateInfo && (
+        <UpdateBanner
+          info={updateInfo}
+          onDownload={() => void api.openExternal(updateInfo.url)}
+          onDismiss={() => void setSetting('updateDismissedVersion', updateInfo.latest)}
+        />
+      )}
+      <div className="flex flex-1 min-h-0 overflow-hidden">
       {settings.sidebarMode === 'combined' ? (
         <CombinedNoteList
           selectedId={selectedId}
@@ -294,6 +332,7 @@ export default function App() {
           </div>
         )}
       </main>
+      </div>
       {folderToDelete && (
         <DeleteFolderModal
           folderName={folderToDelete.name}

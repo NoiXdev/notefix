@@ -1,4 +1,16 @@
 export const fr = {
+  update: {
+    title: 'Mises à jour',
+    check: 'Rechercher des mises à jour',
+    checking: 'Recherche…',
+    available: 'Mise à jour disponible : {{version}} — Télécharger',
+    upToDate: 'Vous êtes à jour ({{version}})',
+    error: 'Échec de la vérification',
+    onStart: 'Rechercher au démarrage',
+    bannerText: 'Une nouvelle version {{version}} est disponible.',
+    download: 'Télécharger',
+    dismiss: 'Masquer',
+  },
   settings: {
     sidebarTitle: 'Paramètres',
     backToNotes: 'Retour aux notes',
@@ -137,6 +149,8 @@ export const fr = {
       newNote: 'Nouvelle note',
       newFolder: 'Nouveau dossier',
       archive: 'Archiver / restaurer la note',
+      switchContextNext: 'Contexte suivant',
+      openContextPicker: 'Ouvrir le sélecteur de contexte',
       closeWindow: 'Fermer la fenêtre détachée',
     },
   },

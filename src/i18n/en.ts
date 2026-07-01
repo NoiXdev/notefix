@@ -1,4 +1,16 @@
 export const en = {
+  update: {
+    title: 'Updates',
+    check: 'Check for updates',
+    checking: 'Checking…',
+    available: 'Update available: {{version}} — Download',
+    upToDate: "You're up to date ({{version}})",
+    error: "Couldn't check",
+    onStart: 'Check for updates on launch',
+    bannerText: 'A new version {{version}} is available.',
+    download: 'Download',
+    dismiss: 'Dismiss',
+  },
   settings: {
     sidebarTitle: 'Settings',
     backToNotes: 'Back to notes',
@@ -137,6 +149,8 @@ export const en = {
       newNote: 'New note',
       newFolder: 'New folder',
       archive: 'Archive / restore note',
+      switchContextNext: 'Next context',
+      openContextPicker: 'Open context picker',
       closeWindow: 'Close detached window',
     },
   },

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faGlobe } from "@fortawesome/free-solid-svg-icons";
-import { api, type AppInfo } from "../api";
+import { api, type AppInfo, type UpdateInfo } from "../api";
 import type { ContextInfo } from "../contexts";
 import { startServerAuth } from "../serverAuth";
 import type { Stats } from "../types";
@@ -34,6 +34,48 @@ function NavItem({ label, active, onClick }: NavItemProps) {
     >
       {label}
     </button>
+  );
+}
+
+function UpdateChecker({ settings, onSetSetting }: {
+  settings: AppSettings;
+  onSetSetting: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void;
+}) {
+  const { t } = useTranslation();
+  const [state, setState] = useState<"idle" | "checking" | "error" | UpdateInfo>("idle");
+  const check = () => {
+    setState("checking");
+    api.checkForUpdate().then(setState).catch(() => setState("error"));
+  };
+  return (
+    <div className="mt-10 max-w-md">
+      <h2 className="text-sm font-semibold text-gray-800 mb-2">{t("update.title")}</h2>
+      <div className="flex items-center gap-3 flex-wrap">
+        <button
+          onClick={check}
+          disabled={state === "checking"}
+          className="px-3 py-1.5 text-sm rounded bg-gray-800 text-white hover:bg-gray-700 disabled:opacity-50"
+        >
+          {state === "checking" ? t("update.checking") : t("update.check")}
+        </button>
+        {typeof state === "object" && (state.updateAvailable ? (
+          <button onClick={() => void api.openExternal(state.url)} className="text-sm text-blue-700 underline">
+            {t("update.available", { version: state.latest })}
+          </button>
+        ) : (
+          <span className="text-sm text-gray-600">{t("update.upToDate", { version: state.current })}</span>
+        ))}
+        {state === "error" && <span className="text-sm text-red-600">{t("update.error")}</span>}
+      </div>
+      <label className="mt-4 flex items-center justify-between gap-4 text-sm text-gray-800 max-w-sm">
+        <span>{t("update.onStart")}</span>
+        <Toggle
+          checked={settings.checkUpdatesOnStart}
+          onChange={() => onSetSetting("checkUpdatesOnStart", !settings.checkUpdatesOnStart)}
+          label={t("update.onStart")}
+        />
+      </label>
+    </div>
   );
 }
 
@@ -183,6 +225,8 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
               <a href="https://docs.noix.dev" className="text-blue-700 underline">{t("settings.about.docs")}</a>
               <span className="text-gray-500 mt-2">{t("settings.about.license")}</span>
             </div>
+
+            <UpdateChecker settings={settings} onSetSetting={onSetSetting} />
 
             <div className="mt-10 max-w-md">
               <h2 className="text-sm font-semibold text-gray-800 mb-1">{t("settings.about.openSource")}</h2>

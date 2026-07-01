@@ -1,4 +1,16 @@
 export const de = {
+  update: {
+    title: 'Updates',
+    check: 'Nach Updates suchen',
+    checking: 'Suche…',
+    available: 'Update verfügbar: {{version}} — Herunterladen',
+    upToDate: 'Du bist aktuell ({{version}})',
+    error: 'Konnte nicht prüfen',
+    onStart: 'Beim Start nach Updates suchen',
+    bannerText: 'Neue Version {{version}} verfügbar.',
+    download: 'Herunterladen',
+    dismiss: 'Ausblenden',
+  },
   settings: {
     sidebarTitle: 'Einstellungen',
     backToNotes: 'Zurück zu den Notizen',
@@ -137,6 +149,8 @@ export const de = {
       newNote: 'Neue Notiz',
       newFolder: 'Neuer Ordner',
       archive: 'Notiz archivieren / wiederherstellen',
+      switchContextNext: 'Nächster Kontext',
+      openContextPicker: 'Kontext-Auswahl öffnen',
       closeWindow: 'Losgelöstes Fenster schließen',
     },
   },

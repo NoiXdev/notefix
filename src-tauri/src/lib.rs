@@ -17,6 +17,7 @@ mod storage;
 mod sync;
 mod syscheck;
 mod tray;
+mod update;
 mod widgetshare;
 
 use std::sync::Mutex;
@@ -316,6 +317,7 @@ pub fn run() {
             commands::sync_now,
             commands::sync_status,
             linkmeta::fetch_link_meta,
+            update::check_for_update,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

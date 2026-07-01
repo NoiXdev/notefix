@@ -14,6 +14,13 @@ export interface AppInfo {
   description: string;
 }
 
+export interface UpdateInfo {
+  current: string;
+  latest: string;
+  updateAvailable: boolean;
+  url: string;
+}
+
 export const api = {
   notes: {
     load: (): Promise<Note[]> => invoke("notes_load"),
@@ -201,6 +208,9 @@ export const api = {
   openExternal: (url: string): Promise<void> => openUrl(url),
 
   fetchLinkMeta: (url: string): Promise<import("./linkMeta").LinkMeta> => invoke("fetch_link_meta", { url }),
+
+  /** Check GitHub for a newer release (notify only; no download/install). */
+  checkForUpdate: (): Promise<UpdateInfo> => invoke("check_for_update"),
 
   /** Start/stop/reconfigure the local MCP server. */
   mcpApplyConfig: (c: { enabled: boolean; bind: string; port: number; token: string; authRequired: boolean; allowWrite: boolean }): Promise<void> =>

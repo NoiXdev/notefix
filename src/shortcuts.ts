@@ -7,8 +7,13 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   { id: 'newNote', labelKey: 'shortcuts.actions.newNote', defaultCombo: 'Mod+N', context: 'main' },
   { id: 'newFolder', labelKey: 'shortcuts.actions.newFolder', defaultCombo: 'Mod+Shift+N', context: 'main' },
   { id: 'archive', labelKey: 'shortcuts.actions.archive', defaultCombo: 'Mod+E', context: 'main' },
+  { id: 'switchContextNext', labelKey: 'shortcuts.actions.switchContextNext', defaultCombo: 'Mod+Shift+K', context: 'main' },
+  { id: 'openContextPicker', labelKey: 'shortcuts.actions.openContextPicker', defaultCombo: 'Mod+K', context: 'main' },
   { id: 'closeWindow', labelKey: 'shortcuts.actions.closeWindow', defaultCombo: 'Escape', context: 'window' },
 ];
+
+/** Window event the context-picker hotkey dispatches; ContextSwitcher opens on it. */
+export const OPEN_CONTEXTS_EVENT = 'notefix:open-contexts';
 
 const ACTION_IDS = new Set(SHORTCUT_ACTIONS.map(a => a.id));
 
