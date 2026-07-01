@@ -13,6 +13,14 @@
 
 * Such-Icon in Einzelkontext-Sidebar sichtbar + FindBar-Bedienung ([4a2fc35](https://github.com/NoiXdev/notefix/commit/4a2fc353290e59db9fb7f58a343322bfb0e2c67f))
 
+### Styling
+
+* **src-tauri:** rustfmt storage.rs and update.rs ([f52aa18](https://github.com/NoiXdev/notefix/commit/f52aa188de100cb383ef9194c1d08e87120c3b88))
+
+### CI/CD
+
+* make releases fully tag-driven across all version fields ([f8c1183](https://github.com/NoiXdev/notefix/commit/f8c11839df33a32a9162768b5b993fe00ee462c5))
+
 ## [0.1.2](https://github.com/NoiXdev/notefix/compare/v0.1.1...v0.1.2) (2026-07-01)
 
 ### Build System
