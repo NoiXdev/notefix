@@ -1,3 +1,9 @@
+## [0.1.2](https://github.com/NoiXdev/notefix/compare/v0.1.1...v0.1.2) (2026-07-01)
+
+### Build System
+
+* **widget:** sync widget version to the app version ([4d5d4b1](https://github.com/NoiXdev/notefix/commit/4d5d4b18c6e5995f63f0a018e37872d33c8e2a79))
+
 ## [0.1.1](https://github.com/NoiXdev/notefix/compare/v0.1.0...v0.1.1) (2026-06-30)
 
 ### CI/CD
