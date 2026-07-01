@@ -1,6 +1,6 @@
 [package]
 name = "notefix"
-version = "0.2.0"
+version = "0.1.2"
 description = "Notefix — a lightweight sticky-note desktop app"
 authors = ["noix.dev"]
 edition = "2021"
