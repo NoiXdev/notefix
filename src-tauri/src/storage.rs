@@ -114,7 +114,10 @@ pub fn note_preview(html: &str) -> String {
     let s = html.trim_start();
     let inner = match s.strip_prefix('<') {
         Some(rest) => {
-            let name: String = rest.chars().take_while(|c| c.is_ascii_alphanumeric()).collect();
+            let name: String = rest
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric())
+                .collect();
             match (name.is_empty(), s.find('>')) {
                 (false, Some(gt)) => {
                     let body = &s[gt + 1..];
@@ -238,7 +241,9 @@ impl Store {
 
     /// The full HTML content of one note, or `None` if it doesn't exist.
     pub fn load_note_content(&self, id: &str) -> rusqlite::Result<Option<String>> {
-        let mut stmt = self.conn.prepare("SELECT content FROM notes WHERE id = ?1")?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT content FROM notes WHERE id = ?1")?;
         let mut rows = stmt.query_map([id], |r| r.get::<_, String>(0))?;
         match rows.next() {
             Some(r) => Ok(Some(r?)),
@@ -272,7 +277,10 @@ impl Store {
                 continue;
             }
             let snippet = snippet_around(&plain, &q);
-            let hit = SearchHit { note: meta, snippet };
+            let hit = SearchHit {
+                note: meta,
+                snippet,
+            };
             if in_title {
                 title_hits.push(hit);
             } else {
@@ -530,7 +538,10 @@ mod tests {
         assert_eq!(note_preview("<p>Hello <b>world</b></p>"), "Hello world");
         assert_eq!(note_preview(""), "");
         assert_eq!(note_preview("<p></p>"), "");
-        assert_eq!(note_preview(&format!("<p>{}</p>", "x".repeat(100))).len(), 60);
+        assert_eq!(
+            note_preview(&format!("<p>{}</p>", "x".repeat(100))).len(),
+            60
+        );
     }
 
     #[test]
@@ -543,8 +554,12 @@ mod tests {
     #[test]
     fn load_notes_meta_has_preview_and_counts_no_content() {
         let s = store();
-        s.save_note(&note("a", r#"<p>Title</p><li data-checked="true">x</li>"#, 1000))
-            .unwrap();
+        s.save_note(&note(
+            "a",
+            r#"<p>Title</p><li data-checked="true">x</li>"#,
+            1000,
+        ))
+        .unwrap();
         let meta = s.load_notes_meta().unwrap();
         assert_eq!(meta.len(), 1);
         assert_eq!(meta[0].id, "a");
@@ -556,7 +571,10 @@ mod tests {
     fn load_note_content_returns_html_or_none() {
         let s = store();
         s.save_note(&note("a", "<p>body</p>", 1000)).unwrap();
-        assert_eq!(s.load_note_content("a").unwrap().as_deref(), Some("<p>body</p>"));
+        assert_eq!(
+            s.load_note_content("a").unwrap().as_deref(),
+            Some("<p>body</p>")
+        );
         assert_eq!(s.load_note_content("missing").unwrap(), None);
     }
 
@@ -564,9 +582,11 @@ mod tests {
     fn search_notes_ranks_title_first_and_snippets() {
         let s = store();
         // body-only match
-        s.save_note(&note("body", "<p>Zeta</p><p>the apple is red</p>", 10)).unwrap();
+        s.save_note(&note("body", "<p>Zeta</p><p>the apple is red</p>", 10))
+            .unwrap();
         // title match (higher rank)
-        s.save_note(&note("title", "<p>apple crumble</p>", 20)).unwrap();
+        s.save_note(&note("title", "<p>apple crumble</p>", 20))
+            .unwrap();
         let hits = s.search_notes("apple", 50).unwrap();
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[0].note.id, "title"); // title/preview hit ranks first
