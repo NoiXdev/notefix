@@ -5,17 +5,7 @@
 // migrated first, because a context not activated since a schema bump would
 // otherwise be missing columns that `load_notes` selects.
 
-use crate::storage::{Note, Store};
-
-/// A note paired with the context it lives in (for the combined-view badge).
-#[derive(Debug, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TaggedNote {
-    pub context_id: String,
-    pub context_label: String,
-    pub kind: String,
-    pub note: Note,
-}
+use crate::storage::{NoteMeta, Store};
 
 /// A context descriptor (subset of the registry entry) the aggregator reads from.
 pub struct Ctx {
@@ -25,10 +15,29 @@ pub struct Ctx {
     pub path: String,
 }
 
-/// Open + migrate + read every context, tag each note, and sort pinned-first
-/// then newest-first. A context whose DB can't be opened/migrated/read is
-/// skipped (the others still aggregate).
-pub fn aggregate(contexts: &[Ctx]) -> Vec<TaggedNote> {
+/// A note's list metadata tagged with its context (combined-view, lazy variant).
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaggedMeta {
+    pub context_id: String,
+    pub context_label: String,
+    pub kind: String,
+    pub note: NoteMeta,
+}
+
+/// A search hit tagged with its context (combined-view search).
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaggedHit {
+    pub context_id: String,
+    pub context_label: String,
+    pub kind: String,
+    pub note: NoteMeta,
+    pub snippet: String,
+}
+
+/// Like [`aggregate`] but returns list metadata only (no content).
+pub fn aggregate_meta(contexts: &[Ctx]) -> Vec<TaggedMeta> {
     let mut out = Vec::new();
     for c in contexts {
         let Ok(store) = Store::open(std::path::Path::new(&c.path)) else {
@@ -37,11 +46,11 @@ pub fn aggregate(contexts: &[Ctx]) -> Vec<TaggedNote> {
         if crate::migrate::run_migrations(&store.conn).is_err() {
             continue;
         }
-        let Ok(notes) = store.load_notes() else {
+        let Ok(notes) = store.load_notes_meta() else {
             continue;
         };
         for note in notes {
-            out.push(TaggedNote {
+            out.push(TaggedMeta {
                 context_id: c.id.clone(),
                 context_label: c.label.clone(),
                 kind: c.kind.clone(),
@@ -58,9 +67,43 @@ pub fn aggregate(contexts: &[Ctx]) -> Vec<TaggedNote> {
     out
 }
 
+/// Search every context and tag each hit with its context.
+pub fn search_all(contexts: &[Ctx], query: &str, limit: usize) -> Vec<TaggedHit> {
+    let mut out = Vec::new();
+    for c in contexts {
+        let Ok(store) = Store::open(std::path::Path::new(&c.path)) else {
+            continue;
+        };
+        if crate::migrate::run_migrations(&store.conn).is_err() {
+            continue;
+        }
+        let Ok(hits) = store.search_notes(query, limit) else {
+            continue;
+        };
+        for h in hits {
+            out.push(TaggedHit {
+                context_id: c.id.clone(),
+                context_label: c.label.clone(),
+                kind: c.kind.clone(),
+                note: h.note,
+                snippet: h.snippet,
+            });
+        }
+    }
+    out.sort_by(|a, b| {
+        b.note
+            .pinned
+            .cmp(&a.note.pinned)
+            .then(b.note.updated_at.cmp(&a.note.updated_at))
+    });
+    out.truncate(limit);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::Note;
 
     fn seed(path: &std::path::Path, notes: &[Note]) {
         let s = Store::open(path).unwrap();
@@ -117,7 +160,7 @@ mod tests {
                 path: p2.to_string_lossy().into(),
             },
         ];
-        let got = aggregate(&ctxs);
+        let got = aggregate_meta(&ctxs);
 
         assert_eq!(got.len(), 3);
         // pinned first, then newest-first: b2 (pinned), b1 (30), a1 (10)
@@ -156,8 +199,42 @@ mod tests {
                 path: good.to_string_lossy().into(),
             },
         ];
-        let got = aggregate(&ctxs);
+        let got = aggregate_meta(&ctxs);
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].note.id, "g");
+    }
+
+    #[test]
+    fn search_all_matches_and_tags() {
+        let dir = tempfile::tempdir().unwrap();
+        let p1 = dir.path().join("a.db");
+        seed(
+            &p1,
+            &[
+                Note {
+                    id: "a1".into(),
+                    content: "<p>apple pie</p>".into(),
+                    updated_at: 10,
+                    ..Default::default()
+                },
+                Note {
+                    id: "a2".into(),
+                    content: "<p>banana bread</p>".into(),
+                    updated_at: 20,
+                    ..Default::default()
+                },
+            ],
+        );
+        let ctxs = vec![Ctx {
+            id: "c1".into(),
+            label: "L".into(),
+            kind: "local".into(),
+            path: p1.to_string_lossy().into(),
+        }];
+        let hits = search_all(&ctxs, "apple", 50);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].note.id, "a1");
+        assert_eq!(hits[0].context_id, "c1");
+        assert!(hits[0].snippet.to_lowercase().contains("apple"));
     }
 }

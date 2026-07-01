@@ -2,7 +2,7 @@ use std::sync::Mutex;
 
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
-use crate::storage::{Note, Store};
+use crate::storage::{Note, NoteMeta, SearchHit, Store};
 
 fn now_ms() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -52,9 +52,29 @@ fn broadcast_changed(app: &AppHandle, sender_label: &str) {
 }
 
 #[tauri::command]
-pub fn notes_load(store: State<'_, Mutex<Store>>) -> Result<Vec<Note>, String> {
+pub fn notes_load(store: State<'_, Mutex<Store>>) -> Result<Vec<NoteMeta>, String> {
     let store = store.lock().map_err(|e| e.to_string())?;
-    store.load_notes().map_err(|e| e.to_string())
+    store.load_notes_meta().map_err(|e| e.to_string())
+}
+
+/// The full HTML content of one note (empty string if it no longer exists).
+#[tauri::command]
+pub fn notes_load_one(store: State<'_, Mutex<Store>>, id: String) -> Result<String, String> {
+    let store = store.lock().map_err(|e| e.to_string())?;
+    Ok(store
+        .load_note_content(&id)
+        .map_err(|e| e.to_string())?
+        .unwrap_or_default())
+}
+
+/// Full-text search within the active context (title-first), with snippets.
+#[tauri::command]
+pub fn notes_search(
+    store: State<'_, Mutex<Store>>,
+    query: String,
+) -> Result<Vec<SearchHit>, String> {
+    let store = store.lock().map_err(|e| e.to_string())?;
+    store.search_notes(&query, 50).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -133,9 +153,9 @@ pub fn notes_purge(
 }
 
 #[tauri::command]
-pub fn trash_load(store: State<'_, Mutex<Store>>) -> Result<Vec<Note>, String> {
+pub fn trash_load(store: State<'_, Mutex<Store>>) -> Result<Vec<NoteMeta>, String> {
     let store = store.lock().map_err(|e| e.to_string())?;
-    store.load_trashed().map_err(|e| e.to_string())
+    store.load_trashed_meta().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1247,20 +1267,35 @@ pub async fn run_sync_cycle(app: &AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn notes_load_all(
     reg: State<'_, Mutex<crate::profiles::Registry>>,
-) -> Result<Vec<crate::aggregate::TaggedNote>, String> {
-    let contexts: Vec<crate::aggregate::Ctx> = {
-        let r = reg.lock().map_err(|e| e.to_string())?;
-        r.contexts
-            .iter()
-            .map(|c| crate::aggregate::Ctx {
-                id: c.id.clone(),
-                label: c.label.clone(),
-                kind: c.kind.clone(),
-                path: c.path.clone(),
-            })
-            .collect()
-    };
-    Ok(crate::aggregate::aggregate(&contexts))
+) -> Result<Vec<crate::aggregate::TaggedMeta>, String> {
+    let contexts = registry_contexts(&reg)?;
+    Ok(crate::aggregate::aggregate_meta(&contexts))
+}
+
+/// Combined-view search: full-text across every context, tagged with context.
+#[tauri::command]
+pub fn notes_search_all(
+    reg: State<'_, Mutex<crate::profiles::Registry>>,
+    query: String,
+) -> Result<Vec<crate::aggregate::TaggedHit>, String> {
+    let contexts = registry_contexts(&reg)?;
+    Ok(crate::aggregate::search_all(&contexts, &query, 50))
+}
+
+/// Snapshot the registry's contexts as aggregator `Ctx` descriptors.
+fn registry_contexts(
+    reg: &State<'_, Mutex<crate::profiles::Registry>>,
+) -> Result<Vec<crate::aggregate::Ctx>, String> {
+    let r = reg.lock().map_err(|e| e.to_string())?;
+    Ok(r.contexts
+        .iter()
+        .map(|c| crate::aggregate::Ctx {
+            id: c.id.clone(),
+            label: c.label.clone(),
+            kind: c.kind.clone(),
+            path: c.path.clone(),
+        })
+        .collect())
 }
 
 /// S2b: after the note phase, transfer referenced image blobs for a bound server

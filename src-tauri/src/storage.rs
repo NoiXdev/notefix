@@ -58,6 +58,138 @@ fn row_to_note(r: &rusqlite::Row) -> rusqlite::Result<Note> {
     })
 }
 
+/// Lightweight list item: every note field except the (potentially huge) HTML
+/// content, plus a short preview and task counts computed from it. Lets the note
+/// list load without holding/shipping full content — that comes on demand.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteMeta {
+    pub id: String,
+    pub updated_at: i64,
+    pub pinned: bool,
+    pub archived: bool,
+    pub color: String,
+    pub due_at: Option<i64>,
+    pub folder_id: Option<String>,
+    pub position: i64,
+    pub deleted_at: Option<i64>,
+    pub dirty: bool,
+    pub preview: String,
+    pub tasks_done: i64,
+    pub tasks_total: i64,
+}
+
+/// A search match: the note's list metadata plus a snippet around the hit.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchHit {
+    pub note: NoteMeta,
+    pub snippet: String,
+}
+
+/// Plain text of an HTML fragment: strip tags (space at each `<`), collapse ws.
+fn strip_tags(html: &str) -> String {
+    let mut text = String::new();
+    let mut in_tag = false;
+    for c in html.chars() {
+        match c {
+            '<' => {
+                in_tag = true;
+                if !text.is_empty() && !text.ends_with(' ') {
+                    text.push(' ');
+                }
+            }
+            '>' => in_tag = false,
+            _ if !in_tag => text.push(c),
+            _ => {}
+        }
+    }
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Short plain-text title of a note's HTML — the text of the FIRST element only
+/// (mirrors the JS `getPreview`'s `firstElementChild.textContent`), first 60
+/// chars. Empty content yields "" (the UI supplies a localized fallback).
+pub fn note_preview(html: &str) -> String {
+    let s = html.trim_start();
+    let inner = match s.strip_prefix('<') {
+        Some(rest) => {
+            let name: String = rest.chars().take_while(|c| c.is_ascii_alphanumeric()).collect();
+            match (name.is_empty(), s.find('>')) {
+                (false, Some(gt)) => {
+                    let body = &s[gt + 1..];
+                    let close = format!("</{}", name.to_lowercase());
+                    let end = body.to_lowercase().find(&close).unwrap_or(body.len());
+                    body[..end].to_string()
+                }
+                _ => s.to_string(),
+            }
+        }
+        None => s.to_string(),
+    };
+    strip_tags(&inner).chars().take(60).collect()
+}
+
+/// Count Tiptap task-list items: total `data-checked="…"`, done where value is
+/// "true". Mirrors the JS `countTasks`.
+pub fn task_counts(html: &str) -> (i64, i64) {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| regex::Regex::new(r#"data-checked="([^"]*)""#).unwrap());
+    let mut total = 0;
+    let mut done = 0;
+    for cap in re.captures_iter(html) {
+        total += 1;
+        if &cap[1] == "true" {
+            done += 1;
+        }
+    }
+    (done, total)
+}
+
+fn row_to_meta(r: &rusqlite::Row) -> rusqlite::Result<NoteMeta> {
+    let content: String = r.get(1)?;
+    let (tasks_done, tasks_total) = task_counts(&content);
+    Ok(NoteMeta {
+        id: r.get(0)?,
+        updated_at: r.get(2)?,
+        pinned: r.get(3)?,
+        archived: r.get(4)?,
+        color: r.get(5)?,
+        due_at: r.get(6)?,
+        folder_id: r.get(7)?,
+        position: r.get(8)?,
+        deleted_at: r.get(9)?,
+        dirty: r.get(10)?,
+        preview: note_preview(&content),
+        tasks_done,
+        tasks_total,
+    })
+}
+
+/// A window of plain text around the first case-insensitive match of `q_lower`
+/// (already lowercased), with ellipses. Mirrors the JS `snippetAround`.
+fn snippet_around(text: &str, q_lower: &str) -> String {
+    let tl: Vec<char> = text.chars().collect();
+    let lower = text.to_lowercase();
+    match lower.find(q_lower) {
+        None => tl.iter().take(80).collect::<String>().trim().to_string(),
+        Some(byte_idx) => {
+            let char_idx = lower[..byte_idx].chars().count();
+            let start = char_idx.saturating_sub(30);
+            let end = (start + 80).min(tl.len());
+            let mut s = String::new();
+            if start > 0 {
+                s.push('…');
+            }
+            s.push_str(tl[start..end].iter().collect::<String>().trim());
+            if end < tl.len() {
+                s.push('…');
+            }
+            s
+        }
+    }
+}
+
 impl Store {
     pub fn open(path: &Path) -> rusqlite::Result<Self> {
         Ok(Self {
@@ -81,6 +213,75 @@ impl Store {
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map([], row_to_note)?;
         rows.collect()
+    }
+
+    /// List metadata for active notes — same order as `load_notes`, but content
+    /// is reduced to a preview + task counts and never returned.
+    pub fn load_notes_meta(&self) -> rusqlite::Result<Vec<NoteMeta>> {
+        let sql = format!(
+            "SELECT {COLS} FROM notes WHERE deleted_at IS NULL ORDER BY pinned DESC, position ASC"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map([], row_to_meta)?;
+        rows.collect()
+    }
+
+    /// List metadata for trashed notes (newest-deleted first).
+    pub fn load_trashed_meta(&self) -> rusqlite::Result<Vec<NoteMeta>> {
+        let sql = format!(
+            "SELECT {COLS} FROM notes WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map([], row_to_meta)?;
+        rows.collect()
+    }
+
+    /// The full HTML content of one note, or `None` if it doesn't exist.
+    pub fn load_note_content(&self, id: &str) -> rusqlite::Result<Option<String>> {
+        let mut stmt = self.conn.prepare("SELECT content FROM notes WHERE id = ?1")?;
+        let mut rows = stmt.query_map([id], |r| r.get::<_, String>(0))?;
+        match rows.next() {
+            Some(r) => Ok(Some(r?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Case-insensitive full-text search over active notes (title/preview first,
+    /// then body). Returns list metadata + a snippet for each hit.
+    pub fn search_notes(&self, query: &str, limit: usize) -> rusqlite::Result<Vec<SearchHit>> {
+        let q = query.trim().to_lowercase();
+        if q.is_empty() {
+            return Ok(vec![]);
+        }
+        let sql = format!(
+            "SELECT {COLS} FROM notes WHERE deleted_at IS NULL AND archived = 0 ORDER BY pinned DESC, position ASC"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map([], |r| {
+            let content: String = r.get(1)?;
+            Ok((row_to_meta(r)?, content))
+        })?;
+        let mut title_hits = Vec::new();
+        let mut body_hits = Vec::new();
+        for row in rows {
+            let (meta, content) = row?;
+            let plain = crate::stats::strip_html(&content);
+            let in_title = meta.preview.to_lowercase().contains(&q);
+            let in_body = plain.to_lowercase().contains(&q);
+            if !in_title && !in_body {
+                continue;
+            }
+            let snippet = snippet_around(&plain, &q);
+            let hit = SearchHit { note: meta, snippet };
+            if in_title {
+                title_hits.push(hit);
+            } else {
+                body_hits.push(hit);
+            }
+        }
+        title_hits.extend(body_hits);
+        title_hits.truncate(limit);
+        Ok(title_hits)
     }
 
     /// Alle Notizen inkl. Papierkorb (für Migration/GC-Referenzscan).
@@ -248,15 +449,6 @@ impl Store {
         Ok(())
     }
 
-    pub fn load_trashed(&self) -> rusqlite::Result<Vec<Note>> {
-        let sql = format!(
-            "SELECT {COLS} FROM notes WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC"
-        );
-        let mut stmt = self.conn.prepare(&sql)?;
-        let rows = stmt.query_map([], row_to_note)?;
-        rows.collect()
-    }
-
     pub fn purge_trashed(&self, before: Option<i64>) -> rusqlite::Result<()> {
         match before {
             Some(t) => {
@@ -331,6 +523,56 @@ mod tests {
     #[test]
     fn loads_empty_when_no_notes() {
         assert_eq!(store().load_notes().unwrap(), vec![]);
+    }
+
+    #[test]
+    fn note_preview_strips_tags_and_truncates() {
+        assert_eq!(note_preview("<p>Hello <b>world</b></p>"), "Hello world");
+        assert_eq!(note_preview(""), "");
+        assert_eq!(note_preview("<p></p>"), "");
+        assert_eq!(note_preview(&format!("<p>{}</p>", "x".repeat(100))).len(), 60);
+    }
+
+    #[test]
+    fn task_counts_counts_checked_items() {
+        let html = r#"<li data-checked="true">a</li><li data-checked="false">b</li><li data-checked="true">c</li>"#;
+        assert_eq!(task_counts(html), (2, 3));
+        assert_eq!(task_counts("<p>no tasks</p>"), (0, 0));
+    }
+
+    #[test]
+    fn load_notes_meta_has_preview_and_counts_no_content() {
+        let s = store();
+        s.save_note(&note("a", r#"<p>Title</p><li data-checked="true">x</li>"#, 1000))
+            .unwrap();
+        let meta = s.load_notes_meta().unwrap();
+        assert_eq!(meta.len(), 1);
+        assert_eq!(meta[0].id, "a");
+        assert_eq!(meta[0].preview, "Title"); // first element only, like JS getPreview
+        assert_eq!((meta[0].tasks_done, meta[0].tasks_total), (1, 1));
+    }
+
+    #[test]
+    fn load_note_content_returns_html_or_none() {
+        let s = store();
+        s.save_note(&note("a", "<p>body</p>", 1000)).unwrap();
+        assert_eq!(s.load_note_content("a").unwrap().as_deref(), Some("<p>body</p>"));
+        assert_eq!(s.load_note_content("missing").unwrap(), None);
+    }
+
+    #[test]
+    fn search_notes_ranks_title_first_and_snippets() {
+        let s = store();
+        // body-only match
+        s.save_note(&note("body", "<p>Zeta</p><p>the apple is red</p>", 10)).unwrap();
+        // title match (higher rank)
+        s.save_note(&note("title", "<p>apple crumble</p>", 20)).unwrap();
+        let hits = s.search_notes("apple", 50).unwrap();
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].note.id, "title"); // title/preview hit ranks first
+        assert!(hits[1].snippet.to_lowercase().contains("apple"));
+        assert!(s.search_notes("", 50).unwrap().is_empty());
+        assert!(s.search_notes("nomatch", 50).unwrap().is_empty());
     }
 
     #[test]
@@ -431,12 +673,12 @@ mod tests {
         s.save_note(&note("a", "<p>a</p>", 1)).unwrap();
         s.trash_note("a", 1000).unwrap();
         assert!(s.load_notes().unwrap().is_empty());
-        let t = s.load_trashed().unwrap();
+        let t = s.load_trashed_meta().unwrap();
         assert_eq!(t.len(), 1);
         assert_eq!(t[0].deleted_at, Some(1000));
         s.restore_note("a").unwrap();
         assert_eq!(s.load_notes().unwrap().len(), 1);
-        assert!(s.load_trashed().unwrap().is_empty());
+        assert!(s.load_trashed_meta().unwrap().is_empty());
     }
 
     #[test]
@@ -459,11 +701,11 @@ mod tests {
         s.trash_note("old", 100).unwrap();
         s.trash_note("new", 1000).unwrap();
         s.purge_trashed(Some(500)).unwrap();
-        let t = s.load_trashed().unwrap();
+        let t = s.load_trashed_meta().unwrap();
         assert_eq!(t.len(), 1);
         assert_eq!(t[0].id, "new");
         s.purge_trashed(None).unwrap();
-        assert!(s.load_trashed().unwrap().is_empty());
+        assert!(s.load_trashed_meta().unwrap().is_empty());
     }
 
     #[test]

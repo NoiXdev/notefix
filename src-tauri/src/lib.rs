@@ -264,6 +264,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::notes_load,
+            commands::notes_load_one,
+            commands::notes_search,
+            commands::notes_search_all,
             commands::notes_save,
             commands::notes_delete,
             commands::notes_restore,
