@@ -36,14 +36,14 @@ jobs:
         # --ignore-scripts: this job never builds the Tauri app, just the changelog.
         run: npm ci --ignore-scripts
 
-      - name: Sync package version to release tag
-        # conventional-changelog labels commits-since-the-last-tag with the
-        # package.json version. Derive the version from the tag (strip "v") and
-        # write it back so the newest section is labeled correctly.
-        # --allow-same-version makes this a no-op when they already agree.
+      - name: Sync all version fields to release tag
+        # Set the version everywhere (package.json, tauri.conf.json, Cargo.toml,
+        # lockfiles) so the release is fully tag-driven — no hand-editing — and
+        # every platform's artifacts match. conventional-changelog also reads
+        # package.json for the newest section's label.
         run: |
           TAG='${{ github.event.inputs.tag || github.ref_name }}'
-          npm version "${TAG#v}" --no-git-tag-version --allow-same-version
+          bash scripts/set-version.sh "${TAG#v}"
 
       - name: Generate full CHANGELOG.md
         run: |
@@ -59,7 +59,8 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
-          git add package.json CHANGELOG.md
+          git add package.json package-lock.json \
+            src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock CHANGELOG.md
           if git diff --cached --quiet; then
             echo 'Version and CHANGELOG.md unchanged — nothing to commit.'
           else
@@ -124,11 +125,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Sync package version to release tag
+      - name: Sync all version fields to release tag
         shell: bash
         run: |
           TAG='${{ github.event.inputs.tag || github.ref_name }}'
-          npm version "${TAG#v}" --no-git-tag-version --allow-same-version
+          bash scripts/set-version.sh "${TAG#v}"
 
       - name: Build & upload (tauri-action)
         uses: tauri-apps/tauri-action@v0
@@ -162,10 +163,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Sync package version to release tag
+      - name: Sync all version fields to release tag
         run: |
           TAG='${{ github.event.inputs.tag || github.ref_name }}'
-          npm version "${TAG#v}" --no-git-tag-version --allow-same-version
+          bash scripts/set-version.sh "${TAG#v}"
 
       - name: Set up code signing
         # Import the Developer ID cert into a dedicated keychain, derive the
