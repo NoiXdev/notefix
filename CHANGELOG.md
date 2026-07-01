@@ -1,10 +1,26 @@
+## [0.2.0](https://github.com/NoiXdev/notefix/compare/v0.1.2...v) (2026-07-01)
+
+
+### Features
+
+* context-switch hotkeys and check-for-updates ([cacfb9f](https://github.com/NoiXdev/notefix/commit/cacfb9f580e33df2f4a98c379504f2e33d0ac54a))
+* Konfetti-Easter-Egg bei Mittelklick ([9550773](https://github.com/NoiXdev/notefix/commit/95507737a64ee534a93c40bd0a829ea56521360a))
+* Lade-Overlay beim Öffnen sehr großer Notizen ([1a6553a](https://github.com/NoiXdev/notefix/commit/1a6553a91442772c65239eebb59bc6954ae19504))
+* lazy per-note loading — meta list, on-demand content, SQL search ([62216ea](https://github.com/NoiXdev/notefix/commit/62216ea581948970236934a38b821cd53a69d3ed))
+* Notiz-Suche (Cmd+P) und In-Notiz-Suche (Cmd+F) ([3fe2e9c](https://github.com/NoiXdev/notefix/commit/3fe2e9c8fd1202db2a196904adc88edcae9430ea))
+* **rust:** lazy note loading — NoteMeta list, load-one, SQL search ([d1d629b](https://github.com/NoiXdev/notefix/commit/d1d629b5f9de933691e70bbff029938e53e5ba37))
+
+
+### Bug Fixes
+
+* Such-Icon in Einzelkontext-Sidebar sichtbar + FindBar-Bedienung ([4a2fc35](https://github.com/NoiXdev/notefix/commit/4a2fc353290e59db9fb7f58a343322bfb0e2c67f))
+
+## [0.1.2](https://github.com/NoiXdev/notefix/compare/v0.1.1...v0.1.2) (2026-07-01)
+
 ## [0.1.1](https://github.com/NoiXdev/notefix/compare/v0.1.0...v0.1.1) (2026-06-30)
 
-### CI/CD
+## [0.1.0](https://github.com/NoiXdev/notefix/compare/ab26c991711ab724f5cdb0490387842692f40d63...v0.1.0) (2026-06-30)
 
-* build, embed & notarize the macOS widget in the release ([021521a](https://github.com/NoiXdev/notefix/commit/021521a776a9732c3e9dc6b1bb9f6dd95706ef86))
-
-## [0.1.0](https://github.com/NoiXdev/notefix/compare/50e04359e47ee063f34f4c86f0fea528bdee1c28...v0.1.0) (2026-06-30)
 
 ### Features
 
@@ -177,6 +193,7 @@
 * wire trash into App + settings UI (enable + retention days) ([25f641e](https://github.com/NoiXdev/notefix/commit/25f641e346a209802ac918421989e9c1695c44de))
 * workspace picker + sync-status badge + bridge + i18n ([787647a](https://github.com/NoiXdev/notefix/commit/787647a01df77e37bfda4efb4d8d1f85bb1bc131))
 
+
 ### Bug Fixes
 
 * **build:** compile the macOS widget shim per target arch ([a820c81](https://github.com/NoiXdev/notefix/commit/a820c813e90056837d498657cf0ab09c9629fa82))
@@ -202,49 +219,3 @@
 * **src-tauri:** gate macOS-only RunEvent::Reopen behind cfg ([671a262](https://github.com/NoiXdev/notefix/commit/671a262f5fe7d5c0505dc3ab5e18fd2bbaa43c1e))
 * surface 'Beim Schließen' setting + expand Settings e2e ([bcf6dee](https://github.com/NoiXdev/notefix/commit/bcf6dee034e6a900b1f024aaabad460d3af4a47b))
 
-### Refactor
-
-* clamp context menu to viewport and guard right-click on missing handler ([be2b015](https://github.com/NoiXdev/notefix/commit/be2b01552d12c7913b04361586fc6bf175dbd047))
-* drop unused FolderRow depth prop; root drop zone gate covers folders ([971bb1c](https://github.com/NoiXdev/notefix/commit/971bb1c001a6429ee90ebbfae903aa3e6a890ae4))
-* gate Store::open_in_memory behind cfg(test) ([67cee0b](https://github.com/NoiXdev/notefix/commit/67cee0b5198c982da9c60e6e4a4f06dcf3654f2c))
-* remove dead pinnedDisplayMode setting (superseded by pinnedScope) ([870489e](https://github.com/NoiXdev/notefix/commit/870489e6888f7a2138b5bc3fb1219fd5140e5a66))
-* remove dead webkit-app-region CSS and tidy crate metadata ([af4dcf9](https://github.com/NoiXdev/notefix/commit/af4dcf979784345823efa1fb6d875534b3c03c3c))
-* restore exits markdown mode; trim-compare revision dedup; clamp settings inputs ([1755e63](https://github.com/NoiXdev/notefix/commit/1755e63dd80278467bc68967e1ab1201561b92bf))
-* sanitize path separators in export default filename ([71e76e0](https://github.com/NoiXdev/notefix/commit/71e76e0c20e8480045888c5df80b92eb52a4dafb))
-
-### Documentation
-
-* correct copyright/author attribution to noix.dev ([95d7c21](https://github.com/NoiXdev/notefix/commit/95d7c211db70143ca2b3e7a91e9c8722580a8bf1))
-* replace template README and add project docs + metadata ([8ebb0ce](https://github.com/NoiXdev/notefix/commit/8ebb0ceb0e6f76950e98649da755a6ff1bda962e))
-
-### Styling
-
-* **src-tauri:** apply rustfmt and fix two clippy lints ([3c33dab](https://github.com/NoiXdev/notefix/commit/3c33dabe1582f64d9c00cb65210c0b194c70ea38))
-
-### Testing
-
-* C1 e2e (workspace picker) + dead-code cleanup ([a800b8d](https://github.com/NoiXdev/notefix/commit/a800b8daa534e661686232fd70efa2894b4351ba))
-* C2 combined-view e2e + verify gate ([8e94c52](https://github.com/NoiXdev/notefix/commit/8e94c52c6c9111d33b64c8f8fa513c9bd030f2fe))
-* e2e for About page ([0cd9219](https://github.com/NoiXdev/notefix/commit/0cd9219f5d0aeaef7f4eaa5de36402deff84b425))
-* e2e for context switcher + Kontexte page ([4acfd38](https://github.com/NoiXdev/notefix/commit/4acfd38bc7594340403f5c6ba3c9e87b50cf11a2))
-* e2e for copy-format setting ([8f5787f](https://github.com/NoiXdev/notefix/commit/8f5787fa96a51983501dbcd83193123c4962da6a))
-* e2e for editable shortcuts ([9e5c8a4](https://github.com/NoiXdev/notefix/commit/9e5c8a4ebffe181aafc784a5ecd4e11aeb8c04c8))
-* e2e for export image-mode dialog ([89b84ed](https://github.com/NoiXdev/notefix/commit/89b84ed4606f75eda5031d19c3f303324213b0e4))
-* e2e for free-form dashboard grid ([f372a89](https://github.com/NoiXdev/notefix/commit/f372a895672c29462deeccd2700e9fea62bae71c))
-* e2e for language switching ([878adf2](https://github.com/NoiXdev/notefix/commit/878adf262a15efc3b94172aa0f40dc138c1b0dc2))
-* e2e for link-preview settings ([d2ec8ff](https://github.com/NoiXdev/notefix/commit/d2ec8ff1b3c933f2697325bca02423d822d0e0ed))
-* e2e for MCP settings page + fix export-format e2e parallel flakiness ([72e85dc](https://github.com/NoiXdev/notefix/commit/72e85dc990bdc2e38dced7438bb887b21e2603e3))
-* e2e for system-check startup modal ([79b73d7](https://github.com/NoiXdev/notefix/commit/79b73d7b6916f80e6af705e30ee08d759662cacf))
-* e2e for the About open-source list ([cff683d](https://github.com/NoiXdev/notefix/commit/cff683d5e13fdd11a2976a28da3c56d72882bd24))
-* e2e for the export-format modal ([7607410](https://github.com/NoiXdev/notefix/commit/7607410ceca5e17e6a665e39752031e96b5ed59e))
-* Playwright e2e harness (vite dev server + Tauri IPC stub) + smoke ([970ca56](https://github.com/NoiXdev/notefix/commit/970ca56eb7ef7a6e09628f6637159999a5d8d55f))
-
-### Build System
-
-* add @dnd-kit/core + emoji-picker-react ([bac664e](https://github.com/NoiXdev/notefix/commit/bac664efcfa1e42c2a09f99c0a88128eba688f5e))
-* add react-grid-layout + per-widget grid sizes ([cd5c240](https://github.com/NoiXdev/notefix/commit/cd5c240311c198234d97a90bd3a2dc073295d2a7))
-* add rusqlite, serde, dirs backend deps ([50e0435](https://github.com/NoiXdev/notefix/commit/50e04359e47ee063f34f4c86f0fea528bdee1c28))
-
-### CI/CD
-
-* add CI + release workflows, dependabot, and issue templates ([6836137](https://github.com/NoiXdev/notefix/commit/68361372adb513c3ef38e64ba14f9fb89eb0166d))
