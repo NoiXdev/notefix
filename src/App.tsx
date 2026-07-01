@@ -17,6 +17,7 @@ import Dashboard from './components/Dashboard';
 import SystemCheckModal from './components/SystemCheckModal';
 import WorkspacePicker from './components/WorkspacePicker';
 import UpdateBanner from './components/UpdateBanner';
+import SearchModal from './components/SearchModal';
 import { shouldShowUpdateBanner } from './updateCheck';
 import type { UpdateInfo } from './api';
 import { runSystemChecks, type SystemCheck } from './systemChecks';
@@ -51,6 +52,7 @@ export default function App() {
   const [activeContextId, setActiveContextId] = useState<string>('');
   const [contexts, setContexts] = useState<ContextInfo[]>([]);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
   const pendingSelectRef = useRef<string | null>(null);
   const initView = useRef(false);
   const selectNote = (id: string) => { setSelectedId(id); setView('editor'); };
@@ -179,6 +181,8 @@ export default function App() {
         return;
       }
       if (showSettings) return;
+      // Note finder works even while editing (before the input/editable guard).
+      if (combo === bindings.openSearch) { e.preventDefault(); setSearchOpen(o => !o); return; }
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
       if (combo === bindings.newFolder) { e.preventDefault(); void createFolder(i18n.t('noteList.newFolderName'), null); return; }
@@ -249,6 +253,17 @@ export default function App() {
 
   return (
     <>
+      {searchOpen && (
+        <SearchModal
+          scope={settings.searchScope}
+          onScope={s => setSetting('searchScope', s)}
+          onClose={() => setSearchOpen(false)}
+          onOpenNote={(id, contextId) => {
+            setShowSettings(false);
+            if (contextId) selectCombined(id, contextId); else selectNote(id);
+          }}
+        />
+      )}
       {showSettings && (
         <Settings onClose={() => setShowSettings(false)} settings={settings} onSetSetting={setSetting} onExport={requestExport} initialPage={settingsPage} />
       )}
@@ -269,6 +284,7 @@ export default function App() {
           onSelectNote={selectCombined}
           onCreate={handleCreate}
           onOpenSettings={() => { setSettingsPage(undefined); setShowSettings(true); }}
+          onOpenSearch={() => setSearchOpen(true)}
           onOpenContexts={() => { setSettingsPage('contexts'); setShowSettings(true); }}
           dateFormat={settings.dateFormat}
         />
@@ -322,7 +338,7 @@ export default function App() {
             onToggleEdit={() => setDashEdit(v => !v)}
           />
         ) : selectedNote ? (
-          <NoteEditor note={selectedNote} onChange={updateNote} onSetDue={setDue} autosaveDelay={settings.autosaveDelay} linkPreviewEnabled={settings.linkPreviewEnabled} linkPreviewMode={settings.linkPreviewMode} copyFormat={settings.copyFormat} />
+          <NoteEditor note={selectedNote} onChange={updateNote} onSetDue={setDue} autosaveDelay={settings.autosaveDelay} linkPreviewEnabled={settings.linkPreviewEnabled} linkPreviewMode={settings.linkPreviewMode} copyFormat={settings.copyFormat} findShortcut={resolveBindings(settings.shortcuts).findInNote} />
         ) : (
           <div className="flex h-full items-center justify-center" style={{ background: '#fef9c3' }}>
             <div className="text-center" style={{ color: '#b59f3b' }}>

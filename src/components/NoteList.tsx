@@ -9,7 +9,7 @@ import type { PinnedScope, FolderColorStyle } from '../hooks/useSettings';
 import ContextMenu, { type ContextMenuItem } from './ContextMenu';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import type { IconDefinition } from '@fortawesome/fontawesome-svg-core';
-import { faThumbtack, faBoxArchive, faRightLong, faTrash, faTrashCan, faFileExport, faPalette, faArrowDownAZ, faCheck, faFolderPlus, faPen, faTableColumns, faNoteSticky, faGear, faFolder } from '@fortawesome/free-solid-svg-icons';
+import { faThumbtack, faBoxArchive, faRightLong, faTrash, faTrashCan, faFileExport, faPalette, faArrowDownAZ, faCheck, faFolderPlus, faPen, faTableColumns, faNoteSticky, faGear, faFolder, faMagnifyingGlass } from '@fortawesome/free-solid-svg-icons';
 import ConfirmDialog from './ConfirmDialog';
 import FolderCustomizer from './FolderCustomizer';
 import Logo from './Logo';
@@ -30,6 +30,7 @@ interface Props {
   onCreate: () => void;
   onDelete: (id: string) => void;
   onOpenSettings: () => void;
+  onOpenSearch?: () => void;
   onOpenDashboard?: () => void;
   onTogglePin?: (id: string, pinned: boolean) => void;
   onArchive?: (id: string, archived: boolean) => void;
@@ -73,7 +74,7 @@ const SORT_OPTIONS: { value: string; labelKey: string }[] = [
 export default function NoteList(props: Props) {
   const { t } = useTranslation();
   const {
-    notes, folders, selectedId, onSelect, onCreate, onDelete, onOpenSettings, onOpenDashboard,
+    notes, folders, selectedId, onSelect, onCreate, onDelete, onOpenSettings, onOpenSearch, onOpenDashboard,
     onTogglePin, onArchive, onSetColor, onMoveNote, onCreateFolder, onRenameFolder, onDeleteFolder,
     onReorderNotes, onReorderFolders, onSetFolderIcon, onSetFolderColor, onSetFolderSort,
     dateFormat = 'auto', pinnedScope = 'perFolder', folderColorStyle = 'icon',
@@ -238,6 +239,11 @@ export default function NoteList(props: Props) {
             <span className="text-gray-200 text-xs font-semibold uppercase tracking-widest">{view === 'archived' ? t('noteList.headerArchive') : view === 'trash' ? t('noteList.headerTrash') : 'Notefix'}</span>
           </div>
           <div className="flex items-center gap-1">
+            {onOpenSearch && (
+              <button onClick={onOpenSearch} className="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 rounded" title={t('search.open')}>
+                <FontAwesomeIcon icon={faMagnifyingGlass} className="text-[13px]" />
+              </button>
+            )}
             {view === 'active' && (
               <button onClick={onCreate} className="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 rounded" title={t('noteList.newNote')}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>

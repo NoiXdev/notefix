@@ -15,6 +15,9 @@ import { countTasks } from '../tasks';
 import { ResizableImage } from './ResizableImage';
 import { CodeBlock } from '../codeBlock';
 import { LinkPreview, LinkPreviewCtx, type LinkDisplay } from './LinkPreviewNode';
+import { SearchHighlight } from '../editor/searchHighlight';
+import FindBar from './FindBar';
+import { matchesCombo } from '../shortcuts';
 import { isBareUrl } from '../linkMeta';
 import type { Note } from '../types';
 import { api } from '../api';
@@ -61,6 +64,7 @@ interface Props {
   linkPreviewEnabled?: boolean;
   linkPreviewMode?: LinkDisplay;
   copyFormat?: CopyFormat;
+  findShortcut?: string;
 }
 
 interface ToolbarBtnProps {
@@ -86,9 +90,10 @@ function ToolbarBtn({ onClick, active, title, children }: ToolbarBtnProps) {
   );
 }
 
-export default function NoteEditor({ note, onChange, isWindow = false, onSetDue, autosaveDelay = 400, linkPreviewEnabled = true, linkPreviewMode = 'card', copyFormat = 'md' }: Props) {
+export default function NoteEditor({ note, onChange, isWindow = false, onSetDue, autosaveDelay = 400, linkPreviewEnabled = true, linkPreviewMode = 'card', copyFormat = 'md', findShortcut = 'Mod+F' }: Props) {
   const { t } = useTranslation();
   const [pinned, setPinned] = useState(false);
+  const [findOpen, setFindOpen] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const pendingSave = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipNextUpdate = useRef(false);
@@ -120,6 +125,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
       TaskItem.configure({ nested: true }),
       ResizableImage.configure({ inline: false, allowBase64: true }),
       LinkPreview,
+      SearchHighlight,
     ],
     content: note.content || '<p></p>',
     onUpdate: ({ editor: e }) => {
@@ -173,6 +179,16 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
       },
     },
   });
+
+  // The configured shortcut opens the in-note find bar. Handled here (not in the
+  // global handler) so it works over the contentEditable editor.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (matchesCombo(e, findShortcut)) { e.preventDefault(); setFindOpen(true); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [findShortcut]);
 
   // Sync editor content when switching to a different note
   useEffect(() => {
@@ -290,6 +306,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
 
   return (
     <div className="flex flex-col h-full relative" style={{ background: '#fef9c3' }}>
+      {findOpen && editor && !mdMode && <FindBar editor={editor} onClose={() => setFindOpen(false)} />}
       {/* Top-right cluster: live status (words/chars or Ln/Col) + autosave indicator */}
       <div className={`absolute right-2 ${isWindow ? 'top-10' : 'top-1'} z-10 flex items-center gap-2`}>
         <span className="font-mono text-[11px] text-gray-500 select-none pointer-events-none whitespace-nowrap">{statusText}</span>
@@ -471,6 +488,13 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
         />
 
         <div className="w-px h-5 bg-yellow-400 mx-1" />
+        {!mdMode && (
+          <ToolbarBtn onClick={() => setFindOpen(true)} active={findOpen} title={t('editor.find')}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="11" cy="11" r="7" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+          </ToolbarBtn>
+        )}
         <ToolbarBtn onClick={() => setHistoryOpen(true)} title={t('editor.history')}>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M3 3v5h5" /><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8" /><path d="M12 7v5l3 2" />

@@ -26,6 +26,10 @@
 .ProseMirror { caret-color: #1c1917; }
 .ProseMirror ul[data-type="taskList"] li > div { min-height: 1.4em; }
 
+/* In-note search highlights */
+.ProseMirror .search-match { background: #fde68a; border-radius: 2px; }
+.ProseMirror .search-match-current { background: #fb923c; color: #1c1917; }
+
 .ProseMirror p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);
   color: #b59f3b;

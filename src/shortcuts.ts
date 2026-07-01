@@ -9,6 +9,8 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   { id: 'archive', labelKey: 'shortcuts.actions.archive', defaultCombo: 'Mod+E', context: 'main' },
   { id: 'switchContextNext', labelKey: 'shortcuts.actions.switchContextNext', defaultCombo: 'Mod+Shift+K', context: 'main' },
   { id: 'openContextPicker', labelKey: 'shortcuts.actions.openContextPicker', defaultCombo: 'Mod+K', context: 'main' },
+  { id: 'openSearch', labelKey: 'shortcuts.actions.openSearch', defaultCombo: 'Mod+P', context: 'main' },
+  { id: 'findInNote', labelKey: 'shortcuts.actions.findInNote', defaultCombo: 'Mod+F', context: 'main' },
   { id: 'closeWindow', labelKey: 'shortcuts.actions.closeWindow', defaultCombo: 'Escape', context: 'window' },
 ];
 

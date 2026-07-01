@@ -42,6 +42,7 @@ export interface AppSettings {
   mcpAllowWrite: boolean;
   checkUpdatesOnStart: boolean;
   updateDismissedVersion: string;
+  searchScope: 'context' | 'global';
 }
 
 const DEFAULT_LAYOUT: DashboardWidget[] = [
@@ -79,6 +80,7 @@ const DEFAULTS: AppSettings = {
   mcpAllowWrite: false,
   checkUpdatesOnStart: true,
   updateDismissedVersion: '',
+  searchScope: 'context',
 };
 
 function isGridWidget(x: unknown): x is DashboardWidget {
@@ -145,6 +147,7 @@ export function useSettings() {
       mcpAllowWrite: raw.mcpAllowWrite === 'true',
       checkUpdatesOnStart: raw.checkUpdatesOnStart !== 'false',
       updateDismissedVersion: typeof raw.updateDismissedVersion === 'string' ? raw.updateDismissedVersion : '',
+      searchScope: raw.searchScope === 'global' ? 'global' : 'context',
     });
     setLoaded(true);
   }, []);

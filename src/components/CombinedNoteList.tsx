@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faGlobe, faPlus } from '@fortawesome/free-solid-svg-icons';
+import { faGlobe, faPlus, faMagnifyingGlass } from '@fortawesome/free-solid-svg-icons';
 import { api } from '../api';
 import { getPreview } from '../preview';
 import { formatDate, type DateFormat } from '../dates';
@@ -15,11 +15,12 @@ interface Props {
   onSelectNote: (noteId: string, contextId: string) => void;
   onCreate: () => void;
   onOpenSettings: () => void;
+  onOpenSearch?: () => void;
   onOpenContexts: () => void;
   dateFormat: DateFormat;
 }
 
-export default function CombinedNoteList({ selectedId, onSelectNote, onCreate, onOpenContexts, dateFormat }: Props) {
+export default function CombinedNoteList({ selectedId, onSelectNote, onCreate, onOpenSearch, onOpenContexts, dateFormat }: Props) {
   const { t } = useTranslation();
   const [items, setItems] = useState<CombinedNote[]>([]);
 
@@ -40,9 +41,16 @@ export default function CombinedNoteList({ selectedId, onSelectNote, onCreate, o
       </div>
       <div className="flex items-center justify-between px-3 py-2 border-b border-gray-900">
         <span className="text-xs text-gray-400">{t('combined.allContexts')}</span>
-        <button onClick={onCreate} title={t('noteList.newNote')} className="text-gray-400 hover:text-white">
-          <FontAwesomeIcon icon={faPlus} />
-        </button>
+        <div className="flex items-center gap-2">
+          {onOpenSearch && (
+            <button onClick={onOpenSearch} title={t('search.open')} className="text-gray-400 hover:text-white">
+              <FontAwesomeIcon icon={faMagnifyingGlass} />
+            </button>
+          )}
+          <button onClick={onCreate} title={t('noteList.newNote')} className="text-gray-400 hover:text-white">
+            <FontAwesomeIcon icon={faPlus} />
+          </button>
+        </div>
       </div>
       <div className="flex-1 overflow-y-auto">
         {items.length === 0 && (
