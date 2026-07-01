@@ -21,12 +21,18 @@ pub struct UpdateInfo {
 /// (missing/garbage components count as 0).
 pub fn is_newer(current: &str, latest: &str) -> bool {
     fn parts(s: &str) -> Vec<u64> {
-        s.trim().trim_start_matches('v').split('.')
-            .map(|p| p.trim().parse::<u64>().unwrap_or(0)).collect()
+        s.trim()
+            .trim_start_matches('v')
+            .split('.')
+            .map(|p| p.trim().parse::<u64>().unwrap_or(0))
+            .collect()
     }
     let (c, l) = (parts(current), parts(latest));
     for i in 0..c.len().max(l.len()) {
-        let (cv, lv) = (c.get(i).copied().unwrap_or(0), l.get(i).copied().unwrap_or(0));
+        let (cv, lv) = (
+            c.get(i).copied().unwrap_or(0),
+            l.get(i).copied().unwrap_or(0),
+        );
         if lv != cv {
             return lv > cv;
         }
@@ -45,7 +51,9 @@ pub async fn check_for_update() -> Result<UpdateInfo, String> {
         .map_err(|e| e.to_string())?;
 
     let resp = client
-        .get(format!("https://api.github.com/repos/{REPO}/releases/latest"))
+        .get(format!(
+            "https://api.github.com/repos/{REPO}/releases/latest"
+        ))
         .header("Accept", "application/vnd.github+json")
         .send()
         .await
@@ -56,13 +64,26 @@ pub async fn check_for_update() -> Result<UpdateInfo, String> {
     }
 
     let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-    let latest = body.get("tag_name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let latest = body
+        .get("tag_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     if latest.is_empty() {
         return Err("no release tag found".into());
     }
-    let url = body.get("html_url").and_then(|v| v.as_str()).unwrap_or(RELEASES_URL).to_string();
+    let url = body
+        .get("html_url")
+        .and_then(|v| v.as_str())
+        .unwrap_or(RELEASES_URL)
+        .to_string();
 
-    Ok(UpdateInfo { update_available: is_newer(&current, &latest), current, latest, url })
+    Ok(UpdateInfo {
+        update_available: is_newer(&current, &latest),
+        current,
+        latest,
+        url,
+    })
 }
 
 #[cfg(test)]
