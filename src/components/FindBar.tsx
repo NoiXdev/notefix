@@ -11,10 +11,24 @@ export default function FindBar({ editor, onClose }: { editor: Editor; onClose: 
   const [query, setQuery] = useState('');
   const [info, setInfo] = useState({ total: 0, current: -1 });
   const inputRef = useRef<HTMLInputElement>(null);
+  const barRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { inputRef.current?.focus(); inputRef.current?.select(); }, []);
   // Clear highlights when the bar closes.
   useEffect(() => () => { if (!editor.isDestroyed) editor.commands.clearSearch(); }, [editor]);
+  // Close when clicking anywhere outside the bar. The toolbar toggle is exempt
+  // so its own handler can close (a second click) without immediately reopening.
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      const el = e.target as Element | null;
+      if (!el) return;
+      if (barRef.current?.contains(el)) return;
+      if (el.closest('[data-find-toggle]')) return;
+      onClose();
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [onClose]);
 
   const sync = () => { const s = searchState(editor); setInfo({ total: s.matches.length, current: s.current }); };
   const run = (q: string) => { setQuery(q); editor.commands.setSearch(q); sync(); };
@@ -23,7 +37,7 @@ export default function FindBar({ editor, onClose }: { editor: Editor; onClose: 
   const label = info.total > 0 ? `${info.current + 1}/${info.total}` : (query ? t('search.noMatches') : '');
 
   return (
-    <div className="absolute left-1/2 top-3 z-20 flex -translate-x-1/2 items-center gap-1 rounded-lg border border-yellow-300 bg-white px-2 py-1 shadow-md">
+    <div ref={barRef} className="absolute left-1/2 top-3 z-20 flex -translate-x-1/2 items-center gap-1 rounded-lg border border-yellow-300 bg-white px-2 py-1 shadow-md">
       <FontAwesomeIcon icon={faMagnifyingGlass} className="text-xs text-gray-400" />
       <input
         ref={inputRef}

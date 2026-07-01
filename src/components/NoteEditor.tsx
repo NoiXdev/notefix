@@ -72,11 +72,14 @@ interface ToolbarBtnProps {
   active?: boolean;
   title: string;
   children: React.ReactNode;
+  /** Marks the button so FindBar's click-outside handler ignores it (lets its own toggle close). */
+  findToggle?: boolean;
 }
 
-function ToolbarBtn({ onClick, active, title, children }: ToolbarBtnProps) {
+function ToolbarBtn({ onClick, active, title, children, findToggle }: ToolbarBtnProps) {
   return (
     <button
+      data-find-toggle={findToggle ? '' : undefined}
       onMouseDown={e => { e.preventDefault(); onClick(); }}
       title={title}
       className={`w-8 h-8 flex items-center justify-center rounded text-sm transition-colors select-none ${
@@ -489,7 +492,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
 
         <div className="w-px h-5 bg-yellow-400 mx-1" />
         {!mdMode && (
-          <ToolbarBtn onClick={() => setFindOpen(true)} active={findOpen} title={t('editor.find')}>
+          <ToolbarBtn onClick={() => setFindOpen(o => !o)} active={findOpen} findToggle title={t('editor.find')}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="11" cy="11" r="7" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
             </svg>

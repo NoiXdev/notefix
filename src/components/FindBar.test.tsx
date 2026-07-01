@@ -41,6 +41,31 @@ describe('FindBar', () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  it('closes when clicking outside the bar', () => {
+    const onClose = vi.fn();
+    render(<FindBar editor={fakeEditor()} onClose={onClose} />);
+    fireEvent.mouseDown(document.body);
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it('does not close when clicking inside the bar', () => {
+    const onClose = vi.fn();
+    render(<FindBar editor={fakeEditor()} onClose={onClose} />);
+    fireEvent.mouseDown(screen.getByRole('textbox'));
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('ignores clicks on the toolbar find toggle so its own handler can close', () => {
+    const onClose = vi.fn();
+    const toggle = document.createElement('button');
+    toggle.setAttribute('data-find-toggle', '');
+    document.body.appendChild(toggle);
+    render(<FindBar editor={fakeEditor()} onClose={onClose} />);
+    fireEvent.mouseDown(toggle);
+    expect(onClose).not.toHaveBeenCalled();
+    toggle.remove();
+  });
+
   it('clears the highlight when it unmounts', () => {
     const editor = fakeEditor();
     const { unmount } = render(<FindBar editor={editor} onClose={() => {}} />);

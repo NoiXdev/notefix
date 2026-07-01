@@ -300,6 +300,7 @@ export default function App() {
         onDelete={handleDelete}
         onOpenSettings={() => { setSettingsPage(undefined); setShowSettings(true); }}
         onOpenContexts={() => { setSettingsPage('contexts'); setShowSettings(true); }}
+        onOpenSearch={() => setSearchOpen(true)}
         onOpenDashboard={() => setView('dashboard')}
         onTogglePin={setPinned}
         onArchive={setArchived}
