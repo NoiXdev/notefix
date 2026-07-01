@@ -12,6 +12,11 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.noix.notefix.widget
+        # Fallback versions; the release/build scripts override these with the
+        # app version (from the git tag / tauri.conf.json) so the widget's
+        # version always matches the app.
+        MARKETING_VERSION: "0.0.0"
+        CURRENT_PROJECT_VERSION: "1"
         INFOPLIST_FILE: NotefixWidget/Info.plist
         CODE_SIGN_ENTITLEMENTS: NotefixWidget/NotefixWidget.entitlements
         GENERATE_INFOPLIST_FILE: NO

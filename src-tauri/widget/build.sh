@@ -11,6 +11,9 @@ APP="$ROOT/src-tauri/target/release/bundle/macos/Notefix.app"
 APP_ENT="$ROOT/src-tauri/entitlements.plist"
 WIDGET_ENT="$WIDGET_DIR/NotefixWidget/NotefixWidget.entitlements"
 
+# Keep the widget version in lockstep with the app version (tauri.conf.json).
+VERSION="$(node -p "require('$ROOT/src-tauri/tauri.conf.json').version")"
+
 # Resolve a Developer ID signing identity (first matching cert hash).
 # Override the match string by exporting SIGNING_IDENTITY, e.g.
 #   SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID)"
@@ -27,7 +30,8 @@ echo "==> 2/5 build widget extension"
   command -v xcodegen >/dev/null || brew install xcodegen
   xcodegen generate
   xcodebuild -project NotefixWidget.xcodeproj -scheme NotefixWidget -configuration Release \
-    -derivedDataPath build CODE_SIGNING_ALLOWED=NO build )
+    -derivedDataPath build CODE_SIGNING_ALLOWED=NO \
+    MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$VERSION" build )
 APPEX="$WIDGET_DIR/build/Build/Products/Release/NotefixWidget.appex"
 
 echo "==> 3/5 embed .appex"

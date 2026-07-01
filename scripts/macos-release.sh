@@ -52,7 +52,8 @@ echo "==> 2/6 Build the WidgetKit extension (universal)"
   xcodegen generate
   xcodebuild -project NotefixWidget.xcodeproj -scheme NotefixWidget \
     -configuration Release -derivedDataPath build \
-    ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO build )
+    ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO \
+    MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$VERSION" build )
 APPEX="$WIDGET_DIR/build/Build/Products/Release/NotefixWidget.appex"
 [ -d "$APPEX" ] || { echo "widget .appex not found at $APPEX"; exit 1; }
 
