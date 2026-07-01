@@ -111,6 +111,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = NotefixWidget/NotefixWidget.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = NotefixWidget/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -119,6 +120,7 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = dev.noix.notefix.widget;
 				SDKROOT = macosx;
 				SKIP_INSTALL = YES;
@@ -250,6 +252,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = NotefixWidget/NotefixWidget.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = NotefixWidget/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -258,6 +261,7 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = dev.noix.notefix.widget;
 				SDKROOT = macosx;
 				SKIP_INSTALL = YES;
