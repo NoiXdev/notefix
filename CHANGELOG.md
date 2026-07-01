@@ -1,32 +1,3 @@
-## [0.2.0](https://github.com/NoiXdev/notefix/compare/v0.1.2...v0.2.0) (2026-07-01)
-
-### Features
-
-* context-switch hotkeys and check-for-updates ([cacfb9f](https://github.com/NoiXdev/notefix/commit/cacfb9f580e33df2f4a98c379504f2e33d0ac54a))
-* Konfetti-Easter-Egg bei Mittelklick ([9550773](https://github.com/NoiXdev/notefix/commit/95507737a64ee534a93c40bd0a829ea56521360a))
-* Lade-Overlay beim Öffnen sehr großer Notizen ([1a6553a](https://github.com/NoiXdev/notefix/commit/1a6553a91442772c65239eebb59bc6954ae19504))
-* lazy per-note loading — meta list, on-demand content, SQL search ([62216ea](https://github.com/NoiXdev/notefix/commit/62216ea581948970236934a38b821cd53a69d3ed))
-* Notiz-Suche (Cmd+P) und In-Notiz-Suche (Cmd+F) ([3fe2e9c](https://github.com/NoiXdev/notefix/commit/3fe2e9c8fd1202db2a196904adc88edcae9430ea))
-* **rust:** lazy note loading — NoteMeta list, load-one, SQL search ([d1d629b](https://github.com/NoiXdev/notefix/commit/d1d629b5f9de933691e70bbff029938e53e5ba37))
-
-### Bug Fixes
-
-* Such-Icon in Einzelkontext-Sidebar sichtbar + FindBar-Bedienung ([4a2fc35](https://github.com/NoiXdev/notefix/commit/4a2fc353290e59db9fb7f58a343322bfb0e2c67f))
-
-### Styling
-
-* **src-tauri:** rustfmt storage.rs and update.rs ([f52aa18](https://github.com/NoiXdev/notefix/commit/f52aa188de100cb383ef9194c1d08e87120c3b88))
-
-### CI/CD
-
-* make releases fully tag-driven across all version fields ([f8c1183](https://github.com/NoiXdev/notefix/commit/f8c11839df33a32a9162768b5b993fe00ee462c5))
-
-## [0.1.2](https://github.com/NoiXdev/notefix/compare/v0.1.1...v0.1.2) (2026-07-01)
-
-### Build System
-
-* **widget:** sync widget version to the app version ([4d5d4b1](https://github.com/NoiXdev/notefix/commit/4d5d4b18c6e5995f63f0a018e37872d33c8e2a79))
-
 ## [0.1.1](https://github.com/NoiXdev/notefix/compare/v0.1.0...v0.1.1) (2026-06-30)
 
 ### CI/CD
