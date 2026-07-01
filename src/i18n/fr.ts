@@ -275,6 +275,7 @@ export const fr = {
     insertImage: 'Insérer une image',
     history: 'Historique',
     find: 'Rechercher dans la note',
+    loadingNote: 'Chargement de la note…',
     markdown: 'Markdown',
     openInWindow: 'Ouvrir dans une nouvelle fenêtre',
     status: {

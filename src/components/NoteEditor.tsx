@@ -93,13 +93,19 @@ function ToolbarBtn({ onClick, active, title, children, findToggle }: ToolbarBtn
   );
 }
 
+/** Above this HTML size, parsing into ProseMirror can visibly stall — show a
+ *  loading overlay and defer the parse a frame so the overlay paints first. */
+const LARGE_NOTE_BYTES = 50_000;
+
 export default function NoteEditor({ note, onChange, isWindow = false, onSetDue, autosaveDelay = 400, linkPreviewEnabled = true, linkPreviewMode = 'card', copyFormat = 'md', findShortcut = 'Mod+F' }: Props) {
   const { t } = useTranslation();
   const [pinned, setPinned] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
+  const [loadingNote, setLoadingNote] = useState(false);
   const pendingSave = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipNextUpdate = useRef(false);
+  const justSwitched = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [mdMode, setMdMode] = useState(false);
@@ -200,20 +206,44 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
       clearTimeout(pendingSave.current);
       pendingSave.current = null;
     }
-    skipNextUpdate.current = true;
-    editor.commands.setContent(note.content || '<p></p>');
-    setProgress(countTasks(note.content || ''));
-    editor.commands.focus('end');
-    if (isWindow) api.setWindowTitle(getTitleFromHtml(note.content || ''));
+    justSwitched.current = true;
+    const content = note.content || '<p></p>';
     setMdMode(false);
     setSaveState('saved');
     setLastSavedAt(null);
+
+    const apply = () => {
+      justSwitched.current = false;
+      if (editor.isDestroyed) return;
+      skipNextUpdate.current = true;
+      editor.commands.setContent(content);
+      setProgress(countTasks(content));
+      editor.commands.focus('end');
+      if (isWindow) api.setWindowTitle(getTitleFromHtml(content));
+    };
+
+    // Large notes stall the main thread while ProseMirror parses. Paint a
+    // loading overlay first, then run the parse a frame later.
+    if (content.length > LARGE_NOTE_BYTES) {
+      setLoadingNote(true);
+      let raf2 = 0;
+      const raf1 = requestAnimationFrame(() => {
+        raf2 = requestAnimationFrame(() => {
+          apply();
+          setLoadingNote(false);
+        });
+      });
+      return () => { cancelAnimationFrame(raf1); cancelAnimationFrame(raf2); };
+    }
+    apply();
   }, [note.id, editor]);
 
   // Apply external content changes (e.g. edits from a note window) without
   // disturbing the user if they are currently typing in this editor.
   useEffect(() => {
     if (!editor) return;
+    // A note switch is handled by the effect above; don't double-apply here.
+    if (justSwitched.current) { justSwitched.current = false; return; }
     if (pendingSave.current) return;
     const incoming = note.content || '<p></p>';
     if (editor.getHTML() === incoming) return;
@@ -403,7 +433,13 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
       )}
 
       {/* Scrollable content area */}
-      <div className="flex-1 overflow-auto px-7 py-6">
+      <div className="relative flex-1 overflow-auto px-7 py-6">
+        {loadingNote && (
+          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3" style={{ background: 'rgba(254, 249, 195, 0.85)' }}>
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="animate-spin text-amber-700"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
+            <span className="text-sm text-amber-800">{t('editor.loadingNote')}</span>
+          </div>
+        )}
         {mdMode
           ? <div className="md-code-editor">
               <CodeEditor

@@ -275,6 +275,7 @@ export const de = {
     insertImage: 'Bild einfügen',
     history: 'Verlauf',
     find: 'In Notiz suchen',
+    loadingNote: 'Notiz wird geladen…',
     markdown: 'Markdown',
     openInWindow: 'In neuem Fenster öffnen',
     status: {
