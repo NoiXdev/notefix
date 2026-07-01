@@ -1,6 +1,6 @@
 import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { Note } from "../types";
+import type { NoteMeta } from "../types";
 
 vi.mock("@tiptap/react", () => {
   // Return a STABLE editor object so NoteEditor's `[note.id, editor]` effect
@@ -44,7 +44,7 @@ const { mockToggleAlwaysOnTop, mockCloseWindow } = vi.hoisted(() => ({
 
 vi.mock("../api", () => ({
   api: {
-    notes: { load: vi.fn(), save: vi.fn(), delete: vi.fn() },
+    notes: { load: vi.fn(), loadOne: vi.fn().mockResolvedValue("<p>Hello</p>"), save: vi.fn(), delete: vi.fn() },
     onNotesChanged: () => () => {},
     openNoteWindow: vi.fn(),
     setWindowTitle: vi.fn(),
@@ -57,7 +57,7 @@ vi.mock("../api", () => ({
 
 const { default: NoteEditor } = await import("./NoteEditor");
 
-const mockNote: Note = { id: "1", content: "<p>Hello</p>", updatedAt: 1000, pinned: false, archived: false, color: "", dueAt: null };
+const mockNote: NoteMeta = { id: "1", updatedAt: 1000, pinned: false, archived: false, color: "", dueAt: null, folderId: null, position: 0, deletedAt: null, preview: "Hello", tasksDone: 0, tasksTotal: 0 };
 const onChange = vi.fn();
 
 beforeEach(() => {

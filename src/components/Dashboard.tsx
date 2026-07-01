@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import GridLayout, { WidthProvider } from 'react-grid-layout';
 import type { Layout } from 'react-grid-layout';
-import type { Note, Stats, Folder } from '../types';
+import type { NoteMeta, Stats, Folder } from '../types';
 import type { DashboardWidget } from '../hooks/useSettings';
 import { WIDGETS, WIDGET_KEYS, WIDGET_SIZES } from '../dashboardWidgets';
 
@@ -11,7 +11,7 @@ const COLS = 12;
 const ROW_H = 80;
 
 interface Props {
-  notes: Note[];
+  notes: NoteMeta[];
   folders: Folder[];
   stats: Stats | null;
   layout: DashboardWidget[];

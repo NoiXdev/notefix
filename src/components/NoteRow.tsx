@@ -1,23 +1,21 @@
 import type { MouseEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useDraggable, useDroppable } from '@dnd-kit/core';
-import type { Note } from '../types';
+import type { NoteMeta } from '../types';
 import type { DropMode } from '../dnd';
 import { snapLineStyle } from '../dndkit';
-import { getPreview } from '../preview';
 import { formatDate, type DateFormat } from '../dates';
 import { DEFAULT_MARKER } from '../colors';
-import { countTasks } from '../tasks';
 
 interface Props {
-  note: Note;
+  note: NoteMeta;
   depth: number;
   selected: boolean;
   dropMode: DropMode | null;
   dateFormat: DateFormat;
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
-  onContextMenu: (e: MouseEvent, note: Note) => void;
+  onContextMenu: (e: MouseEvent, note: NoteMeta) => void;
   compact?: boolean;
   showProgress?: boolean;
 }
@@ -36,7 +34,7 @@ export default function NoteRow({ note, depth, selected, dropMode, dateFormat, o
   const before = useDroppable({ id: `note:${note.id}:before` });
   const after = useDroppable({ id: `note:${note.id}:after` });
   const marker = note.color || DEFAULT_MARKER;
-  const tasks = showProgress ? countTasks(note.content) : { done: 0, total: 0 };
+  const tasks = { done: note.tasksDone, total: note.tasksTotal };
   return (
     <div className="relative">
       <button
@@ -51,7 +49,7 @@ export default function NoteRow({ note, depth, selected, dropMode, dateFormat, o
         <div className="flex items-start gap-2">
           {note.pinned ? <PinIcon color={marker} /> : <div className="w-2 h-2 rounded-sm shrink-0 mt-1.5" style={{ background: marker }} />}
           <div className="min-w-0 flex-1">
-            <div className="text-gray-100 text-sm font-medium truncate pr-5 leading-snug">{getPreview(note.content)}</div>
+            <div className="text-gray-100 text-sm font-medium truncate pr-5 leading-snug">{note.preview || t('noteList.untitled')}</div>
             {!compact && (
               <div className="text-gray-500 text-xs mt-0.5 flex items-center gap-2">
                 <span>{formatDate(note.updatedAt, dateFormat)}</span>

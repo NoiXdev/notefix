@@ -1,10 +1,11 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import { WIDGETS, WIDGET_KEYS } from './dashboardWidgets';
-import type { Note, Folder } from './types';
+import type { NoteMeta, Folder } from './types';
+import { getPreview } from './preview';
 
-const note = (id: string, content: string, updatedAt = 1): Note =>
-  ({ id, content, updatedAt, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position: 0 });
+const note = (id: string, content: string, updatedAt = 1): NoteMeta =>
+  ({ id, preview: getPreview(content), tasksDone: 0, tasksTotal: 0, updatedAt, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position: 0, deletedAt: null });
 
 describe('dashboardWidgets', () => {
   it('has the four catalog keys', () => {

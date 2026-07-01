@@ -188,6 +188,7 @@ export const en = {
     headerArchive: 'Archive',
     headerTrash: 'Trash',
     newNote: 'New note',
+    untitled: 'Untitled',
     more: 'More',
     newFolderName: 'New folder',
     sort: {

@@ -1,11 +1,26 @@
-import type { Note } from './types';
+import type { NoteMeta } from './types';
 
-/** A note plus the context it belongs to (matches the Rust TaggedNote wire shape). */
+/** A note's list metadata plus the context it belongs to (Rust TaggedMeta shape). */
 export interface CombinedNote {
   contextId: string;
   contextLabel: string;
   kind: 'local' | 'server';
-  note: Note;
+  note: NoteMeta;
+}
+
+/** A search hit within the active context (Rust SearchHit shape). */
+export interface SearchHit {
+  note: NoteMeta;
+  snippet: string;
+}
+
+/** A search hit tagged with its context (Rust TaggedHit shape). */
+export interface CombinedHit {
+  contextId: string;
+  contextLabel: string;
+  kind: 'local' | 'server';
+  note: NoteMeta;
+  snippet: string;
 }
 
 /** Deterministic, stable badge color derived from the context id. */

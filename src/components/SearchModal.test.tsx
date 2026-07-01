@@ -2,25 +2,25 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import SearchModal from './SearchModal';
 
-const { load, loadAll } = vi.hoisted(() => ({
-  load: vi.fn().mockResolvedValue([
-    { id: 'n1', content: '<p>Apfel Notiz</p>', updatedAt: 5, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position: 0, deletedAt: null },
-    { id: 'n2', content: '<p>Birne Notiz</p>', updatedAt: 9, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position: 0, deletedAt: null },
+const { search, searchAll } = vi.hoisted(() => ({
+  search: vi.fn().mockResolvedValue([
+    { note: { id: 'n1', preview: 'Apfel Notiz', tasksDone: 0, tasksTotal: 0, updatedAt: 0, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position: 0, deletedAt: null }, snippet: '…Apfel Notiz…' },
   ]),
-  loadAll: vi.fn().mockResolvedValue([
-    { contextId: 'c1', contextLabel: 'Privat', kind: 'local', note: { id: 'g1', content: '<p>Apfel global</p>', updatedAt: 5, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position: 0, deletedAt: null } },
+  searchAll: vi.fn().mockResolvedValue([
+    { contextId: 'c1', contextLabel: 'Privat', kind: 'local', note: { id: 'g1', preview: 'Apfel global', tasksDone: 0, tasksTotal: 0, updatedAt: 0, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position: 0, deletedAt: null }, snippet: '…Apfel global…' },
   ]),
 }));
 
 vi.mock('../api', () => ({
-  api: { notes: { load, loadAll } },
+  api: { notes: { search, searchAll } },
 }));
 
 describe('SearchModal', () => {
-  it('filters context notes by query and hides non-matches', async () => {
+  it('shows the results the context search returns', async () => {
     render(<SearchModal scope="context" onScope={() => {}} onClose={() => {}} onOpenNote={() => {}} />);
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'apfel' } });
     await screen.findByRole('button', { name: /Apfel Notiz/i });
+    expect(search).toHaveBeenCalledWith('apfel');
     expect(screen.queryByRole('button', { name: /Birne/i })).not.toBeInTheDocument();
   });
 
@@ -34,7 +34,7 @@ describe('SearchModal', () => {
     await waitFor(() => expect(onOpenNote).toHaveBeenCalledWith('n1', undefined));
   });
 
-  it('loads global notes with their context id and label when scope is global', async () => {
+  it('searches all contexts and opens with the context id when scope is global', async () => {
     const onOpenNote = vi.fn();
     render(<SearchModal scope="global" onScope={() => {}} onClose={() => {}} onOpenNote={onOpenNote} />);
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'apfel' } });

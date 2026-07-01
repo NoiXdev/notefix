@@ -1,7 +1,8 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import NoteList from './NoteList';
-import type { Note, Folder } from '../types';
+import type { NoteMeta, Folder } from '../types';
+import { getPreview } from '../preview';
 
 vi.mock('../export', () => ({ exportSelected: vi.fn() }));
 vi.mock('emoji-picker-react', () => ({ default: () => null, Theme: { DARK: 'dark' } }));
@@ -20,8 +21,8 @@ vi.mock('../api', () => ({
   },
 }));
 
-const note = (id: string, content: string, updatedAt = Date.now(), pinned = false, archived = false, color = '', dueAt: number | null = null, folderId: string | null = null): Note =>
-  ({ id, content, updatedAt, pinned, archived, color, dueAt, folderId });
+const note = (id: string, content: string, updatedAt = Date.now(), pinned = false, archived = false, color = '', dueAt: number | null = null, folderId: string | null = null): NoteMeta =>
+  ({ id, updatedAt, pinned, archived, color, dueAt, folderId, position: 0, deletedAt: null, preview: getPreview(content), tasksDone: 0, tasksTotal: 0 });
 
 const defaultProps = {
   notes: [],
@@ -58,9 +59,9 @@ describe('NoteList — rendering notes', () => {
     expect(screen.getByText('Buy milk')).toBeInTheDocument();
   });
 
-  it('falls back to "New note" for empty content', () => {
+  it('falls back to the untitled label for empty content', () => {
     render(<NoteList {...defaultProps} notes={[note('1', '')]} />);
-    expect(screen.getByText('New note')).toBeInTheDocument();
+    expect(screen.getByText('Ohne Titel')).toBeInTheDocument();
   });
 
   it('truncates content preview to 60 characters', () => {
@@ -221,8 +222,8 @@ describe("NoteList — drag and drop", () => {
 
   it("renders notes in position order, not by updatedAt", () => {
     const notes = [
-      { id: 'a', content: '<p>AAA</p>', updatedAt: 999, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position: 5 },
-      { id: 'b', content: '<p>BBB</p>', updatedAt: 1, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position: 1 },
+      { id: 'a', preview: 'AAA', tasksDone: 0, tasksTotal: 0, updatedAt: 999, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position: 5, deletedAt: null },
+      { id: 'b', preview: 'BBB', tasksDone: 0, tasksTotal: 0, updatedAt: 1, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position: 1, deletedAt: null },
     ];
     render(<NoteList {...defaultProps} notes={notes} />);
     const texts = screen.getAllByText(/AAA|BBB/).map(e => e.textContent);

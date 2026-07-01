@@ -4,8 +4,8 @@ import CombinedNoteList from './CombinedNoteList';
 
 const { loadAll, contextsList, contextSwitch } = vi.hoisted(() => ({
   loadAll: vi.fn().mockResolvedValue([
-    { contextId: 'c1', contextLabel: 'Privat', kind: 'local', note: { id: 'n1', content: '<p>Hallo</p>', updatedAt: 5, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position: 0, deletedAt: null } },
-    { contextId: 'c2', contextLabel: 'srv', kind: 'server', note: { id: 'n2', content: '<p>Welt</p>', updatedAt: 9, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position: 0, deletedAt: null } },
+    { contextId: 'c1', contextLabel: 'Privat', kind: 'local', note: { id: 'n1', preview: 'Hallo', tasksDone: 0, tasksTotal: 0, updatedAt: 5, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position: 0, deletedAt: null } },
+    { contextId: 'c2', contextLabel: 'srv', kind: 'server', note: { id: 'n2', preview: 'Welt', tasksDone: 0, tasksTotal: 0, updatedAt: 9, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position: 0, deletedAt: null } },
   ]),
   contextsList: vi.fn().mockResolvedValue([
     { id: 'c1', label: 'Privat', kind: 'local', path: '', serverUrl: '', workspaceId: '', active: true },

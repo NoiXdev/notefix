@@ -1,12 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '../api';
-import type { Note } from '../types';
+import type { NoteMeta } from '../types';
+import { getPreview } from '../preview';
+import { countTasks } from '../tasks';
 
-const sortNotes = (a: Note, b: Note) => Number(b.pinned) - Number(a.pinned) || a.position - b.position;
+const sortNotes = (a: NoteMeta, b: NoteMeta) => Number(b.pinned) - Number(a.pinned) || a.position - b.position;
 
 export function useNotes() {
-  const [notes, setNotes] = useState<Note[]>([]);
-  const [trashed, setTrashed] = useState<Note[]>([]);
+  const [notes, setNotes] = useState<NoteMeta[]>([]);
+  const [trashed, setTrashed] = useState<NoteMeta[]>([]);
   const [loading, setLoading] = useState(true);
 
   const reload = useCallback(async () => {
@@ -21,19 +23,24 @@ export function useNotes() {
   }, [reload]);
 
   const createNote = useCallback(async (): Promise<string> => {
-    const note: Note = {
-      id: crypto.randomUUID(), content: '', updatedAt: Date.now(),
-      pinned: false, archived: false, color: '', dueAt: null, folderId: null, position: -Date.now(), deletedAt: null,
-    };
-    await api.notes.save(note);
-    setNotes(prev => [note, ...prev]);
-    return note.id;
+    const id = crypto.randomUUID();
+    const updatedAt = Date.now();
+    const position = -updatedAt;
+    await api.notes.save({ id, content: '', updatedAt, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position, deletedAt: null });
+    const meta: NoteMeta = { id, updatedAt, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position, deletedAt: null, preview: '', tasksDone: 0, tasksTotal: 0 };
+    setNotes(prev => [meta, ...prev]);
+    return id;
   }, []);
 
   const updateNote = useCallback(async (id: string, content: string) => {
     const updatedAt = Date.now();
+    // Optimistically refresh preview + task counts so the sidebar stays live
+    // while typing; the store round-trip confirms them on the next reload.
+    const tasks = countTasks(content);
     setNotes(prev =>
-      prev.map(n => (n.id === id ? { ...n, content, updatedAt } : n)).sort(sortNotes),
+      prev
+        .map(n => (n.id === id ? { ...n, updatedAt, preview: getPreview(content), tasksDone: tasks.done, tasksTotal: tasks.total } : n))
+        .sort(sortNotes),
     );
     // backend's save_note preserves pinned/archived/color on conflict.
     await api.notes.save({ id, content, updatedAt, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position: 0, deletedAt: null });

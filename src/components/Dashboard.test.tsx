@@ -11,10 +11,11 @@ vi.mock('react-grid-layout', () => ({
 }));
 
 import Dashboard from './Dashboard';
-import type { Note } from '../types';
+import type { NoteMeta } from '../types';
+import { getPreview } from '../preview';
 
-const note = (id: string, content: string): Note =>
-  ({ id, content, updatedAt: 1, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position: 0 });
+const note = (id: string, content: string): NoteMeta =>
+  ({ id, preview: getPreview(content), tasksDone: 0, tasksTotal: 0, updatedAt: 1, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position: 0, deletedAt: null });
 
 const base = {
   notes: [note('a', '<p>Hallo</p>')],

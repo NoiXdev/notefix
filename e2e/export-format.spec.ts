@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { installTauriMock } from './tauri-mock';
 
-const note = { id: 'n1', content: '<p>Hallo Welt</p>', updatedAt: 1, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position: 0, deletedAt: null };
+const note = { id: 'n1', preview: 'Hallo Welt', tasksDone: 0, tasksTotal: 0, updatedAt: 1, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position: 0, deletedAt: null };
 
 test('note context menu → export opens the format modal', async ({ page }) => {
   await installTauriMock(page, { notes: [note] });

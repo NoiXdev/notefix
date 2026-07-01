@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { sortNotesBy } from './sortNotes';
-import type { Note } from './types';
+import type { NoteMeta } from './types';
+import { getPreview } from './preview';
 
-const n = (id: string, content: string, o: Partial<Note> = {}): Note =>
-  ({ id, content, updatedAt: 0, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position: 0, ...o });
+const n = (id: string, content: string, o: Partial<NoteMeta> = {}): NoteMeta =>
+  ({ id, preview: getPreview(content), tasksDone: 0, tasksTotal: 0, updatedAt: 0, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position: 0, deletedAt: null, ...o });
 
 describe('sortNotesBy', () => {
   it('manual sorts by position, pinned first', () => {

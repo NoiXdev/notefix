@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { installTauriMock } from './tauri-mock';
-const oneNote = { notes: [{ id: 'a', content: '<p>Hallo</p>', updatedAt: 1, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position: 0, deletedAt: null }] };
+const oneNote = { notes: [{ id: 'a', preview: 'Hallo', tasksDone: 0, tasksTotal: 0, updatedAt: 1, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position: 0, deletedAt: null }] };
 test('overflow menu opens and an item switches view', async ({ page }) => {
   await installTauriMock(page, oneNote);
   await page.goto('/');

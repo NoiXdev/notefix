@@ -19,7 +19,7 @@ import { SearchHighlight } from '../editor/searchHighlight';
 import FindBar from './FindBar';
 import { matchesCombo } from '../shortcuts';
 import { isBareUrl } from '../linkMeta';
-import type { Note } from '../types';
+import type { NoteMeta } from '../types';
 import { api } from '../api';
 import { saveImageFile } from '../saveImage';
 import { toDateInputValue, fromDateInputValue } from '../dates';
@@ -56,7 +56,7 @@ function getTitleFromHtml(html: string): string {
 }
 
 interface Props {
-  note: Note;
+  note: NoteMeta;
   onChange: (id: string, content: string) => void;
   isWindow?: boolean;
   onSetDue?: (id: string, dueAt: number | null) => void;
@@ -105,7 +105,6 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
   const [loadingNote, setLoadingNote] = useState(false);
   const pendingSave = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipNextUpdate = useRef(false);
-  const justSwitched = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [mdMode, setMdMode] = useState(false);
@@ -136,7 +135,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
       LinkPreview,
       SearchHighlight,
     ],
-    content: note.content || '<p></p>',
+    content: '<p></p>', // real content is fetched per note in the effect below
     onUpdate: ({ editor: e }) => {
       if (skipNextUpdate.current) {
         skipNextUpdate.current = false;
@@ -206,50 +205,62 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
       clearTimeout(pendingSave.current);
       pendingSave.current = null;
     }
-    justSwitched.current = true;
-    const content = note.content || '<p></p>';
     setMdMode(false);
     setSaveState('saved');
     setLastSavedAt(null);
 
-    const apply = () => {
-      justSwitched.current = false;
-      if (editor.isDestroyed) return;
+    let cancelled = false;
+    // Delayed spinner: only show the overlay if the fetch/parse is actually slow,
+    // so switching between small notes doesn't flash.
+    const spinnerTimer = setTimeout(() => { if (!cancelled) setLoadingNote(true); }, 150);
+
+    const apply = (content: string) => {
+      if (cancelled || editor.isDestroyed) return;
       skipNextUpdate.current = true;
       editor.commands.setContent(content);
       setProgress(countTasks(content));
       editor.commands.focus('end');
       if (isWindow) api.setWindowTitle(getTitleFromHtml(content));
+      clearTimeout(spinnerTimer);
+      setLoadingNote(false);
     };
 
-    // Large notes stall the main thread while ProseMirror parses. Paint a
-    // loading overlay first, then run the parse a frame later.
-    if (content.length > LARGE_NOTE_BYTES) {
-      setLoadingNote(true);
-      let raf2 = 0;
-      const raf1 = requestAnimationFrame(() => {
-        raf2 = requestAnimationFrame(() => {
-          apply();
-          setLoadingNote(false);
-        });
-      });
-      return () => { cancelAnimationFrame(raf1); cancelAnimationFrame(raf2); };
-    }
-    apply();
+    void api.notes
+      .loadOne(note.id)
+      .then((html) => {
+        if (cancelled) return;
+        const content = html || '<p></p>';
+        // Large notes stall the main thread while ProseMirror parses — paint the
+        // overlay first, then run the parse a frame later.
+        if (content.length > LARGE_NOTE_BYTES) {
+          setLoadingNote(true);
+          requestAnimationFrame(() => requestAnimationFrame(() => apply(content)));
+        } else {
+          apply(content);
+        }
+      })
+      .catch(() => apply('<p></p>'));
+
+    return () => { cancelled = true; clearTimeout(spinnerTimer); };
   }, [note.id, editor]);
 
-  // Apply external content changes (e.g. edits from a note window) without
-  // disturbing the user if they are currently typing in this editor.
+  // Apply external edits (from another note window / sync). notes-changed fires
+  // only for edits made elsewhere (the sender is excluded), so we won't clobber
+  // our own in-progress edit; still skip while the user is actively typing.
   useEffect(() => {
     if (!editor) return;
-    // A note switch is handled by the effect above; don't double-apply here.
-    if (justSwitched.current) { justSwitched.current = false; return; }
-    if (pendingSave.current) return;
-    const incoming = note.content || '<p></p>';
-    if (editor.getHTML() === incoming) return;
-    skipNextUpdate.current = true;
-    editor.commands.setContent(incoming);
-  }, [note.content, editor]);
+    const off = api.onNotesChanged(() => {
+      if (pendingSave.current) return;
+      void api.notes.loadOne(note.id).then((html) => {
+        if (editor.isDestroyed || pendingSave.current) return;
+        const incoming = html || '<p></p>';
+        if (editor.getHTML() === incoming) return;
+        skipNextUpdate.current = true;
+        editor.commands.setContent(incoming);
+      });
+    });
+    return off;
+  }, [note.id, editor]);
 
   // Track Tiptap selection/content to drive the rich-mode status bar.
   useEffect(() => {

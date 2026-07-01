@@ -89,10 +89,10 @@ describe("useNotes — createNote", () => {
     expect(result.current.notes[0].id).toBe(id);
   });
 
-  it("creates a note with empty content", async () => {
+  it("creates a note with an empty preview", async () => {
     const { result } = await rendered();
     await act(async () => { await result.current.createNote(); });
-    expect(result.current.notes[0].content).toBe("");
+    expect(result.current.notes[0].preview).toBe("");
   });
 
   it("calls notes.save with the new note", async () => {
@@ -109,7 +109,7 @@ describe("useNotes — updateNote", () => {
     let id!: string;
     await act(async () => { id = await result.current.createNote(); });
     await act(async () => { await result.current.updateNote(id, "<p>updated</p>"); });
-    expect(result.current.notes[0].content).toBe("<p>updated</p>");
+    expect(result.current.notes[0].preview).toBe("updated");
   });
 
   it("calls notes.save with the updated note", async () => {
@@ -169,7 +169,7 @@ describe("useNotes — pinning", () => {
     const { result } = await rendered(stored);
     await act(async () => { await result.current.updateNote("a", "<p>edited</p>"); });
     expect(result.current.notes[0].pinned).toBe(true);
-    expect(result.current.notes[0].content).toBe("<p>edited</p>");
+    expect(result.current.notes[0].preview).toBe("edited");
   });
 });
 

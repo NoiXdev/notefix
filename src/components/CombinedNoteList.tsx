@@ -3,7 +3,6 @@ import { useTranslation } from 'react-i18next';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faGlobe, faPlus, faMagnifyingGlass } from '@fortawesome/free-solid-svg-icons';
 import { api } from '../api';
-import { getPreview } from '../preview';
 import { formatDate, type DateFormat } from '../dates';
 import type { CombinedNote } from '../combined';
 import { badgeColor } from '../combined';
@@ -68,7 +67,7 @@ export default function CombinedNoteList({ selectedId, onSelectNote, onCreate, o
                 {labelOf(c)}
               </span>
             </div>
-            <div className="text-gray-100 text-sm font-medium truncate leading-snug">{getPreview(c.note.content)}</div>
+            <div className="text-gray-100 text-sm font-medium truncate leading-snug">{c.note.preview || t('noteList.untitled')}</div>
             <div className="text-gray-500 text-xs mt-0.5">{formatDate(c.note.updatedAt, dateFormat)}</div>
           </button>
         ))}

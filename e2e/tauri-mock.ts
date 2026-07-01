@@ -13,6 +13,9 @@ export async function installTauriMock(page: Page, data: MockData = {}): Promise
     const singleContext = [{ id: 'local', label: '', kind: 'local', path: '/tmp/notefix.db', serverUrl: '', workspaceId: '', active: true }];
     const responses: Record<string, unknown> = {
       notes_load: d.notes ?? [],
+      notes_load_one: d.responses?.notes_load_one ?? '<p></p>',
+      notes_search: d.responses?.notes_search ?? [],
+      notes_search_all: d.responses?.notes_search_all ?? [],
       folders_load: d.folders ?? [],
       trash_load: d.trashed ?? [],
       settings_load: d.settings ?? [],

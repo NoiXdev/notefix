@@ -1,4 +1,4 @@
-import type { Note, Folder } from './types';
+import type { NoteMeta, Folder } from './types';
 
 export type DragKind = 'note' | 'folder';
 export type DropMode = 'into' | 'before' | 'after';
@@ -9,7 +9,7 @@ export interface DropResult {
   orderedIds: string[];
 }
 
-const byPosN = (a: Note, b: Note) => a.position - b.position;
+const byPosN = (a: NoteMeta, b: NoteMeta) => a.position - b.position;
 const byPosF = (a: Folder, b: Folder) => a.position - b.position;
 
 function folderDescendants(folders: Folder[], id: string): Set<string> {
@@ -24,7 +24,7 @@ function folderDescendants(folders: Folder[], id: string): Set<string> {
 export function computeDrop(args: {
   draggedKind: DragKind; draggedId: string;
   targetKind: DragKind | 'root'; targetId: string | null; mode: DropMode;
-  notes: Note[]; folders: Folder[];
+  notes: NoteMeta[]; folders: Folder[];
 }): DropResult | null {
   const { draggedKind, draggedId, targetKind, targetId, mode, notes, folders } = args;
 

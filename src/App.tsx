@@ -43,7 +43,7 @@ export default function App() {
   const [closePrompt, setClosePrompt] = useState(false);
   const [exportReq, setExportReq] = useState<{ ids: string[]; name: string } | null>(null);
   const requestExport = (ids: string[], name: string) => setExportReq({ ids, name });
-  const [exportNoteState, setExportNoteState] = useState<import('./types').Note | null>(null);
+  const [exportNoteState, setExportNoteState] = useState<import('./types').NoteMeta | null>(null);
   const [view, setView] = useState<'editor' | 'dashboard'>('editor');
   const [dashEdit, setDashEdit] = useState(false);
   const [stats, setStats] = useState<Stats | null>(null);

@@ -6,7 +6,8 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { isEnabled as autostartIsEnabled, enable as autostartEnable, disable as autostartDisable } from "@tauri-apps/plugin-autostart";
 import { relaunch as processRelaunch } from "@tauri-apps/plugin-process";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import type { Note } from "./types";
+import type { Note, NoteMeta } from "./types";
+import type { CombinedNote, SearchHit, CombinedHit } from "./combined";
 
 export interface AppInfo {
   name: string;
@@ -23,7 +24,10 @@ export interface UpdateInfo {
 
 export const api = {
   notes: {
-    load: (): Promise<Note[]> => invoke("notes_load"),
+    load: (): Promise<NoteMeta[]> => invoke("notes_load"),
+    loadOne: (id: string): Promise<string> => invoke("notes_load_one", { id }),
+    search: (query: string): Promise<SearchHit[]> => invoke("notes_search", { query }),
+    searchAll: (query: string): Promise<CombinedHit[]> => invoke("notes_search_all", { query }),
     save: (note: Note): Promise<void> => invoke("notes_save", { note }),
     delete: (id: string): Promise<void> => invoke("notes_delete", { id }),
     setPinned: (id: string, pinned: boolean): Promise<void> =>
@@ -42,11 +46,11 @@ export const api = {
     revisionContent: (id: number): Promise<string | null> => invoke("note_revision_content", { id }),
     restore: (id: string): Promise<void> => invoke("notes_restore", { id }),
     purge: (id: string): Promise<void> => invoke("notes_purge", { id }),
-    loadAll: (): Promise<import("./combined").CombinedNote[]> => invoke("notes_load_all"),
+    loadAll: (): Promise<CombinedNote[]> => invoke("notes_load_all"),
   },
 
   trash: {
-    load: (): Promise<import("./types").Note[]> => invoke("trash_load"),
+    load: (): Promise<NoteMeta[]> => invoke("trash_load"),
     empty: (): Promise<void> => invoke("trash_empty"),
   },
 

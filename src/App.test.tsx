@@ -32,7 +32,7 @@ const { mockLoad, mockSave, mockDeleteFn, mockSetPinned } = vi.hoisted(() => ({
 
 vi.mock("./api", () => ({
   api: {
-    notes: { load: mockLoad, save: mockSave, delete: mockDeleteFn, setPinned: mockSetPinned, setArchived: vi.fn(), setColor: vi.fn(), setDue: vi.fn(), setFolder: vi.fn(), reorder: vi.fn(), restore: vi.fn(() => Promise.resolve()), purge: vi.fn(() => Promise.resolve()) },
+    notes: { load: mockLoad, loadOne: vi.fn(() => Promise.resolve('<p></p>')), search: vi.fn(() => Promise.resolve([])), searchAll: vi.fn(() => Promise.resolve([])), save: mockSave, delete: mockDeleteFn, setPinned: mockSetPinned, setArchived: vi.fn(), setColor: vi.fn(), setDue: vi.fn(), setFolder: vi.fn(), reorder: vi.fn(), restore: vi.fn(() => Promise.resolve()), purge: vi.fn(() => Promise.resolve()) },
     trash: { load: vi.fn(() => Promise.resolve([])), empty: vi.fn(() => Promise.resolve()) },
     folders: { load: () => Promise.resolve([]), create: vi.fn(), rename: vi.fn(), move: vi.fn(), delete: vi.fn(), reorder: vi.fn() },
     exportNotes: vi.fn(),
@@ -104,7 +104,7 @@ describe("App — creating notes", () => {
     render(<App />);
     await waitFor(() => screen.getByTitle("Neue Notiz"));
     fireEvent.click(screen.getByTitle("Neue Notiz"));
-    await waitFor(() => expect(screen.getByText("New note")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Ohne Titel")).toBeInTheDocument());
   });
 });
 

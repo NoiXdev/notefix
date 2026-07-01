@@ -1,10 +1,9 @@
 import { useState, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { DndContext, DragOverlay, PointerSensor, useSensor, useSensors, pointerWithin, type DragStartEvent, type DragOverEvent, type DragEndEvent } from '@dnd-kit/core';
-import type { Note, Folder } from '../types';
+import type { NoteMeta, Folder } from '../types';
 import { computeDrop, type DragKind, type DropMode } from '../dnd';
 import { parseDragId, parseDropId } from '../dndkit';
-import { getPreview } from '../preview';
 import type { PinnedScope, FolderColorStyle } from '../hooks/useSettings';
 import ContextMenu, { type ContextMenuItem } from './ContextMenu';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
@@ -23,7 +22,7 @@ import { sortNotesBy } from '../sortNotes';
 import type { DateFormat } from '../dates';
 
 interface Props {
-  notes: Note[];
+  notes: NoteMeta[];
   folders: Folder[];
   selectedId: string | null;
   onSelect: (id: string) => void;
@@ -49,16 +48,16 @@ interface Props {
   folderColorStyle?: FolderColorStyle;
   compactTree?: boolean;
   treeProgress?: boolean;
-  trashed?: Note[];
+  trashed?: NoteMeta[];
   trashEnabled?: boolean;
   onRestore?: (id: string) => void;
   onPurge?: (id: string) => void;
   onEmptyTrash?: () => void;
-  onExportNote: (note: Note) => void;
+  onExportNote: (note: NoteMeta) => void;
   onOpenContexts?: () => void;
 }
 
-const sortNotes = (a: Note, b: Note) => Number(b.pinned) - Number(a.pinned) || a.position - b.position;
+const sortNotes = (a: NoteMeta, b: NoteMeta) => Number(b.pinned) - Number(a.pinned) || a.position - b.position;
 
 const fa = (icon: IconDefinition) => <FontAwesomeIcon icon={icon} />;
 
@@ -91,7 +90,7 @@ export default function NoteList(props: Props) {
     if (logoClicks.current.length >= 4) { logoClicks.current = []; setShowGame(true); }
   };
 
-  const [menu, setMenu] = useState<{ x: number; y: number; note: Note } | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; note: NoteMeta } | null>(null);
   const [folderMenu, setFolderMenu] = useState<{ x: number; y: number; folder: Folder } | null>(null);
   const [view, setView] = useState<'active' | 'archived' | 'trash'>('active');
   const showArchived = view === 'archived';
@@ -143,7 +142,7 @@ export default function NoteList(props: Props) {
   const onDragCancel = () => { setDropHint(null); setActiveDrag(null); };
 
   // Move-to submenu: all folders indented by depth + root.
-  const moveSubmenu = (note: Note): ContextMenuItem[] => {
+  const moveSubmenu = (note: NoteMeta): ContextMenuItem[] => {
     const byParent = (pid: string | null): Folder[] => folders.filter(f => (f.parentId ?? null) === pid).sort((a, b) => a.position - b.position);
     const items: ContextMenuItem[] = [{ label: t('noteList.moveRoot'), icon: fa(faFolder), onClick: () => onMoveNote?.(note.id, null) }];
     const walk = (pid: string | null, depth: number) => {
@@ -156,7 +155,7 @@ export default function NoteList(props: Props) {
     return items;
   };
 
-  const renderRow = (note: Note, depth: number) => (
+  const renderRow = (note: NoteMeta, depth: number) => (
     <NoteRow
       key={note.id}
       note={note}
@@ -283,7 +282,7 @@ export default function NoteList(props: Props) {
           {activeDrag ? (
             <div className="px-3 py-2 rounded bg-gray-800 text-gray-100 text-sm shadow-lg max-w-56 truncate">
               {activeDrag.kind === 'note'
-                ? getPreview(notes.find(n => n.id === activeDrag.id)?.content ?? '')
+                ? (notes.find(n => n.id === activeDrag.id)?.preview || t('noteList.untitled'))
                 : (folders.find(f => f.id === activeDrag.id)?.name ?? '')}
             </div>
           ) : null}
@@ -300,7 +299,7 @@ export default function NoteList(props: Props) {
           {trashed.length === 0 && <p className="text-gray-600 text-xs text-center mt-10 px-4">{t('noteList.trashIsEmpty')}</p>}
           {trashed.map(n => (
             <div key={n.id} className="px-4 py-2 border-b border-gray-900 flex items-center justify-between gap-2">
-              <span className="text-gray-300 text-sm truncate">{getPreview(n.content)}</span>
+              <span className="text-gray-300 text-sm truncate">{n.preview || t('noteList.untitled')}</span>
               <div className="flex items-center gap-3 shrink-0">
                 <button onClick={() => onRestore?.(n.id)} className="text-xs text-gray-400 hover:text-white" title={t('noteList.restore')}>{t('noteList.restore')}</button>
                 <button onClick={() => setPendingPurge(n.id)} className="text-xs text-gray-500 hover:text-red-400" title={t('noteList.confirm.deletePermanent')}>{t('noteList.delete')}</button>

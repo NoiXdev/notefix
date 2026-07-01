@@ -1,10 +1,9 @@
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { api } from '../api';
 import { htmlToMarkdown } from '../markdown';
-import { getPreview } from '../preview';
 import { htmlToText, wordHtml } from './docHtml';
 import { htmlToPdf, htmlToJpg } from './render';
-import type { Note } from '../types';
+import type { NoteMeta } from '../types';
 
 export type ExportFormat = 'md' | 'txt' | 'pdf' | 'jpg' | 'doc';
 
@@ -16,17 +15,18 @@ const EXT: Record<ExportFormat, { ext: string; name: string }> = {
   doc: { ext: 'doc', name: 'Word' },
 };
 
-function baseName(note: Note): string {
-  return (getPreview(note.content).slice(0, 40) || 'note').replace(/[/\\:]/g, '-');
+function baseName(note: NoteMeta): string {
+  return (note.preview.slice(0, 40) || 'note').replace(/[/\\:]/g, '-');
 }
 
-export async function exportNote(note: Note, format: ExportFormat, mdBundle: boolean): Promise<void> {
+export async function exportNote(note: NoteMeta, format: ExportFormat, mdBundle: boolean): Promise<void> {
   const name = baseName(note);
 
   if (format === 'md' && mdBundle) {
     const dir = await open({ directory: true });
     if (typeof dir !== 'string') return;
-    await api.exportMdBundle(dir, htmlToMarkdown(note.content), name);
+    const content = await api.notes.loadOne(note.id);
+    await api.exportMdBundle(dir, htmlToMarkdown(content), name);
     return;
   }
 

@@ -1,23 +1,22 @@
 import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
-import type { Note, Stats, Folder } from './types';
-import { getPreview } from './preview';
+import type { NoteMeta, Stats, Folder } from './types';
 import { formatDate } from './dates';
 import { monthGrid, weekdayShorts } from './calendarGrid';
 import i18n from './i18n';
 
 export interface WidgetCtx {
-  notes: Note[];
+  notes: NoteMeta[];
   folders: Folder[];
   stats: Stats | null;
   onSelectNote: (id: string) => void;
   onCreateNote: () => void;
 }
 
-function NoteLine({ note, onSelectNote }: { note: Note; onSelectNote: (id: string) => void }) {
+function NoteLine({ note, onSelectNote }: { note: NoteMeta; onSelectNote: (id: string) => void }) {
   return (
     <button onClick={() => onSelectNote(note.id)} className="w-full text-left px-2 py-1 rounded hover:bg-gray-100 text-sm truncate text-gray-800">
-      {getPreview(note.content)}
+      {note.preview || i18n.t('noteList.untitled')}
     </button>
   );
 }
@@ -67,7 +66,7 @@ export const WIDGETS: Record<string, { labelKey: string; render: (ctx: WidgetCtx
       const list = notes.filter(n => !n.archived && n.dueAt != null).sort((a, b) => a.dueAt! - b.dueAt!).slice(0, 8);
       return <div>{list.length === 0 ? <p className="text-xs text-gray-400 px-2">{i18n.t('dashboard.noDue')}</p> : list.map(n => (
         <button key={n.id} onClick={() => onSelectNote(n.id)} className="w-full text-left px-2 py-1 rounded hover:bg-gray-100 text-sm flex justify-between gap-2 text-gray-800">
-          <span className="truncate">{getPreview(n.content)}</span>
+          <span className="truncate">{n.preview || i18n.t('noteList.untitled')}</span>
           <span className="shrink-0 text-xs" style={{ color: n.dueAt! < Date.now() ? '#b91c1c' : '#92400e' }}>{formatDate(n.dueAt!, 'de')}</span>
         </button>
       ))}</div>;
