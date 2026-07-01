@@ -37,7 +37,7 @@ axum = { version = "0.8", default-features = false, features = ["json", "tokio",
 tokio = { version = "1", default-features = false, features = ["net", "sync", "time", "macros"] }
 # Auth bridge (A1): PKCE + OS keychain token storage.
 keyring = { version = "3", features = ["apple-native"] }
-sha2 = "0.10"
+sha2 = "0.11"
 rand = "0.8"
 url = "2"
 time = { version = "0.3", features = ["parsing", "formatting"] }
