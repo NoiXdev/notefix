@@ -55,6 +55,7 @@
     "lowlight": "^3.3.0",
     "marked": "^18.0.5",
     "react": "^19.1.0",
+    "react-confetti": "^6.4.0",
     "react-dom": "^19.1.0",
     "react-grid-layout": "^1.5.3",
     "react-i18next": "^17.0.8",

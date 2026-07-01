@@ -18,6 +18,7 @@ import SystemCheckModal from './components/SystemCheckModal';
 import WorkspacePicker from './components/WorkspacePicker';
 import UpdateBanner from './components/UpdateBanner';
 import SearchModal from './components/SearchModal';
+import ConfettiEasterEgg from './components/ConfettiEasterEgg';
 import { shouldShowUpdateBanner } from './updateCheck';
 import type { UpdateInfo } from './api';
 import { runSystemChecks, type SystemCheck } from './systemChecks';
@@ -253,6 +254,7 @@ export default function App() {
 
   return (
     <>
+      <ConfettiEasterEgg />
       {searchOpen && (
         <SearchModal
           scope={settings.searchScope}
