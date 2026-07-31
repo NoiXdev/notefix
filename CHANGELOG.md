@@ -1,4 +1,11 @@
-## [0.2.0](https://github.com/NoiXdev/notefix/compare/v0.1.2...v) (2026-07-01)
+## [0.3.0](https://github.com/NoiXdev/notefix/compare/v0.2.0...v) (2026-07-31)
+
+
+### Features
+
+* **notelist:** depth-aware drop indicator + create-note context actions ([c232c72](https://github.com/NoiXdev/notefix/commit/c232c721b7cebd8f0b3d9e54f5f784e3014daa11))
+
+## [0.2.0](https://github.com/NoiXdev/notefix/compare/v0.1.2...v0.2.0) (2026-07-01)
 
 
 ### Features
