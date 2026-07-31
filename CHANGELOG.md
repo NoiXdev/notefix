@@ -1,4 +1,11 @@
-## [0.3.0](https://github.com/NoiXdev/notefix/compare/v0.2.0...v) (2026-07-31)
+## [0.4.0](https://github.com/NoiXdev/notefix/compare/v0.3.0...v) (2026-07-31)
+
+
+### Features
+
+* color themes and configurable editor display ([257794f](https://github.com/NoiXdev/notefix/commit/257794fb2432e54c7ca3adfb5327425dae223ebf))
+
+## [0.3.0](https://github.com/NoiXdev/notefix/compare/v0.2.0...v0.3.0) (2026-07-31)
 
 
 ### Features
