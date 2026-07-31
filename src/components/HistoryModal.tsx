@@ -41,12 +41,12 @@ export default function HistoryModal({ noteId, onRestore, onClose }: Props) {
           ))}
         </div>
         <div className="flex-1 flex flex-col">
-          <div className="flex-1 overflow-y-auto p-4 bg-yellow-50 text-gray-900">
+          <div className="flex-1 overflow-y-auto p-4 bg-[var(--paper-raised)] text-gray-900">
             {selected ? <div dangerouslySetInnerHTML={{ __html: content }} /> : <p className="text-gray-400 text-sm">{t('dialogs.history.pickVersion')}</p>}
           </div>
           <div className="flex justify-end gap-2 p-3 border-t border-gray-800">
             <button onClick={onClose} className="px-3 py-1.5 rounded text-sm text-gray-300 hover:bg-gray-800">{t('dialogs.history.close')}</button>
-            <button disabled={selected == null} onClick={() => onRestore(content)} className="px-3 py-1.5 rounded text-sm font-medium disabled:opacity-40" style={{ background: '#fde047', color: '#1c1917' }}>{t('dialogs.history.restore')}</button>
+            <button disabled={selected == null} onClick={() => onRestore(content)} className="px-3 py-1.5 rounded text-sm font-medium disabled:opacity-40" style={{ background: 'var(--line)', color: '#1c1917' }}>{t('dialogs.history.restore')}</button>
           </div>
         </div>
       </div>

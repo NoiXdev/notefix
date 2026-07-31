@@ -129,6 +129,27 @@ export default function App() {
 
   useEffect(() => { void i18n.changeLanguage(resolveLang(settings.language, navigator.language)); }, [settings.language]);
 
+  // Apply the color theme: 'butter' is the :root default, others set data-theme.
+  useEffect(() => {
+    const root = document.documentElement;
+    if (settings.theme === 'butter') root.removeAttribute('data-theme');
+    else root.setAttribute('data-theme', settings.theme);
+  }, [settings.theme]);
+
+  // Editor typography + width (drive .ProseMirror via CSS vars).
+  useEffect(() => {
+    const s = document.documentElement.style;
+    s.setProperty('--editor-line-height', { normal: '1.6', relaxed: '1.9', loose: '2.2' }[settings.editorLineHeight]);
+    s.setProperty('--editor-font-size', { small: '14px', medium: '16px', large: '18px', xlarge: '20px' }[settings.editorFontSize]);
+    s.setProperty('--editor-font-family', {
+      sans: 'ui-sans-serif, system-ui, -apple-system, sans-serif',
+      serif: 'ui-serif, Georgia, Cambria, "Times New Roman", serif',
+      mono: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+      rounded: 'ui-rounded, "SF Pro Rounded", system-ui, sans-serif',
+    }[settings.editorFontFamily]);
+    s.setProperty('--editor-max-width', { full: 'none', medium: '52rem', narrow: '40rem' }[settings.editorWidth]);
+  }, [settings.editorLineHeight, settings.editorFontSize, settings.editorFontFamily, settings.editorWidth]);
+
   // On launch: one silent GitHub-release check (opt-out via checkUpdatesOnStart).
   const updateCheckedRef = useRef(false);
   useEffect(() => {
@@ -218,12 +239,12 @@ export default function App() {
   if (windowNoteId) {
     if (loading) {
       return (
-        <div className="flex h-screen items-center justify-center" style={{ background: '#fef9c3' }} />
+        <div className="flex h-screen items-center justify-center" style={{ background: 'var(--paper)' }} />
       );
     }
     const note = notes.find(n => n.id === windowNoteId);
     return note
-      ? <div className="h-screen"><NoteEditor note={note} onChange={updateNote} isWindow onSetDue={setDue} autosaveDelay={settings.autosaveDelay} linkPreviewEnabled={settings.linkPreviewEnabled} linkPreviewMode={settings.linkPreviewMode} copyFormat={settings.copyFormat} /></div>
+      ? <div className="h-screen"><NoteEditor note={note} onChange={updateNote} isWindow onSetDue={setDue} autosaveDelay={settings.autosaveDelay} linkPreviewEnabled={settings.linkPreviewEnabled} linkPreviewMode={settings.linkPreviewMode} copyFormat={settings.copyFormat} countShow={settings.editorCountShow} countPos={settings.editorCountPos} invisibles={settings.editorInvisibles} toolbarPos={settings.editorToolbarPos} /></div>
       : <div className="flex h-screen items-center justify-center text-gray-400 text-sm">{t('common.noteNotFound')}</div>;
   }
 
@@ -342,10 +363,10 @@ export default function App() {
             onToggleEdit={() => setDashEdit(v => !v)}
           />
         ) : selectedNote ? (
-          <NoteEditor note={selectedNote} onChange={updateNote} onSetDue={setDue} autosaveDelay={settings.autosaveDelay} linkPreviewEnabled={settings.linkPreviewEnabled} linkPreviewMode={settings.linkPreviewMode} copyFormat={settings.copyFormat} findShortcut={resolveBindings(settings.shortcuts).findInNote} />
+          <NoteEditor note={selectedNote} onChange={updateNote} onSetDue={setDue} autosaveDelay={settings.autosaveDelay} linkPreviewEnabled={settings.linkPreviewEnabled} linkPreviewMode={settings.linkPreviewMode} copyFormat={settings.copyFormat} findShortcut={resolveBindings(settings.shortcuts).findInNote} countShow={settings.editorCountShow} countPos={settings.editorCountPos} invisibles={settings.editorInvisibles} toolbarPos={settings.editorToolbarPos} />
         ) : (
-          <div className="flex h-full items-center justify-center" style={{ background: '#fef9c3' }}>
-            <div className="text-center" style={{ color: '#b59f3b' }}>
+          <div className="flex h-full items-center justify-center" style={{ background: 'var(--paper)' }}>
+            <div className="text-center" style={{ color: 'var(--ink-muted)' }}>
               <Logo size={64} className="mx-auto mb-3 opacity-40" />
               <p className="text-sm">{t('common.selectOrCreate')}</p>
             </div>

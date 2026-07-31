@@ -1,5 +1,81 @@
 @import "tailwindcss";
 
+/* Theme palette. The whole warm UI (editor "paper", toolbars, accents, ink) is
+   driven by these variables; a `data-theme` on <html> swaps the set. The dark
+   sidebar stays neutral across themes. Default (no attribute) = Butter Yellow. */
+:root {
+  --paper: #fef9c3;
+  --paper-raised: #fffdf2;
+  --panel: #fef08a;
+  --panel-strong: #fcd34d;
+  --line: #fde047;
+  --line-muted: #e7d27a;
+  --accent: #facc15;
+  --accent-strong: #eab308;
+  --accent-amber: #f59e0b;
+  --progress: #ca8a04;
+  --highlight: #fde68a;
+  --highlight-current: #fb923c;
+  --ink: #92400e;
+  --ink-strong: #b45309;
+  --ink-task: #a16207;
+  --ink-muted: #b59f3b;
+}
+:root[data-theme="orange"] {
+  --paper: #ffedd5;
+  --paper-raised: #fff7ed;
+  --panel: #fed7aa;
+  --panel-strong: #fdba74;
+  --line: #fdba74;
+  --line-muted: #eab892;
+  --accent: #fb923c;
+  --accent-strong: #f97316;
+  --accent-amber: #ea580c;
+  --progress: #ea580c;
+  --highlight: #fed7aa;
+  --highlight-current: #f97316;
+  --ink: #9a3412;
+  --ink-strong: #7c2d12;
+  --ink-task: #9a3412;
+  --ink-muted: #c2703f;
+}
+:root[data-theme="lavender"] {
+  --paper: #ede9fe;
+  --paper-raised: #f5f3ff;
+  --panel: #ddd6fe;
+  --panel-strong: #c4b5fd;
+  --line: #c4b5fd;
+  --line-muted: #cabeea;
+  --accent: #a78bfa;
+  --accent-strong: #8b5cf6;
+  --accent-amber: #7c3aed;
+  --progress: #7c3aed;
+  --highlight: #ddd6fe;
+  --highlight-current: #8b5cf6;
+  --ink: #5b21b6;
+  --ink-strong: #4c1d95;
+  --ink-task: #5b21b6;
+  --ink-muted: #8b7cc0;
+}
+:root[data-theme="brown"] {
+  --paper: #efe6d8;
+  --paper-raised: #f8f3ea;
+  --panel: #e4d3ba;
+  --panel-strong: #d3bd9c;
+  --line: #d3bd9c;
+  --line-muted: #cbb89a;
+  --accent: #c39a6b;
+  --accent-strong: #a97a4f;
+  --accent-amber: #8b5e34;
+  --progress: #8b5e34;
+  --highlight: #e4d3ba;
+  --highlight-current: #b0764a;
+  --ink: #5c4433;
+  --ink-strong: #4a3628;
+  --ink-task: #5c4433;
+  --ink-muted: #97836b;
+}
+
 /* Always-visible scrollbar so overflowing panels (e.g. long settings pages)
    are discoverable — macOS hides overlay scrollbars by default. */
 .settings-scroll::-webkit-scrollbar {
@@ -9,30 +85,57 @@
   background: transparent;
 }
 .settings-scroll::-webkit-scrollbar-thumb {
-  background: #e7d27a;
+  background: var(--line-muted);
   border-radius: 6px;
-  border: 3px solid #fef9c3;
+  border: 3px solid var(--paper);
 }
 .settings-scroll::-webkit-scrollbar-thumb:hover {
-  background: #eab308;
+  background: var(--accent-strong);
 }
 
 .ProseMirror {
   outline: none;
   height: 100%;
   min-height: 100%;
+  line-height: var(--editor-line-height, 1.6);
+  font-size: var(--editor-font-size, 16px);
+  font-family: var(--editor-font-family, ui-sans-serif, system-ui, -apple-system, sans-serif);
 }
 
 .ProseMirror { caret-color: #1c1917; }
 .ProseMirror ul[data-type="taskList"] li > div { min-height: 1.4em; }
 
+/* Show invisibles: a middot over each space, ¶ after each paragraph, ↵ for hard
+   breaks. Enabled by toggling `.show-invisibles` on the editor container. */
+.show-invisibles .ProseMirror .inv-space { position: relative; }
+.show-invisibles .ProseMirror .inv-space::before {
+  content: '·';
+  position: absolute;
+  inset: 0;
+  text-align: center;
+  color: var(--ink-muted);
+  pointer-events: none;
+}
+.show-invisibles .ProseMirror p::after {
+  content: '¶';
+  color: var(--ink-muted);
+  opacity: 0.45;
+  margin-left: 2px;
+}
+.ProseMirror .inv-break {
+  color: var(--ink-muted);
+  opacity: 0.6;
+  pointer-events: none;
+  user-select: none;
+}
+
 /* In-note search highlights */
-.ProseMirror .search-match { background: #fde68a; border-radius: 2px; }
-.ProseMirror .search-match-current { background: #fb923c; color: #1c1917; }
+.ProseMirror .search-match { background: var(--highlight); border-radius: 2px; }
+.ProseMirror .search-match-current { background: var(--highlight-current); color: #1c1917; }
 
 .ProseMirror p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);
-  color: #b59f3b;
+  color: var(--ink-muted);
   float: left;
   pointer-events: none;
   height: 0;
@@ -69,21 +172,21 @@
 }
 
 .ProseMirror h1 {
-  font-size: 1.6rem;
+  font-size: 1.6em;
   font-weight: 700;
   line-height: 1.25;
   margin-bottom: 0.25rem;
 }
 
 .ProseMirror h2 {
-  font-size: 1.25rem;
+  font-size: 1.25em;
   font-weight: 700;
   line-height: 1.3;
   margin-bottom: 0.2rem;
 }
 
 .ProseMirror h3 {
-  font-size: 1.05rem;
+  font-size: 1.05em;
   font-weight: 600;
   line-height: 1.35;
   margin-bottom: 0.15rem;
@@ -113,7 +216,7 @@
 }
 
 .ProseMirror .image-wrapper.is-selected {
-  outline: 2px solid #f59e0b;
+  outline: 2px solid var(--accent-amber);
 }
 
 .ProseMirror .image-resize-handle {
@@ -124,8 +227,8 @@
   width: 10px;
   height: 32px;
   border-radius: 3px;
-  background: #f59e0b;
-  border: 1px solid #b45309;
+  background: var(--accent-amber);
+  border: 1px solid var(--ink-strong);
   cursor: ew-resize;
   opacity: 0;
   transition: opacity 0.1s ease;
@@ -151,23 +254,23 @@
 }
 .ProseMirror ul[data-type="taskList"] li[data-checked="true"] > div {
   text-decoration: line-through;
-  color: #a16207;
+  color: var(--ink-task);
 }
 
 .lp-w { display: inline; }
 .lp-url { color: #2563eb; text-decoration: underline; }
-.lp-chip { display: inline-flex; align-items: baseline; gap: 6px; max-width: 22rem; padding: 1px 8px; border: 1px solid #e7d27a; border-radius: 6px; background: #fffdf2; text-decoration: none; vertical-align: baseline; }
-.lp-chip-site { font-size: 11px; color: #92400e; }
+.lp-chip { display: inline-flex; align-items: baseline; gap: 6px; max-width: 22rem; padding: 1px 8px; border: 1px solid var(--line-muted); border-radius: 6px; background: var(--paper-raised); text-decoration: none; vertical-align: baseline; }
+.lp-chip-site { font-size: 11px; color: var(--ink); }
 .lp-chip-title { color: #1c1917; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.lp-card { display: flex; gap: 12px; max-width: 30rem; margin: 6px 0; border: 1px solid #e7d27a; border-radius: 8px; overflow: hidden; background: #fffdf2; text-decoration: none; }
+.lp-card { display: flex; gap: 12px; max-width: 30rem; margin: 6px 0; border: 1px solid var(--line-muted); border-radius: 8px; overflow: hidden; background: var(--paper-raised); text-decoration: none; }
 .lp-card-img { width: 96px; height: 96px; object-fit: cover; flex-shrink: 0; }
 .lp-card-body { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; min-width: 0; }
 .lp-card-title { font-weight: 600; color: #1c1917; }
 .lp-card-desc { font-size: 13px; color: #57534e; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.lp-card-site { font-size: 11px; color: #92400e; }
+.lp-card-site { font-size: 11px; color: var(--ink); }
 .lp-switch { margin-left: 6px; display: inline-flex; gap: 2px; }
-.lp-switch button { font-size: 10px; padding: 0 4px; border: 1px solid #e7d27a; border-radius: 4px; background: #fff; color: #57534e; }
-.lp-switch button.on { background: #fde047; color: #1c1917; }
+.lp-switch button { font-size: 10px; padding: 0 4px; border: 1px solid var(--line-muted); border-radius: 4px; background: #fff; color: #57534e; }
+.lp-switch button.on { background: var(--line); color: #1c1917; }
 
 /* Dark code surfaces — the markdown source editor and rich-mode code blocks.
    Explicit colours (no inheritance) so typed text is always visible, and a

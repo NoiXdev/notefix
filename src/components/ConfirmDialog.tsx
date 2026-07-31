@@ -18,7 +18,7 @@ export default function ConfirmDialog({ title, message, confirmLabel, danger, on
         <p className="text-gray-400 text-sm mb-5">{message}</p>
         <div className="flex justify-end gap-2">
           <button onClick={onCancel} className="px-3 py-1.5 rounded text-sm text-gray-300 hover:bg-gray-800">{t('dialogs.confirm.cancel')}</button>
-          <button onClick={onConfirm} className="px-3 py-1.5 rounded text-sm font-medium" style={danger ? { background: '#dc2626', color: 'white' } : { background: '#fde047', color: '#1c1917' }}>{confirmLabel}</button>
+          <button onClick={onConfirm} className="px-3 py-1.5 rounded text-sm font-medium" style={danger ? { background: '#dc2626', color: 'white' } : { background: 'var(--line)', color: '#1c1917' }}>{confirmLabel}</button>
         </div>
       </div>
     </div>

@@ -68,7 +68,7 @@ export default function FolderCustomizer({ x, y, folder, onSetIcon, onSetColor, 
           <button
             key={m.value}
             onClick={() => selectMode(m.value)}
-            className={`flex-1 px-2 py-1 rounded text-xs ${mode === m.value ? 'bg-yellow-400 text-gray-900' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}
+            className={`flex-1 px-2 py-1 rounded text-xs ${mode === m.value ? 'bg-[var(--accent)] text-gray-900' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}
           >
             {t(m.labelKey)}
           </button>

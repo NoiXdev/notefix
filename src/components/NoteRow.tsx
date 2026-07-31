@@ -63,8 +63,8 @@ export default function NoteRow({ note, depth, selected, dropMode, dateFormat, o
               </div>
             )}
             {showProgress && tasks.total > 0 && !compact && (
-              <div className="mt-1 h-[3px] rounded-full overflow-hidden" style={{ background: '#fde68a' }}>
-                <div className="h-full rounded-full" style={{ width: `${(tasks.done / tasks.total) * 100}%`, background: '#ca8a04' }} />
+              <div className="mt-1 h-[3px] rounded-full overflow-hidden" style={{ background: 'var(--highlight)' }}>
+                <div className="h-full rounded-full" style={{ width: `${(tasks.done / tasks.total) * 100}%`, background: 'var(--progress)' }} />
               </div>
             )}
           </div>
@@ -73,8 +73,8 @@ export default function NoteRow({ note, depth, selected, dropMode, dateFormat, o
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14H6L5 6" /></svg>
         </span>
         {showProgress && tasks.total > 0 && compact && (
-          <div className="absolute left-0 right-0 bottom-0 h-[2px]" style={{ background: '#fde68a' }}>
-            <div className="h-full" style={{ width: `${(tasks.done / tasks.total) * 100}%`, background: '#ca8a04' }} />
+          <div className="absolute left-0 right-0 bottom-0 h-[2px]" style={{ background: 'var(--highlight)' }}>
+            <div className="h-full" style={{ width: `${(tasks.done / tasks.total) * 100}%`, background: 'var(--progress)' }} />
           </div>
         )}
       </button>

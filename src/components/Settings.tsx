@@ -128,6 +128,54 @@ const SIDEBAR_MODES: { value: import("../hooks/useSettings").SidebarMode; labelK
   { value: "combined", labelKey: "settings.appearance.sidebarModes.combined" },
 ];
 
+// Literal swatch colors per theme (paper + accent) so the picker previews each
+// theme regardless of which one is active. Values mirror the :root sets in index.css.
+const THEME_OPTIONS: { value: import("../hooks/useSettings").Theme; labelKey: string; paper: string; accent: string }[] = [
+  { value: "butter", labelKey: "settings.appearance.themes.butter", paper: "#fef9c3", accent: "#facc15" },
+  { value: "orange", labelKey: "settings.appearance.themes.orange", paper: "#ffedd5", accent: "#fb923c" },
+  { value: "lavender", labelKey: "settings.appearance.themes.lavender", paper: "#ede9fe", accent: "#a78bfa" },
+  { value: "brown", labelKey: "settings.appearance.themes.brown", paper: "#efe6d8", accent: "#c39a6b" },
+];
+
+const COUNT_POSITIONS: { value: import("../hooks/useSettings").CountPos; labelKey: string }[] = [
+  { value: "topRight", labelKey: "settings.appearance.countPositions.topRight" },
+  { value: "topLeft", labelKey: "settings.appearance.countPositions.topLeft" },
+  { value: "bottomRight", labelKey: "settings.appearance.countPositions.bottomRight" },
+  { value: "bottomLeft", labelKey: "settings.appearance.countPositions.bottomLeft" },
+];
+
+const LINE_HEIGHTS: { value: import("../hooks/useSettings").EditorLineHeight; labelKey: string }[] = [
+  { value: "normal", labelKey: "settings.appearance.lineHeights.normal" },
+  { value: "relaxed", labelKey: "settings.appearance.lineHeights.relaxed" },
+  { value: "loose", labelKey: "settings.appearance.lineHeights.loose" },
+];
+
+const TOOLBAR_POSITIONS: { value: import("../hooks/useSettings").EditorToolbarPos; labelKey: string }[] = [
+  { value: "bottom", labelKey: "settings.appearance.toolbarPositions.bottom" },
+  { value: "top", labelKey: "settings.appearance.toolbarPositions.top" },
+  { value: "hidden", labelKey: "settings.appearance.toolbarPositions.hidden" },
+];
+
+const FONT_SIZES: { value: import("../hooks/useSettings").EditorFontSize; labelKey: string }[] = [
+  { value: "small", labelKey: "settings.appearance.fontSizes.small" },
+  { value: "medium", labelKey: "settings.appearance.fontSizes.medium" },
+  { value: "large", labelKey: "settings.appearance.fontSizes.large" },
+  { value: "xlarge", labelKey: "settings.appearance.fontSizes.xlarge" },
+];
+
+const FONT_FAMILIES: { value: import("../hooks/useSettings").EditorFontFamily; labelKey: string }[] = [
+  { value: "sans", labelKey: "settings.appearance.fontFamilies.sans" },
+  { value: "serif", labelKey: "settings.appearance.fontFamilies.serif" },
+  { value: "mono", labelKey: "settings.appearance.fontFamilies.mono" },
+  { value: "rounded", labelKey: "settings.appearance.fontFamilies.rounded" },
+];
+
+const EDITOR_WIDTHS: { value: import("../hooks/useSettings").EditorWidth; labelKey: string }[] = [
+  { value: "full", labelKey: "settings.appearance.editorWidths.full" },
+  { value: "medium", labelKey: "settings.appearance.editorWidths.medium" },
+  { value: "narrow", labelKey: "settings.appearance.editorWidths.narrow" },
+];
+
 const CLOSE_ACTIONS: { value: import("../hooks/useSettings").CloseAction; labelKey: string }[] = [
   { value: "ask", labelKey: "settings.system.closeActions.ask" },
   { value: "minimize", labelKey: "settings.system.closeActions.minimize" },
@@ -212,7 +260,7 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
         </nav>
       </aside>
 
-      <main className="settings-scroll flex-1 overflow-auto px-10 py-10" style={{ background: "#fef9c3" }}>
+      <main className="settings-scroll flex-1 overflow-auto px-10 py-10" style={{ background: "var(--paper)" }}>
         {page === "about" && info && (
           <div>
             <Logo size={56} className="mb-4" />
@@ -231,7 +279,7 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
             <div className="mt-10 max-w-md">
               <h2 className="text-sm font-semibold text-gray-800 mb-1">{t("settings.about.openSource")}</h2>
               <p className="text-xs text-gray-500 mb-3">{t("settings.about.openSourceIntro")}</p>
-              <ul className="flex flex-col divide-y divide-yellow-200/70 border-y border-yellow-200/70">
+              <ul className="flex flex-col divide-y divide-yellow-200/70 border-y border-[var(--line-muted)]/70">
                 {OSS_LIBS.map(lib => (
                   <li key={lib.name} className="flex items-center justify-between gap-3 py-1.5 text-xs">
                     <a href={lib.url} className="text-blue-700 underline">{lib.name}</a>
@@ -247,6 +295,25 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
           <div>
             <h1 className="text-2xl font-bold text-gray-900 mb-1">{t("settings.appearance.title")}</h1>
             <p className="text-sm text-gray-500 mb-6">{t("settings.appearance.subtitle")}</p>
+
+            <h2 className="text-sm font-semibold text-gray-800 mb-2">{t("settings.appearance.theme")}</h2>
+            <div className="flex flex-wrap gap-2 mb-8">
+              {THEME_OPTIONS.map(o => (
+                <button
+                  key={o.value}
+                  onClick={() => onSetSetting("theme", o.value)}
+                  className={`flex flex-col items-center gap-1.5 rounded-lg border p-2 transition-colors ${settings.theme === o.value ? "border-gray-800 ring-2 ring-gray-800" : "border-gray-200 hover:border-gray-400"}`}
+                  title={t(o.labelKey)}
+                >
+                  <span className="flex h-9 w-14 overflow-hidden rounded border border-gray-300">
+                    <span className="flex-1" style={{ background: o.paper }} />
+                    <span style={{ width: 12, background: o.accent }} />
+                  </span>
+                  <span className="text-xs text-gray-700">{t(o.labelKey)}</span>
+                </button>
+              ))}
+            </div>
+
             <h2 className="text-sm font-semibold text-gray-800 mb-2">{t("settings.appearance.dateFormat")}</h2>
             <div className="max-w-sm"><Select value={settings.dateFormat} options={DATE_FORMATS.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("dateFormat", v as DateFormat)} /></div>
 
@@ -285,6 +352,37 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
 
             <h2 className="text-sm font-semibold text-gray-800 mt-8 mb-2">{t("settings.appearance.copyFormat")}</h2>
             <div className="max-w-sm"><Select value={settings.copyFormat ?? "md"} options={COPY_FORMATS.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("copyFormat", v as import("../copyFormat").CopyFormat)} /></div>
+
+            <h1 className="text-lg font-bold text-gray-900 mt-10 mb-4">{t("settings.appearance.editorTitle")}</h1>
+
+            <h2 className="text-sm font-semibold text-gray-800 mb-2">{t("settings.appearance.toolbar")}</h2>
+            <div className="max-w-sm mb-6"><Select value={settings.editorToolbarPos} options={TOOLBAR_POSITIONS.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("editorToolbarPos", v as import("../hooks/useSettings").EditorToolbarPos)} /></div>
+
+            <h2 className="text-sm font-semibold text-gray-800 mb-2">{t("settings.appearance.fontSize")}</h2>
+            <div className="max-w-sm mb-6"><Select value={settings.editorFontSize} options={FONT_SIZES.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("editorFontSize", v as import("../hooks/useSettings").EditorFontSize)} /></div>
+
+            <h2 className="text-sm font-semibold text-gray-800 mb-2">{t("settings.appearance.fontFamily")}</h2>
+            <div className="max-w-sm mb-6"><Select value={settings.editorFontFamily} options={FONT_FAMILIES.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("editorFontFamily", v as import("../hooks/useSettings").EditorFontFamily)} /></div>
+
+            <h2 className="text-sm font-semibold text-gray-800 mb-2">{t("settings.appearance.editorWidth")}</h2>
+            <div className="max-w-sm mb-6"><Select value={settings.editorWidth} options={EDITOR_WIDTHS.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("editorWidth", v as import("../hooks/useSettings").EditorWidth)} /></div>
+
+            <div className="flex flex-col gap-3 max-w-sm mb-4">
+              <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
+                <span>{t("settings.appearance.charCount")}</span>
+                <Toggle checked={settings.editorCountShow} onChange={() => onSetSetting("editorCountShow", !settings.editorCountShow)} label={t("settings.appearance.charCount")} />
+              </label>
+              {settings.editorCountShow && (
+                <Select value={settings.editorCountPos} options={COUNT_POSITIONS.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("editorCountPos", v as import("../hooks/useSettings").CountPos)} />
+              )}
+              <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
+                <span>{t("settings.appearance.invisibles")}</span>
+                <Toggle checked={settings.editorInvisibles} onChange={() => onSetSetting("editorInvisibles", !settings.editorInvisibles)} label={t("settings.appearance.invisibles")} />
+              </label>
+            </div>
+
+            <h2 className="text-sm font-semibold text-gray-800 mt-6 mb-2">{t("settings.appearance.lineHeight")}</h2>
+            <div className="max-w-sm"><Select value={settings.editorLineHeight} options={LINE_HEIGHTS.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("editorLineHeight", v as import("../hooks/useSettings").EditorLineHeight)} /></div>
           </div>
         )}
 
@@ -308,7 +406,7 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
               <button
                 onClick={() => onExport([], "notefix-export.json")}
                 className="mt-2 self-start px-4 py-1.5 rounded text-sm font-medium"
-                style={{ background: "#fde047", color: "#1c1917" }}
+                style={{ background: "var(--line)", color: "#1c1917" }}
               >
                 {t("settings.system.exportAll")}
               </button>
@@ -318,7 +416,7 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
               <button
                 onClick={changeLocation}
                 className="self-start px-4 py-1.5 rounded text-sm font-medium border"
-                style={{ borderColor: "#e7d27a", color: "#1c1917" }}
+                style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}
               >
                 {t("settings.system.change")}
               </button>
@@ -332,7 +430,7 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
                   <button
                     onClick={() => api.relaunch()}
                     className="self-start px-4 py-1.5 rounded text-sm font-medium"
-                    style={{ background: "#fde047", color: "#1c1917" }}
+                    style={{ background: "var(--line)", color: "#1c1917" }}
                   >
                     {t("settings.system.restartNow")}
                   </button>
@@ -341,11 +439,11 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
               <h2 className="text-sm font-semibold text-gray-800 mt-6 mb-1">{t("settings.system.editorAndHistory")}</h2>
               <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
                 <span>{t("settings.system.autosaveDelay")}</span>
-                <input type="number" min={100} step={50} value={settings.autosaveDelay ?? 400} onChange={e => onSetSetting("autosaveDelay", Math.max(100, Number(e.target.value) || 400))} className="w-24 bg-white border rounded px-2 py-1" style={{ borderColor: "#e7d27a" }} />
+                <input type="number" min={100} step={50} value={settings.autosaveDelay ?? 400} onChange={e => onSetSetting("autosaveDelay", Math.max(100, Number(e.target.value) || 400))} className="w-24 bg-white border rounded px-2 py-1" style={{ borderColor: "var(--line-muted)" }} />
               </label>
               <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
                 <span>{t("settings.system.revisionLimit")}</span>
-                <input type="number" min={1} value={settings.revisionLimit ?? 50} onChange={e => onSetSetting("revisionLimit", Math.max(1, Number(e.target.value) || 50))} className="w-24 bg-white border rounded px-2 py-1" style={{ borderColor: "#e7d27a" }} />
+                <input type="number" min={1} value={settings.revisionLimit ?? 50} onChange={e => onSetSetting("revisionLimit", Math.max(1, Number(e.target.value) || 50))} className="w-24 bg-white border rounded px-2 py-1" style={{ borderColor: "var(--line-muted)" }} />
               </label>
               <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
                 <span>{t("settings.system.startView")}</span>
@@ -358,7 +456,7 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
               </label>
               <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
                 <span>{t("settings.system.trashRetention")}</span>
-                <input type="number" min={1} value={settings.trashRetentionDays ?? 30} onChange={e => onSetSetting("trashRetentionDays", Math.max(1, Number(e.target.value) || 30))} className="w-24 bg-white border rounded px-2 py-1" style={{ borderColor: "#e7d27a" }} />
+                <input type="number" min={1} value={settings.trashRetentionDays ?? 30} onChange={e => onSetSetting("trashRetentionDays", Math.max(1, Number(e.target.value) || 30))} className="w-24 bg-white border rounded px-2 py-1" style={{ borderColor: "var(--line-muted)" }} />
               </label>
             </div>
           </div>
@@ -446,27 +544,27 @@ function ContextsPage() {
       <p className="text-sm text-gray-500 mb-6">{t("contexts.subtitle")}</p>
       <div className="flex flex-col gap-2 max-w-lg">
         {ctx.map(c => (
-          <div key={c.id} className="flex items-start justify-between gap-3 rounded border px-3 py-2" style={{ borderColor: "#e7d27a", background: "#fffdf0" }}>
+          <div key={c.id} className="flex items-start justify-between gap-3 rounded border px-3 py-2" style={{ borderColor: "var(--line-muted)", background: "var(--paper-raised)" }}>
             <div className="min-w-0">
               <div className="flex items-center gap-2 text-sm font-medium text-gray-800">
                 {c.kind === "server" && <FontAwesomeIcon icon={faGlobe} className="text-[11px] text-gray-500 shrink-0" />}
                 <span className="truncate">{labelOf(c)}</span>
                 {c.active && (
-                  <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide" style={{ background: "#fde047", color: "#1c1917" }}>{t("contexts.active")}</span>
+                  <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide" style={{ background: "var(--line)", color: "#1c1917" }}>{t("contexts.active")}</span>
                 )}
               </div>
               <div className="text-xs text-gray-500 break-all font-mono">{c.kind === "server" ? c.serverUrl : c.path}</div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              <button onClick={() => setDialog({ mode: "rename", c })} className="px-3 py-1 rounded text-xs font-medium border" style={{ borderColor: "#e7d27a", color: "#1c1917" }}>{t("contexts.rename")}</button>
-              <button onClick={() => setDialog({ mode: "remove", c })} disabled={c.active} className="px-3 py-1 rounded text-xs font-medium border disabled:opacity-40 disabled:cursor-not-allowed" style={{ borderColor: "#e7d27a", color: "#1c1917" }}>{t("contexts.remove")}</button>
+              <button onClick={() => setDialog({ mode: "rename", c })} className="px-3 py-1 rounded text-xs font-medium border" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>{t("contexts.rename")}</button>
+              <button onClick={() => setDialog({ mode: "remove", c })} disabled={c.active} className="px-3 py-1 rounded text-xs font-medium border disabled:opacity-40 disabled:cursor-not-allowed" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>{t("contexts.remove")}</button>
             </div>
           </div>
         ))}
       </div>
       <div className="mt-4 flex items-center gap-2">
-        <button onClick={() => setDialog({ mode: "add" })} className="px-4 py-1.5 rounded text-sm font-medium" style={{ background: "#fde047", color: "#1c1917" }}>{t("contexts.add")}</button>
-        <button onClick={() => { setError(null); setDialog({ mode: "addServer" }); }} className="px-4 py-1.5 rounded text-sm font-medium border" style={{ borderColor: "#e7d27a", color: "#1c1917" }}>{t("contexts.addServer")}</button>
+        <button onClick={() => setDialog({ mode: "add" })} className="px-4 py-1.5 rounded text-sm font-medium" style={{ background: "var(--line)", color: "#1c1917" }}>{t("contexts.add")}</button>
+        <button onClick={() => { setError(null); setDialog({ mode: "addServer" }); }} className="px-4 py-1.5 rounded text-sm font-medium border" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>{t("contexts.addServer")}</button>
         {connecting && <span className="text-xs text-gray-500">{t("contexts.connecting")}</span>}
         {error && <span className="text-xs text-red-600" role="alert">{error}</span>}
       </div>
@@ -537,11 +635,11 @@ function SystemChecksPage({ settings, onChangeLocation }: { settings: AppSetting
               <div className="text-xs text-gray-500 break-all">{c.detail}</div>
             </div>
             {c.action === 'changeLocation' && (
-              <button onClick={onChangeLocation} className="shrink-0 px-3 py-1 rounded text-xs font-medium border" style={{ borderColor: "#e7d27a", color: "#1c1917" }}>{t("diagnostics.changeLocation")}</button>
+              <button onClick={onChangeLocation} className="shrink-0 px-3 py-1 rounded text-xs font-medium border" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>{t("diagnostics.changeLocation")}</button>
             )}
           </div>
         ))}
-        <button onClick={run} className="self-start mt-2 px-4 py-1.5 rounded text-sm font-medium border" style={{ borderColor: "#e7d27a", color: "#1c1917" }}>{t("diagnostics.recheck")}</button>
+        <button onClick={run} className="self-start mt-2 px-4 py-1.5 rounded text-sm font-medium border" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>{t("diagnostics.recheck")}</button>
       </div>
     </div>
   );
@@ -612,7 +710,7 @@ function McpPage({ settings, onSetSetting }: { settings: AppSettings; onSetSetti
 
         <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
           <span>{t("settings.mcp.port")}</span>
-          <input type="number" min={1} max={65535} value={settings.mcpPort ?? 4357} onChange={e => onSetSetting("mcpPort", Math.min(65535, Math.max(1, Number(e.target.value) || 4357)))} className="w-24 bg-white border rounded px-2 py-1" style={{ borderColor: "#e7d27a" }} />
+          <input type="number" min={1} max={65535} value={settings.mcpPort ?? 4357} onChange={e => onSetSetting("mcpPort", Math.min(65535, Math.max(1, Number(e.target.value) || 4357)))} className="w-24 bg-white border rounded px-2 py-1" style={{ borderColor: "var(--line-muted)" }} />
         </label>
 
         <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
@@ -622,8 +720,8 @@ function McpPage({ settings, onSetSetting }: { settings: AppSettings; onSetSetti
 
         <h2 className="text-sm font-semibold text-gray-800 mt-2">{t("settings.mcp.token")}</h2>
         <div className="flex items-center gap-2">
-          <input type="text" readOnly value={settings.mcpToken} className="flex-1 bg-white border rounded px-2 py-1 text-xs font-mono" style={{ borderColor: "#e7d27a" }} />
-          <button onClick={() => onSetSetting("mcpToken", crypto.randomUUID())} className="shrink-0 px-3 py-1 rounded text-xs font-medium border" style={{ borderColor: "#e7d27a", color: "#1c1917" }}>
+          <input type="text" readOnly value={settings.mcpToken} className="flex-1 bg-white border rounded px-2 py-1 text-xs font-mono" style={{ borderColor: "var(--line-muted)" }} />
+          <button onClick={() => onSetSetting("mcpToken", crypto.randomUUID())} className="shrink-0 px-3 py-1 rounded text-xs font-medium border" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>
             {t("settings.mcp.regenerate")}
           </button>
         </div>
@@ -639,8 +737,8 @@ function McpPage({ settings, onSetSetting }: { settings: AppSettings; onSetSetti
         <h2 className="text-sm font-semibold text-gray-800 mt-2">{t("settings.mcp.demo")}</h2>
         <p className="text-xs text-gray-500">{t("settings.mcp.demoHint")}</p>
         <div className="relative">
-          <pre className="bg-white border rounded p-3 text-[11px] leading-relaxed font-mono overflow-auto" style={{ borderColor: "#e7d27a" }}>{demo}</pre>
-          <button onClick={copyDemo} className="absolute top-2 right-2 px-2 py-0.5 rounded text-[11px] font-medium border" style={{ background: "#fde047", borderColor: "#e7d27a", color: "#1c1917" }}>
+          <pre className="bg-white border rounded p-3 text-[11px] leading-relaxed font-mono overflow-auto" style={{ borderColor: "var(--line-muted)" }}>{demo}</pre>
+          <button onClick={copyDemo} className="absolute top-2 right-2 px-2 py-0.5 rounded text-[11px] font-medium border" style={{ background: "var(--line)", borderColor: "var(--line-muted)", color: "#1c1917" }}>
             {copied ? t("settings.mcp.copied") : t("settings.mcp.copy")}
           </button>
         </div>

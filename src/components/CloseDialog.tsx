@@ -19,7 +19,7 @@ export default function CloseDialog({ onMinimize, onQuit, onCancel }: Props) {
         </label>
         <div className="flex justify-end gap-2">
           <button onClick={onCancel} className="px-3 py-1.5 rounded text-sm text-gray-300 hover:bg-gray-800">{t('dialogs.close.cancel')}</button>
-          <button onClick={() => onMinimize(remember)} className="px-3 py-1.5 rounded text-sm font-medium" style={{ background: '#fde047', color: '#1c1917' }}>{t('dialogs.close.minimize')}</button>
+          <button onClick={() => onMinimize(remember)} className="px-3 py-1.5 rounded text-sm font-medium" style={{ background: 'var(--line)', color: '#1c1917' }}>{t('dialogs.close.minimize')}</button>
           <button onClick={() => onQuit(remember)} className="px-3 py-1.5 rounded text-sm font-medium" style={{ background: '#dc2626', color: 'white' }}>{t('dialogs.close.quit')}</button>
         </div>
       </div>

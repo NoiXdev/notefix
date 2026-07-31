@@ -98,7 +98,7 @@ export default function SearchModal({ scope, onScope, onClose, onOpenNote }: {
               <button
                 onMouseEnter={() => setSel(i)}
                 onClick={() => openAt(i)}
-                className={`flex w-full flex-col items-start gap-0.5 px-4 py-2 text-left ${i === sel ? 'bg-yellow-100' : 'hover:bg-gray-50'}`}
+                className={`flex w-full flex-col items-start gap-0.5 px-4 py-2 text-left ${i === sel ? 'bg-[var(--highlight)]' : 'hover:bg-gray-50'}`}
               >
                 <span className="flex w-full items-center justify-between gap-2">
                   <span className="truncate text-sm font-medium text-gray-800">{r.title || t('search.untitled')}</span>

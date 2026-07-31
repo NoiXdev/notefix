@@ -28,11 +28,11 @@ export default function PromptDialog({ title, confirmLabel, initialValue = '', p
           placeholder={placeholder}
           onChange={e => setValue(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') submit(); else if (e.key === 'Escape') onCancel(); }}
-          className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 outline-none focus:border-yellow-400 mb-4"
+          className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 outline-none focus:border-[var(--accent)] mb-4"
         />
         <div className="flex justify-end gap-2">
           <button onClick={onCancel} className="px-3 py-1.5 rounded text-sm text-gray-300 hover:bg-gray-800">{t('dialogs.confirm.cancel')}</button>
-          <button onClick={submit} disabled={!value.trim()} className="px-3 py-1.5 rounded text-sm font-medium disabled:opacity-40" style={{ background: '#fde047', color: '#1c1917' }}>{confirmLabel}</button>
+          <button onClick={submit} disabled={!value.trim()} className="px-3 py-1.5 rounded text-sm font-medium disabled:opacity-40" style={{ background: 'var(--line)', color: '#1c1917' }}>{confirmLabel}</button>
         </div>
       </div>
     </div>

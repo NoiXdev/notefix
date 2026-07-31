@@ -7,7 +7,7 @@ vi.mock("@tiptap/react", () => {
   const editor = {
     isActive: () => false,
     chain: () => ({ focus: () => ({ toggleBold: () => ({ run: vi.fn() }) }) }),
-    commands: { setContent: vi.fn(), focus: vi.fn() },
+    commands: { setContent: vi.fn(), focus: vi.fn(), setInvisibles: vi.fn() },
     getHTML: () => "<p></p>",
     isEditable: true,
   };

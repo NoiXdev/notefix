@@ -19,7 +19,7 @@ vi.mock("@tiptap/react", () => {
         setImage: () => ({ run: vi.fn() }),
       }),
     }),
-    commands: { setContent: vi.fn(), focus: vi.fn() },
+    commands: { setContent: vi.fn(), focus: vi.fn(), setInvisibles: vi.fn() },
     getHTML: () => "<p></p>",
     isEditable: true,
     on: vi.fn(),

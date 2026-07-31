@@ -46,7 +46,7 @@ function CalendarWidget() {
       <div className="font-semibold mb-1">{now.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</div>
       <div className="grid grid-cols-7 gap-0.5 text-center">
         {weekdayShorts().map((w, i) => <div key={`h${i}`} className="text-gray-400">{w}</div>)}
-        {weeks.flat().map((d, i) => <div key={i} className={d === today ? 'bg-yellow-300 rounded font-bold' : ''}>{d ?? ''}</div>)}
+        {weeks.flat().map((d, i) => <div key={i} className={d === today ? 'bg-[var(--line)] rounded font-bold' : ''}>{d ?? ''}</div>)}
       </div>
     </div>
   );
@@ -67,7 +67,7 @@ export const WIDGETS: Record<string, { labelKey: string; render: (ctx: WidgetCtx
       return <div>{list.length === 0 ? <p className="text-xs text-gray-400 px-2">{i18n.t('dashboard.noDue')}</p> : list.map(n => (
         <button key={n.id} onClick={() => onSelectNote(n.id)} className="w-full text-left px-2 py-1 rounded hover:bg-gray-100 text-sm flex justify-between gap-2 text-gray-800">
           <span className="truncate">{n.preview || i18n.t('noteList.untitled')}</span>
-          <span className="shrink-0 text-xs" style={{ color: n.dueAt! < Date.now() ? '#b91c1c' : '#92400e' }}>{formatDate(n.dueAt!, 'de')}</span>
+          <span className="shrink-0 text-xs" style={{ color: n.dueAt! < Date.now() ? '#b91c1c' : 'var(--ink)' }}>{formatDate(n.dueAt!, 'de')}</span>
         </button>
       ))}</div>;
     },
@@ -106,7 +106,7 @@ export const WIDGETS: Record<string, { labelKey: string; render: (ctx: WidgetCtx
   quicknote: {
     labelKey: 'dashboard.widgets.quicknote',
     render: ({ onCreateNote }) => (
-      <button onClick={onCreateNote} className="w-full py-2 rounded text-sm font-medium" style={{ background: '#fde047', color: '#1c1917' }}>{i18n.t('dashboard.newNote')}</button>
+      <button onClick={onCreateNote} className="w-full py-2 rounded text-sm font-medium" style={{ background: 'var(--line)', color: '#1c1917' }}>{i18n.t('dashboard.newNote')}</button>
     ),
   },
   clock: { labelKey: 'dashboard.widgets.clock', render: () => <ClockWidget /> },

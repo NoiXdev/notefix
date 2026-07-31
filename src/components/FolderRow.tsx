@@ -33,8 +33,8 @@ export default function FolderRow({ folder, open, count, depth, iconTint, baseSt
           {...attributes}
           onClick={() => onToggle(folder.id)}
           onContextMenu={e => { e.preventDefault(); onContextMenu(e, folder); }}
-          className={`flex items-center gap-1 py-2 text-gray-300 hover:bg-gray-900 cursor-pointer select-none ${dropMode === 'into' ? 'ring-2 ring-inset ring-yellow-400' : ''}`}
-          style={{ ...baseStyle, opacity: isDragging ? 0.4 : 1, ...(dropMode === 'into' ? { background: 'rgba(250, 204, 21, 0.15)' } : null) }}
+          className={`flex items-center gap-1 py-2 text-gray-300 hover:bg-gray-900 cursor-pointer select-none ${dropMode === 'into' ? 'ring-2 ring-inset ring-[var(--accent)]' : ''}`}
+          style={{ ...baseStyle, opacity: isDragging ? 0.4 : 1, ...(dropMode === 'into' ? { background: 'color-mix(in srgb, var(--accent) 15%, transparent)' } : null) }}
         >
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ transform: open ? 'rotate(90deg)' : 'none' }}><polyline points="9 6 15 12 9 18" /></svg>
           <FolderIcon icon={folder.icon} tint={iconTint} />

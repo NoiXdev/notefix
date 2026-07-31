@@ -62,14 +62,14 @@ export default function Dashboard({ notes, folders, stats, layout, editMode, onS
   };
 
   return (
-    <div className="h-full overflow-y-auto p-6" style={{ background: '#fef9c3' }}>
+    <div className="h-full overflow-y-auto p-6" style={{ background: 'var(--paper)' }}>
       <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
         <h1 className="text-2xl font-bold text-gray-900">{t('dashboard.title')}</h1>
         <div className="flex items-center gap-2 flex-wrap">
           {editMode && available.map(k => (
             <button key={k} onClick={() => add(k)} className="px-2 py-1 rounded text-xs bg-white border border-gray-300 hover:bg-gray-100">+ {t(WIDGETS[k].labelKey)}</button>
           ))}
-          <button onClick={onToggleEdit} className="px-3 py-1.5 rounded text-sm font-medium" style={{ background: editMode ? '#fde047' : 'white', border: '1px solid #e7d27a', color: '#1c1917' }}>{editMode ? t('dashboard.done') : t('dashboard.edit')}</button>
+          <button onClick={onToggleEdit} className="px-3 py-1.5 rounded text-sm font-medium" style={{ background: editMode ? 'var(--line)' : 'white', border: '1px solid var(--line-muted)', color: '#1c1917' }}>{editMode ? t('dashboard.done') : t('dashboard.edit')}</button>
         </div>
       </div>
       {active.length === 0 ? (

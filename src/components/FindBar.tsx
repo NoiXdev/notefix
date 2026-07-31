@@ -37,7 +37,7 @@ export default function FindBar({ editor, onClose }: { editor: Editor; onClose: 
   const label = info.total > 0 ? `${info.current + 1}/${info.total}` : (query ? t('search.noMatches') : '');
 
   return (
-    <div ref={barRef} className="absolute left-1/2 top-3 z-20 flex -translate-x-1/2 items-center gap-1 rounded-lg border border-yellow-300 bg-white px-2 py-1 shadow-md">
+    <div ref={barRef} className="absolute left-1/2 top-3 z-20 flex -translate-x-1/2 items-center gap-1 rounded-lg border border-[var(--line)] bg-white px-2 py-1 shadow-md">
       <FontAwesomeIcon icon={faMagnifyingGlass} className="text-xs text-gray-400" />
       <input
         ref={inputRef}

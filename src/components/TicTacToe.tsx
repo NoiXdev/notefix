@@ -28,14 +28,14 @@ export default function TicTacToe({ onClose }: Props) {
         </div>
         <div className="grid grid-cols-3 gap-1">
           {board.map((c, i) => (
-            <button key={i} onClick={() => play(i)} aria-label={t('game.cell', { index: i })} className="w-16 h-16 rounded bg-gray-800 hover:bg-gray-700 text-2xl font-bold flex items-center justify-center" style={{ color: c === 'X' ? '#fde047' : '#f87171' }}>
+            <button key={i} onClick={() => play(i)} aria-label={t('game.cell', { index: i })} className="w-16 h-16 rounded bg-gray-800 hover:bg-gray-700 text-2xl font-bold flex items-center justify-center" style={{ color: c === 'X' ? 'var(--line)' : '#f87171' }}>
               {c}
             </button>
           ))}
         </div>
         <div className="flex justify-end gap-2 mt-4">
           <button onClick={() => setBoard(empty())} className="px-3 py-1.5 rounded text-sm text-gray-300 hover:bg-gray-800">{t('game.reset')}</button>
-          <button onClick={onClose} className="px-3 py-1.5 rounded text-sm font-medium" style={{ background: '#fde047', color: '#1c1917' }}>{t('game.close')}</button>
+          <button onClick={onClose} className="px-3 py-1.5 rounded text-sm font-medium" style={{ background: 'var(--line)', color: '#1c1917' }}>{t('game.close')}</button>
         </div>
       </div>
     </div>

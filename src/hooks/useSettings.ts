@@ -11,6 +11,20 @@ export type PinnedScope = 'perFolder' | 'global';
 export type FolderColorStyle = 'icon' | 'bar' | 'row';
 export type StartView = 'dashboard' | 'lastNote';
 export type SidebarMode = 'switcher' | 'combined';
+export type Theme = 'butter' | 'orange' | 'lavender' | 'brown';
+export const THEMES: Theme[] = ['butter', 'orange', 'lavender', 'brown'];
+export type CountPos = 'topRight' | 'topLeft' | 'bottomRight' | 'bottomLeft';
+export const COUNT_POSITIONS: CountPos[] = ['topRight', 'topLeft', 'bottomRight', 'bottomLeft'];
+export type EditorLineHeight = 'normal' | 'relaxed' | 'loose';
+export const EDITOR_LINE_HEIGHTS: EditorLineHeight[] = ['normal', 'relaxed', 'loose'];
+export type EditorToolbarPos = 'bottom' | 'top' | 'hidden';
+export const EDITOR_TOOLBAR_POSITIONS: EditorToolbarPos[] = ['bottom', 'top', 'hidden'];
+export type EditorFontSize = 'small' | 'medium' | 'large' | 'xlarge';
+export const EDITOR_FONT_SIZES: EditorFontSize[] = ['small', 'medium', 'large', 'xlarge'];
+export type EditorFontFamily = 'sans' | 'serif' | 'mono' | 'rounded';
+export const EDITOR_FONT_FAMILIES: EditorFontFamily[] = ['sans', 'serif', 'mono', 'rounded'];
+export type EditorWidth = 'full' | 'medium' | 'narrow';
+export const EDITOR_WIDTHS: EditorWidth[] = ['full', 'medium', 'narrow'];
 
 export interface DashboardWidget { key: string; x: number; y: number; w: number; h: number; }
 
@@ -43,6 +57,15 @@ export interface AppSettings {
   checkUpdatesOnStart: boolean;
   updateDismissedVersion: string;
   searchScope: 'context' | 'global';
+  theme: Theme;
+  editorCountShow: boolean;
+  editorCountPos: CountPos;
+  editorInvisibles: boolean;
+  editorLineHeight: EditorLineHeight;
+  editorToolbarPos: EditorToolbarPos;
+  editorFontSize: EditorFontSize;
+  editorFontFamily: EditorFontFamily;
+  editorWidth: EditorWidth;
 }
 
 const DEFAULT_LAYOUT: DashboardWidget[] = [
@@ -81,6 +104,15 @@ const DEFAULTS: AppSettings = {
   checkUpdatesOnStart: true,
   updateDismissedVersion: '',
   searchScope: 'context',
+  theme: 'butter',
+  editorCountShow: true,
+  editorCountPos: 'topRight',
+  editorInvisibles: false,
+  editorLineHeight: 'normal',
+  editorToolbarPos: 'bottom',
+  editorFontSize: 'medium',
+  editorFontFamily: 'sans',
+  editorWidth: 'full',
 };
 
 function isGridWidget(x: unknown): x is DashboardWidget {
@@ -148,6 +180,15 @@ export function useSettings() {
       checkUpdatesOnStart: raw.checkUpdatesOnStart !== 'false',
       updateDismissedVersion: typeof raw.updateDismissedVersion === 'string' ? raw.updateDismissedVersion : '',
       searchScope: raw.searchScope === 'global' ? 'global' : 'context',
+      theme: (THEMES as string[]).includes(raw.theme) ? (raw.theme as Theme) : 'butter',
+      editorCountShow: raw.editorCountShow !== 'false',
+      editorCountPos: (COUNT_POSITIONS as string[]).includes(raw.editorCountPos) ? (raw.editorCountPos as CountPos) : 'topRight',
+      editorInvisibles: raw.editorInvisibles === 'true',
+      editorLineHeight: (EDITOR_LINE_HEIGHTS as string[]).includes(raw.editorLineHeight) ? (raw.editorLineHeight as EditorLineHeight) : 'normal',
+      editorToolbarPos: (EDITOR_TOOLBAR_POSITIONS as string[]).includes(raw.editorToolbarPos) ? (raw.editorToolbarPos as EditorToolbarPos) : 'bottom',
+      editorFontSize: (EDITOR_FONT_SIZES as string[]).includes(raw.editorFontSize) ? (raw.editorFontSize as EditorFontSize) : 'medium',
+      editorFontFamily: (EDITOR_FONT_FAMILIES as string[]).includes(raw.editorFontFamily) ? (raw.editorFontFamily as EditorFontFamily) : 'sans',
+      editorWidth: (EDITOR_WIDTHS as string[]).includes(raw.editorWidth) ? (raw.editorWidth as EditorWidth) : 'full',
     });
     setLoaded(true);
   }, []);

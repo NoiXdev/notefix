@@ -16,6 +16,8 @@ import { ResizableImage } from './ResizableImage';
 import { CodeBlock } from '../codeBlock';
 import { LinkPreview, LinkPreviewCtx, type LinkDisplay } from './LinkPreviewNode';
 import { SearchHighlight } from '../editor/searchHighlight';
+import { ShowInvisibles } from '../editor/showInvisibles';
+import type { CountPos, EditorToolbarPos } from '../hooks/useSettings';
 import FindBar from './FindBar';
 import { matchesCombo } from '../shortcuts';
 import { isBareUrl } from '../linkMeta';
@@ -65,6 +67,10 @@ interface Props {
   linkPreviewMode?: LinkDisplay;
   copyFormat?: CopyFormat;
   findShortcut?: string;
+  countShow?: boolean;
+  countPos?: CountPos;
+  invisibles?: boolean;
+  toolbarPos?: EditorToolbarPos;
 }
 
 interface ToolbarBtnProps {
@@ -84,8 +90,8 @@ function ToolbarBtn({ onClick, active, title, children, findToggle }: ToolbarBtn
       title={title}
       className={`w-8 h-8 flex items-center justify-center rounded text-sm transition-colors select-none ${
         active
-          ? 'bg-yellow-500 text-gray-900'
-          : 'text-gray-700 hover:bg-yellow-400'
+          ? 'bg-[var(--accent-strong)] text-gray-900'
+          : 'text-gray-700 hover:bg-[var(--accent)]'
       }`}
     >
       {children}
@@ -97,7 +103,7 @@ function ToolbarBtn({ onClick, active, title, children, findToggle }: ToolbarBtn
  *  loading overlay and defer the parse a frame so the overlay paints first. */
 const LARGE_NOTE_BYTES = 50_000;
 
-export default function NoteEditor({ note, onChange, isWindow = false, onSetDue, autosaveDelay = 400, linkPreviewEnabled = true, linkPreviewMode = 'card', copyFormat = 'md', findShortcut = 'Mod+F' }: Props) {
+export default function NoteEditor({ note, onChange, isWindow = false, onSetDue, autosaveDelay = 400, linkPreviewEnabled = true, linkPreviewMode = 'card', copyFormat = 'md', findShortcut = 'Mod+F', countShow = true, countPos = 'topRight', invisibles = false, toolbarPos = 'bottom' }: Props) {
   const { t } = useTranslation();
   const [pinned, setPinned] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
@@ -134,6 +140,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
       ResizableImage.configure({ inline: false, allowBase64: true }),
       LinkPreview,
       SearchHighlight,
+      ShowInvisibles,
     ],
     content: '<p></p>', // real content is fetched per note in the effect below
     onUpdate: ({ editor: e }) => {
@@ -187,6 +194,11 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
       },
     },
   });
+
+  // Drive the show-invisibles decorations from the setting.
+  useEffect(() => {
+    if (editor) editor.commands.setInvisibles(invisibles);
+  }, [invisibles, editor]);
 
   // The configured shortcut opens the in-note find bar. Handled here (not in the
   // global handler) so it works over the contentEditable editor.
@@ -348,16 +360,24 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
       ? t('editor.status.richSel', rich)
       : t('editor.status.rich', rich);
 
+  const topEdge = toolbarPos === 'top' ? 'top-14' : isWindow ? 'top-10' : 'top-1';
+  const countPosClass = {
+    topRight: `right-2 ${topEdge}`,
+    topLeft: `left-2 ${topEdge}`,
+    bottomRight: 'right-2 bottom-14',
+    bottomLeft: 'left-2 bottom-14',
+  }[countPos];
+
   return (
-    <div className="flex flex-col h-full relative" style={{ background: '#fef9c3' }}>
+    <div className="flex flex-col h-full relative" style={{ background: 'var(--paper)' }}>
       {findOpen && editor && !mdMode && <FindBar editor={editor} onClose={() => setFindOpen(false)} />}
       {/* Top-right cluster: live status (words/chars or Ln/Col) + autosave indicator */}
-      <div className={`absolute right-2 ${isWindow ? 'top-10' : 'top-1'} z-10 flex items-center gap-2`}>
-        <span className="font-mono text-[11px] text-gray-500 select-none pointer-events-none whitespace-nowrap">{statusText}</span>
+      <div className={`absolute ${countPosClass} z-10 flex items-center gap-2`}>
+        {countShow && <span className="font-mono text-[11px] text-gray-500 select-none pointer-events-none whitespace-nowrap">{statusText}</span>}
         <button
           onClick={flushSave}
           title={saveState === 'saving' ? t('editor.saving') : lastSavedAt ? t('editor.savedAt', { time: new Date(lastSavedAt).toLocaleTimeString() }) : t('editor.saved')}
-          className="w-6 h-6 flex items-center justify-center rounded text-amber-700/70 hover:text-amber-800"
+          className="w-6 h-6 flex items-center justify-center rounded text-[var(--ink-strong)]/70 hover:text-[var(--ink)]"
           aria-label={t('editor.save')}
         >
           {saveState === 'saving' ? (
@@ -373,12 +393,12 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
         <div
           data-tauri-drag-region
           className="shrink-0 flex items-center justify-end gap-1 px-2"
-          style={{ height: 32, background: '#fef08a', borderBottom: '1px solid #fde047' }}
+          style={{ height: 32, background: 'var(--panel)', borderBottom: '1px solid var(--line)', order: -2 }}
         >
           {/* Pin / always-on-top */}
           <button
             className="w-7 h-7 flex items-center justify-center rounded transition-colors"
-            style={{ color: pinned ? '#92400e' : '#78716c', background: pinned ? '#fcd34d' : 'transparent' }}
+            style={{ color: pinned ? 'var(--ink)' : '#78716c', background: pinned ? 'var(--panel-strong)' : 'transparent' }}
             onMouseDown={e => e.preventDefault()}
             onClick={togglePin}
             title={pinned ? t('editor.unpin') : t('editor.pin')}
@@ -416,7 +436,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
       )}
 
       {onSetDue && (
-        <div className="shrink-0 px-7 pt-3 flex items-center gap-2 text-xs" style={{ color: '#92400e' }}>
+        <div className="shrink-0 px-7 pt-3 flex items-center gap-2 text-xs" style={{ color: 'var(--ink)' }}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" /><line x1="3" y1="10" x2="21" y2="10" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="16" y1="2" x2="16" y2="6" /></svg>
           <input
             type="date"
@@ -424,7 +444,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
             value={toDateInputValue(note.dueAt)}
             onChange={e => onSetDue(note.id, fromDateInputValue(e.target.value))}
             className="bg-transparent outline-none"
-            style={{ color: '#92400e' }}
+            style={{ color: 'var(--ink)' }}
           />
           {note.dueAt != null && (
             <button onMouseDown={e => e.preventDefault()} onClick={() => onSetDue(note.id, null)} title={t('editor.clearDue')} className="px-1">×</button>
@@ -434,23 +454,24 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
 
       {progress.total > 0 && (
         <div className="shrink-0 px-7 pt-4">
-          <div className="flex items-center justify-between text-xs mb-1" style={{ color: '#92400e' }}>
+          <div className="flex items-center justify-between text-xs mb-1" style={{ color: 'var(--ink)' }}>
             <span>{t('editor.progress', { done: progress.done, total: progress.total })}</span>
           </div>
-          <div className="h-1.5 rounded-full overflow-hidden" style={{ background: '#fde68a' }}>
-            <div className="h-full rounded-full" style={{ width: `${(progress.done / progress.total) * 100}%`, background: '#ca8a04' }} />
+          <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--highlight)' }}>
+            <div className="h-full rounded-full" style={{ width: `${(progress.done / progress.total) * 100}%`, background: 'var(--progress)' }} />
           </div>
         </div>
       )}
 
       {/* Scrollable content area */}
-      <div className="relative flex-1 overflow-auto px-7 py-6">
+      <div className={`relative flex-1 overflow-auto px-7 py-6 ${invisibles && !mdMode ? 'show-invisibles' : ''}`}>
         {loadingNote && (
           <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3" style={{ background: 'rgba(254, 249, 195, 0.85)' }}>
-            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="animate-spin text-amber-700"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
-            <span className="text-sm text-amber-800">{t('editor.loadingNote')}</span>
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="animate-spin text-[var(--ink-strong)]"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
+            <span className="text-sm text-[var(--ink)]">{t('editor.loadingNote')}</span>
           </div>
         )}
+        <div className="h-full" style={{ maxWidth: 'var(--editor-max-width, none)', margin: '0 auto' }}>
         {mdMode
           ? <div className="md-code-editor">
               <CodeEditor
@@ -468,12 +489,14 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
           : <LinkPreviewCtx.Provider value={{ enabled: linkPreviewEnabled ?? true, mode: linkPreviewMode ?? 'card' }}>
               <EditorContent editor={editor} className="h-full" />
             </LinkPreviewCtx.Provider>}
+        </div>
       </div>
 
-      {/* Bottom toolbar */}
+      {/* Formatting toolbar — position (top/bottom) via flex order, or hidden. */}
+      {toolbarPos !== 'hidden' && (
       <div
-        className="shrink-0 flex items-center gap-0.5 px-3 py-2 border-t"
-        style={{ background: '#fef08a', borderColor: '#fde047' }}
+        className={`shrink-0 flex items-center gap-0.5 px-3 py-2 ${toolbarPos === 'top' ? 'border-b' : 'border-t'}`}
+        style={{ background: 'var(--panel)', borderColor: 'var(--line)', order: toolbarPos === 'top' ? -1 : 0 }}
       >
         <ToolbarBtn onClick={() => editor.chain().focus().toggleBold().run()} active={editor.isActive('bold')} title={t('editor.bold')}>
           <span className="font-bold">B</span>
@@ -493,7 +516,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
           </svg>
         </ToolbarBtn>
 
-        <div className="w-px h-5 bg-yellow-400 mx-1" />
+        <div className="w-px h-5 bg-[var(--accent)] mx-1" />
 
         <ToolbarBtn onClick={() => editor.chain().focus().toggleBulletList().run()} active={editor.isActive('bulletList')} title={t('editor.bulletList')}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -515,7 +538,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="8 9 5 12 8 15" /><polyline points="16 9 19 12 16 15" /><line x1="13" y1="7" x2="11" y2="17" /></svg>
         </ToolbarBtn>
 
-        <div className="w-px h-5 bg-yellow-400 mx-1" />
+        <div className="w-px h-5 bg-[var(--accent)] mx-1" />
 
         <ToolbarBtn onClick={() => fileInputRef.current?.click()} title={t('editor.insertImage')}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -537,7 +560,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
           }}
         />
 
-        <div className="w-px h-5 bg-yellow-400 mx-1" />
+        <div className="w-px h-5 bg-[var(--accent)] mx-1" />
         {!mdMode && (
           <ToolbarBtn onClick={() => setFindOpen(o => !o)} active={findOpen} findToggle title={t('editor.find')}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -556,7 +579,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
 
         {!isWindow && (
           <>
-            <div className="w-px h-5 bg-yellow-400 mx-1" />
+            <div className="w-px h-5 bg-[var(--accent)] mx-1" />
             <ToolbarBtn onClick={openInWindow} title={t('editor.openInWindow')}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="3" y="3" width="10" height="10" rx="1.5" />
@@ -566,6 +589,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
           </>
         )}
       </div>
+      )}
       {historyOpen && <HistoryModal noteId={note.id} onRestore={restore} onClose={() => setHistoryOpen(false)} />}
     </div>
   );
