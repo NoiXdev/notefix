@@ -26,7 +26,7 @@ interface Props {
   folders: Folder[];
   selectedId: string | null;
   onSelect: (id: string) => void;
-  onCreate: () => void;
+  onCreate: () => Promise<string>;
   onDelete: (id: string) => void;
   onOpenSettings: () => void;
   onOpenSearch?: () => void;
@@ -124,6 +124,21 @@ export default function NoteList(props: Props) {
     else onReorderFolders?.(res.parentId, res.orderedIds);
   };
 
+  // Create a note inside a folder (via the context menu): create, move it in,
+  // and expand the folder so the new note is visible. onCreate selects it.
+  const createInFolder = async (folderId: string) => {
+    const id = await onCreate();
+    onMoveNote?.(id, folderId);
+    setExpanded(prev => { const n = new Set(prev); n.add(folderId); return n; });
+  };
+
+  // Create a sibling note directly above/below the given note, reusing the same
+  // placement logic as drag-and-drop.
+  const createBesideNote = async (note: NoteMeta, mode: 'before' | 'after') => {
+    const id = await onCreate();
+    applyDrop('note', id, 'note', note.id, mode);
+  };
+
   const onDragStart = (e: DragStartEvent) => setActiveDrag(parseDragId(String(e.active.id)));
   const onDragOver = (e: DragOverEvent) => {
     if (!e.over) { setDropHint(null); return; }
@@ -215,6 +230,7 @@ export default function NoteList(props: Props) {
         folder={folder}
         open={open}
         count={count}
+        depth={depth}
         iconTint={iconTint}
         baseStyle={baseStyle}
         dropMode={dropHint?.id === folder.id ? dropHint.mode : null}
@@ -314,6 +330,10 @@ export default function NoteList(props: Props) {
           x={menu.x} y={menu.y}
           swatches={onSetColor ? { colors: NOTE_COLORS, current: menu.note.color, onPick: c => onSetColor(menu.note.id, c) } : undefined}
           items={[
+            ...(onReorderNotes ? [
+              { label: t('noteList.menu.newNoteAbove'), icon: fa(faNoteSticky), onClick: () => void createBesideNote(menu.note, 'before') },
+              { label: t('noteList.menu.newNoteBelow'), icon: fa(faNoteSticky), onClick: () => void createBesideNote(menu.note, 'after') },
+            ] : []),
             ...(onTogglePin ? [{ label: menu.note.pinned ? t('noteList.menu.unpin') : t('noteList.menu.pin'), icon: fa(faThumbtack), onClick: () => onTogglePin(menu.note.id, !menu.note.pinned) }] : []),
             ...(onArchive ? [{ label: menu.note.archived ? t('noteList.menu.restore') : t('noteList.menu.archive'), icon: fa(faBoxArchive), onClick: () => onArchive(menu.note.id, !menu.note.archived) }] : []),
             ...(onMoveNote ? [{ label: t('noteList.menu.moveTo'), icon: fa(faRightLong), submenu: moveSubmenu(menu.note) }] : []),
@@ -327,6 +347,7 @@ export default function NoteList(props: Props) {
         <ContextMenu
           x={folderMenu.x} y={folderMenu.y}
           items={[
+            { label: t('noteList.menu.newNoteHere'), icon: fa(faNoteSticky), onClick: () => void createInFolder(folderMenu.folder.id) },
             ...((onSetFolderIcon && onSetFolderColor) ? [{ label: t('noteList.menu.customize'), icon: fa(faPalette), onClick: () => setCustomizer({ x: folderMenu.x, y: folderMenu.y, folderId: folderMenu.folder.id }) }] : []),
             ...(onSetFolderSort ? [{ label: t('noteList.menu.sortBy'), icon: fa(faArrowDownAZ), submenu: SORT_OPTIONS.map(o => ({ label: t(o.labelKey), icon: fa(folderMenu.folder.sort === o.value ? faCheck : faArrowDownAZ), onClick: () => onSetFolderSort(folderMenu.folder.id, o.value) })) }] : []),
             { label: t('noteList.menu.newSubfolder'), icon: fa(faFolderPlus), onClick: () => createAndEdit(folderMenu.folder.id) },

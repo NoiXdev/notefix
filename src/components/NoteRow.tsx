@@ -3,9 +3,9 @@ import { useTranslation } from 'react-i18next';
 import { useDraggable, useDroppable } from '@dnd-kit/core';
 import type { NoteMeta } from '../types';
 import type { DropMode } from '../dnd';
-import { snapLineStyle } from '../dndkit';
 import { formatDate, type DateFormat } from '../dates';
 import { DEFAULT_MARKER } from '../colors';
+import DropIndicator from './DropIndicator';
 
 interface Props {
   note: NoteMeta;
@@ -37,6 +37,7 @@ export default function NoteRow({ note, depth, selected, dropMode, dateFormat, o
   const tasks = { done: note.tasksDone, total: note.tasksTotal };
   return (
     <div className="relative">
+      {(dropMode === 'before' || dropMode === 'after') && <DropIndicator mode={dropMode} indent={16 + depth * 14} />}
       <button
         ref={setNodeRef}
         {...listeners}
@@ -44,7 +45,7 @@ export default function NoteRow({ note, depth, selected, dropMode, dateFormat, o
         onClick={() => onSelect(note.id)}
         onContextMenu={e => { e.preventDefault(); onContextMenu(e, note); }}
         className={`w-full text-left ${compact ? 'py-1.5' : 'py-3'} border-b border-gray-900 group relative transition-colors ${selected ? 'bg-gray-800' : 'hover:bg-gray-900'}`}
-        style={{ paddingLeft: 16 + depth * 14, paddingRight: 16, opacity: isDragging ? 0.4 : 1, ...snapLineStyle(dropMode) }}
+        style={{ paddingLeft: 16 + depth * 14, paddingRight: 16, opacity: isDragging ? 0.4 : 1 }}
       >
         <div className="flex items-start gap-2">
           {note.pinned ? <PinIcon color={marker} /> : <div className="w-2 h-2 rounded-sm shrink-0 mt-1.5" style={{ background: marker }} />}

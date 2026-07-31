@@ -166,10 +166,11 @@ export default function App() {
 
   const selectedNote = notes.find(n => n.id === selectedId) ?? null;
 
-  const handleCreate = async () => {
+  const handleCreate = async (): Promise<string> => {
     const id = await createNote();
     setSelectedId(id);
     setView('editor');
+    return id;
   };
 
   useEffect(() => {

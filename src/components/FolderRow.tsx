@@ -2,13 +2,14 @@ import type { CSSProperties, MouseEvent, ReactNode } from 'react';
 import { useDraggable, useDroppable } from '@dnd-kit/core';
 import type { Folder } from '../types';
 import type { DropMode } from '../dnd';
-import { snapLineStyle } from '../dndkit';
 import FolderIcon from './FolderIcon';
+import DropIndicator from './DropIndicator';
 
 interface Props {
   folder: Folder;
   open: boolean;
   count: number;
+  depth: number;
   iconTint?: string;
   baseStyle: CSSProperties;
   dropMode: DropMode | null;
@@ -17,7 +18,7 @@ interface Props {
   children?: ReactNode;
 }
 
-export default function FolderRow({ folder, open, count, iconTint, baseStyle, dropMode, onToggle, onContextMenu, children }: Props) {
+export default function FolderRow({ folder, open, count, depth, iconTint, baseStyle, dropMode, onToggle, onContextMenu, children }: Props) {
   const { setNodeRef, listeners, attributes, isDragging } = useDraggable({ id: `folder:${folder.id}` });
   const before = useDroppable({ id: `folder:${folder.id}:before` });
   const into = useDroppable({ id: `folder:${folder.id}:into` });
@@ -25,14 +26,15 @@ export default function FolderRow({ folder, open, count, iconTint, baseStyle, dr
   return (
     <div>
       <div className="relative">
+        {(dropMode === 'before' || dropMode === 'after') && <DropIndicator mode={dropMode} indent={8 + depth * 14} />}
         <div
           ref={setNodeRef}
           {...listeners}
           {...attributes}
           onClick={() => onToggle(folder.id)}
           onContextMenu={e => { e.preventDefault(); onContextMenu(e, folder); }}
-          className={`flex items-center gap-1 py-2 text-gray-300 hover:bg-gray-900 cursor-pointer select-none ${dropMode === 'into' ? 'bg-gray-700 ring-1 ring-inset ring-yellow-400' : ''}`}
-          style={{ ...baseStyle, opacity: isDragging ? 0.4 : 1, ...snapLineStyle(dropMode === 'into' ? null : dropMode) }}
+          className={`flex items-center gap-1 py-2 text-gray-300 hover:bg-gray-900 cursor-pointer select-none ${dropMode === 'into' ? 'ring-2 ring-inset ring-yellow-400' : ''}`}
+          style={{ ...baseStyle, opacity: isDragging ? 0.4 : 1, ...(dropMode === 'into' ? { background: 'rgba(250, 204, 21, 0.15)' } : null) }}
         >
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ transform: open ? 'rotate(90deg)' : 'none' }}><polyline points="9 6 15 12 9 18" /></svg>
           <FolderIcon icon={folder.icon} tint={iconTint} />
