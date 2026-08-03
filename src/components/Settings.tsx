@@ -17,6 +17,7 @@ import PromptDialog from "./PromptDialog";
 import { runSystemChecks } from "../systemChecks";
 import { OSS_LIBS } from "../licenses";
 import { useIsMobile } from "../hooks/useIsMobile";
+import { isMobilePlatform } from "../platform";
 
 export type Page = "about" | "appearance" | "system" | "contexts" | "mcp" | "stats" | "shortcuts" | "diagnostics";
 
@@ -247,7 +248,10 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
   return (
     <div className="flex h-screen overflow-hidden">
       {(!isMobile || navOpen) && (
-      <aside className={`${isMobile ? "w-full" : "w-52 shrink-0"} bg-gray-950 flex flex-col h-full select-none`}>
+      <aside
+        className={`${isMobile ? "w-full" : "w-52 shrink-0"} bg-gray-950 flex flex-col h-full select-none`}
+        style={{ paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}
+      >
         <div className="px-4 py-3 flex items-center justify-between border-b border-gray-800">
           <span className="text-gray-400 text-xs font-semibold uppercase tracking-widest">{t("settings.sidebarTitle")}</span>
           <button
@@ -274,12 +278,12 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
       )}
 
       {(!isMobile || !navOpen) && (
-      <main className="flex-1 flex flex-col min-w-0 overflow-hidden" style={{ background: "var(--paper)" }}>
+      <main className="flex-1 flex flex-col min-w-0 overflow-hidden" style={{ background: "var(--paper)", paddingBottom: "env(safe-area-inset-bottom)" }}>
         {isMobile && (
           <button
             onClick={() => setNavOpen(true)}
-            className="shrink-0 flex items-center gap-1.5 px-4 py-3 text-[15px] font-medium border-b"
-            style={{ background: "var(--panel)", borderColor: "var(--line)", color: "var(--ink)" }}
+            className="shrink-0 flex items-center gap-1.5 px-4 pb-3 text-[15px] font-medium border-b"
+            style={{ background: "var(--panel)", borderColor: "var(--line)", color: "var(--ink)", paddingTop: "calc(0.75rem + env(safe-area-inset-top))" }}
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6" /></svg>
             {t("settings.sidebarTitle")}
@@ -299,7 +303,7 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
               <span className="text-gray-500 mt-2">{t("settings.about.license")}</span>
             </div>
 
-            <UpdateChecker settings={settings} onSetSetting={onSetSetting} />
+            {!isMobilePlatform && <UpdateChecker settings={settings} onSetSetting={onSetSetting} />}
 
             <div className="mt-10 max-w-md">
               <h2 className="text-sm font-semibold text-gray-800 mb-1">{t("settings.about.openSource")}</h2>
@@ -416,6 +420,8 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
             <h1 className="text-2xl font-bold text-gray-900 mb-1">{t("settings.system.title")}</h1>
             <p className="text-sm text-gray-500 mb-6">{t("settings.system.subtitle")}</p>
             <div className="flex flex-col gap-3 max-w-md">
+              {!isMobilePlatform && (
+              <>
               <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
                 <span>{t("settings.system.startOnBoot")}</span>
                 <Toggle checked={bootEnabled} onChange={toggleBoot} label={t("settings.system.startOnBoot")} />
@@ -428,6 +434,8 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
                 <span>{t("settings.system.closeBehavior")}</span>
                 <div className="w-56"><Select value={settings.closeAction ?? "ask"} options={CLOSE_ACTIONS.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("closeAction", v as import("../hooks/useSettings").CloseAction)} /></div>
               </label>
+              </>
+              )}
               <button
                 onClick={() => onExport([], "notefix-export.json")}
                 className="mt-2 self-start px-4 py-1.5 rounded text-sm font-medium"
@@ -436,6 +444,8 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
                 {t("settings.system.exportAll")}
               </button>
 
+              {!isMobilePlatform && (
+              <>
               <h2 className="text-sm font-semibold text-gray-800 mt-6 mb-1">{t("settings.system.location")}</h2>
               <p className="text-xs text-gray-600 break-all mb-2">{dbPath}</p>
               <button
@@ -460,6 +470,8 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
                     {t("settings.system.restartNow")}
                   </button>
                 </div>
+              )}
+              </>
               )}
               <h2 className="text-sm font-semibold text-gray-800 mt-6 mb-1">{t("settings.system.editorAndHistory")}</h2>
               <label className="flex items-center justify-between gap-4 text-sm text-gray-800">

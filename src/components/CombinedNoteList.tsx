@@ -35,7 +35,10 @@ export default function CombinedNoteList({ selectedId, onSelectNote, onCreate, o
   const labelOf = (c: CombinedNote) => c.contextLabel || t('contexts.localDefault');
 
   return (
-    <div className={`${mobile ? 'w-full' : 'w-72 shrink-0'} flex flex-col bg-gray-950 border-r border-gray-900 h-full`}>
+    <div
+      className={`${mobile ? 'w-full' : 'w-72 shrink-0'} flex flex-col bg-gray-950 border-r border-gray-900 h-full`}
+      style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}
+    >
       <div className="p-2 border-b border-gray-900">
         <ContextSwitcher onManage={onOpenContexts} mobile={mobile} />
       </div>

@@ -247,7 +247,10 @@ export default function NoteList(props: Props) {
   const globalPinned = pinnedScope === 'global' ? activeNotes.filter(n => n.pinned).sort(sortNotes) : [];
 
   return (
-    <aside className={`${props.mobile ? 'w-full' : 'w-60 shrink-0'} bg-gray-950 flex flex-col h-full select-none`}>
+    <aside
+      className={`${props.mobile ? 'w-full' : 'w-60 shrink-0'} bg-gray-950 flex flex-col h-full select-none`}
+      style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}
+    >
       <div className={`${props.mobile ? 'px-4 py-4' : 'px-4 py-3'} border-b border-gray-800`}>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">

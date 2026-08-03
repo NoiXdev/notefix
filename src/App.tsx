@@ -361,8 +361,8 @@ export default function App() {
         {isMobile && (
           <button
             onClick={() => setMobileEditor(false)}
-            className="shrink-0 flex items-center gap-1.5 px-4 py-3 text-[15px] font-medium border-b"
-            style={{ background: 'var(--panel)', borderColor: 'var(--line)', color: 'var(--ink)' }}
+            className="shrink-0 flex items-center gap-1.5 px-4 pb-3 text-[15px] font-medium border-b"
+            style={{ background: 'var(--panel)', borderColor: 'var(--line)', color: 'var(--ink)', paddingTop: 'calc(0.75rem + env(safe-area-inset-top))' }}
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6" /></svg>
             {t('common.notesBack')}

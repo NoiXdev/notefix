@@ -496,7 +496,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
       {toolbarPos !== 'hidden' && (
       <div
         className={`shrink-0 flex items-center gap-0.5 px-3 py-2 overflow-x-auto ${toolbarPos === 'top' ? 'border-b' : 'border-t'}`}
-        style={{ background: 'var(--panel)', borderColor: 'var(--line)', order: toolbarPos === 'top' ? -1 : 0 }}
+        style={{ background: 'var(--panel)', borderColor: 'var(--line)', order: toolbarPos === 'top' ? -1 : 0, paddingBottom: toolbarPos === 'top' ? undefined : 'calc(0.5rem + env(safe-area-inset-bottom))' }}
       >
         <ToolbarBtn onClick={() => editor.chain().focus().toggleBold().run()} active={editor.isActive('bold')} title={t('editor.bold')}>
           <span className="font-bold">B</span>
