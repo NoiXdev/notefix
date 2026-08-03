@@ -16,7 +16,17 @@ mod stats;
 mod storage;
 mod sync;
 mod syscheck;
+#[cfg(desktop)]
 mod tray;
+// Mobile has no tray/menu/multi-window; no-op stubs keep call sites unchanged.
+#[cfg(not(desktop))]
+mod tray {
+    use tauri::AppHandle;
+    pub fn show_main(_app: &AppHandle) {}
+    pub fn rebuild_menu(_app: &AppHandle) {}
+    pub fn build_tray(_app: &AppHandle) -> tauri::Result<()> { Ok(()) }
+    pub(crate) fn note_title(_html: &str) -> String { String::new() }
+}
 mod update;
 mod widgetshare;
 
@@ -52,7 +62,7 @@ fn dispatch_widget_url(app: &tauri::AppHandle, url: &str) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .register_uri_scheme_protocol("noteimg", |ctx, request| {
             let app = ctx.app_handle();
             let name = request.uri().path().trim_start_matches('/').to_string();
@@ -69,23 +79,29 @@ pub fn run() {
                     .unwrap(),
             }
         })
-        // single-instance MUST be registered first. On Windows/Linux a
-        // `notefix://…` deep link arrives as an argv of the second instance;
-        // forward it to the running window as an `auth-callback` event.
+        .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_process::init());
+
+    // Desktop-only plugins. single-instance MUST be registered first: on
+    // Windows/Linux a `notefix://…` deep link arrives as an argv of the second
+    // instance; forward it to the running window as an `auth-callback` event.
+    // autostart is a boot-time desktop feature. Neither applies on mobile.
+    #[cfg(desktop)]
+    let builder = builder
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             tray::show_main(app);
             if let Some(url) = args.iter().find(|a| a.starts_with("notefix://")) {
                 dispatch_widget_url(app, url);
             }
         }))
-        .plugin(tauri_plugin_deep_link::init())
-        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
-        ))
-        .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_process::init())
+        ));
+
+    builder
         .setup(|app| {
             // Deep-link auth bridge: when the OS hands the running app a
             // `notefix://…` URL (browser sign-in redirect), forward it to the

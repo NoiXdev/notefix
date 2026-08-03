@@ -179,17 +179,23 @@ pub fn trash_empty(
 #[tauri::command]
 pub async fn open_note_window(app: AppHandle, note_id: String) -> Result<(), String> {
     let label = format!("note-{note_id}");
-    if let Some(win) = app.get_webview_window(&label) {
-        win.set_focus().map_err(|e| e.to_string())?;
-        return Ok(());
+    // Separate note windows are a desktop concept; mobile is single-window.
+    #[cfg(desktop)]
+    {
+        if let Some(win) = app.get_webview_window(&label) {
+            win.set_focus().map_err(|e| e.to_string())?;
+            return Ok(());
+        }
+        let url = format!("index.html?windowNoteId={note_id}");
+        WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(url.into()))
+            .title("Notefix")
+            .inner_size(700.0, 820.0)
+            .decorations(false)
+            .build()
+            .map_err(|e| e.to_string())?;
     }
-    let url = format!("index.html?windowNoteId={note_id}");
-    WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(url.into()))
-        .title("Notefix")
-        .inner_size(700.0, 820.0)
-        .decorations(false)
-        .build()
-        .map_err(|e| e.to_string())?;
+    #[cfg(not(desktop))]
+    let _ = (&app, &label);
     Ok(())
 }
 
