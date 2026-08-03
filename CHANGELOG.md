@@ -1,4 +1,17 @@
-## [0.4.0](https://github.com/NoiXdev/notefix/compare/v0.3.0...v) (2026-07-31)
+## [0.5.0](https://github.com/NoiXdev/notefix/compare/v0.4.0...v) (2026-08-03)
+
+
+### Features
+
+* **android:** add Android project scaffold (tauri android init) ([65c4de1](https://github.com/NoiXdev/notefix/commit/65c4de19fc0b7c8247db8a18de04f6a36830102d))
+* **icons:** use the Notefix logo for the app icon on all platforms ([62e3bb5](https://github.com/NoiXdev/notefix/commit/62e3bb51ea9bcbef0f595d84579d0a1327f8d9c0))
+* **mobile:** full-width settings drill-down + touch-friendly context switch ([b7541c1](https://github.com/NoiXdev/notefix/commit/b7541c1ff74b61593ae594d42667f32cccece1d0))
+* **mobile:** hide the MCP settings entry on mobile ([3a90861](https://github.com/NoiXdev/notefix/commit/3a9086125ef45d2f081d3da5c66789b011174036))
+* **mobile:** larger touch targets in headers + iconified settings nav ([509119d](https://github.com/NoiXdev/notefix/commit/509119d231d7f6effc1e2de1ce2b65b945691e9c))
+* **mobile:** responsive single-column layout for phone viewports ([c57b7f8](https://github.com/NoiXdev/notefix/commit/c57b7f89164b626df5d7fe6b2801a7b640a83ec6))
+* **mobile:** safe-area insets + hide desktop-only settings on mobile ([2bea66f](https://github.com/NoiXdev/notefix/commit/2bea66fa64374a056a42e26f63195da048a2542f))
+
+## [0.4.0](https://github.com/NoiXdev/notefix/compare/v0.3.0...v0.4.0) (2026-07-31)
 
 
 ### Features
