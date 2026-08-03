@@ -45,3 +45,14 @@ jobs:
       # Builds the universal app, embeds + inside-out-signs the WidgetKit
       # extension, notarizes, and prints DMG=<path> for upload.
       macos_build_script: scripts/macos-release.sh
+
+  # Build the Android APK and attach it to the release just created above.
+  # Chained via `needs` (not the release event) because a GITHUB_TOKEN release
+  # does not fire `release: published`.
+  apk:
+    needs: release
+    if: ${{ inputs.dry_run == false }}
+    uses: NoiXdev/github-workflows/.github/workflows/build_tauri_android_apk.yaml@main
+    secrets: inherit
+    with:
+      release_tag: ${{ needs.release.outputs.tag }}

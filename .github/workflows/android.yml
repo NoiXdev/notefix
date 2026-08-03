@@ -1,14 +1,18 @@
 name: Android APK
-run-name: Android APK for ${{ github.event.release.tag_name || github.sha }}
+run-name: Android APK${{ inputs.release_tag && format(' → {0}', inputs.release_tag) || '' }}
 
-# Builds a sideloadable debug APK for testing via the shared reusable workflow.
-# On a published GitHub release the APK is attached to that release; otherwise
-# it is available as a workflow artifact. No app-store publishing.
+# On-demand debug APK build via the shared reusable workflow. Produces a
+# downloadable artifact; optionally attaches it to an existing release tag.
+# The release-time APK is built by the Release workflow itself (chained job),
+# because a GITHUB_TOKEN release does not fire the `release: published` event.
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Attach the built APK to this existing release tag (optional)"
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -17,3 +21,5 @@ jobs:
   apk:
     uses: NoiXdev/github-workflows/.github/workflows/build_tauri_android_apk.yaml@main
     secrets: inherit
+    with:
+      release_tag: ${{ inputs.release_tag }}
