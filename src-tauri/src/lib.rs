@@ -24,8 +24,12 @@ mod tray {
     use tauri::AppHandle;
     pub fn show_main(_app: &AppHandle) {}
     pub fn rebuild_menu(_app: &AppHandle) {}
-    pub fn build_tray(_app: &AppHandle) -> tauri::Result<()> { Ok(()) }
-    pub(crate) fn note_title(_html: &str) -> String { String::new() }
+    pub fn build_tray(_app: &AppHandle) -> tauri::Result<()> {
+        Ok(())
+    }
+    pub(crate) fn note_title(_html: &str) -> String {
+        String::new()
+    }
 }
 mod update;
 mod widgetshare;
