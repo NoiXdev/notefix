@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faGlobe } from "@fortawesome/free-solid-svg-icons";
+import type { IconDefinition } from "@fortawesome/fontawesome-svg-core";
+import { faGlobe, faCircleInfo, faPalette, faGear, faPlug, faChartColumn, faKeyboard, faStethoscope, faChevronRight } from "@fortawesome/free-solid-svg-icons";
 import { api, type AppInfo, type UpdateInfo } from "../api";
 import type { ContextInfo } from "../contexts";
 import { startServerAuth } from "../serverAuth";
@@ -21,19 +22,23 @@ export type Page = "about" | "appearance" | "system" | "contexts" | "mcp" | "sta
 
 interface NavItemProps {
   label: string;
+  icon: IconDefinition;
   active: boolean;
+  mobile?: boolean;
   onClick: () => void;
 }
 
-function NavItem({ label, active, onClick }: NavItemProps) {
+function NavItem({ label, icon, active, mobile, onClick }: NavItemProps) {
   return (
     <button
       onClick={onClick}
-      className={`w-full text-left px-4 py-2 text-sm transition-colors ${
-        active ? "bg-gray-800 text-white" : "text-gray-400 hover:bg-gray-900 hover:text-gray-200"
-      }`}
+      className={`w-full text-left flex items-center transition-colors ${
+        mobile ? "gap-3 px-4 py-3 text-[15px] border-b border-gray-900" : "gap-2.5 px-4 py-2 text-sm"
+      } ${active ? "bg-gray-800 text-white" : "text-gray-400 hover:bg-gray-900 hover:text-gray-200"}`}
     >
-      {label}
+      {mobile && <FontAwesomeIcon icon={icon} className={`shrink-0 w-5 text-base ${active ? "text-white" : "text-gray-500"}`} />}
+      <span className="flex-1 truncate">{label}</span>
+      {mobile && <FontAwesomeIcon icon={faChevronRight} className="shrink-0 text-gray-600 text-xs" />}
     </button>
   );
 }
@@ -256,14 +261,14 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
           </button>
         </div>
         <nav className="flex-1 py-2">
-          <NavItem label={t("settings.nav.about")} active={page === "about"} onClick={() => openPage("about")} />
-          <NavItem label={t("settings.nav.appearance")} active={page === "appearance"} onClick={() => openPage("appearance")} />
-          <NavItem label={t("settings.nav.system")} active={page === "system"} onClick={() => openPage("system")} />
-          <NavItem label={t("contexts.nav")} active={page === "contexts"} onClick={() => openPage("contexts")} />
-          <NavItem label={t("settings.nav.mcp")} active={page === "mcp"} onClick={() => openPage("mcp")} />
-          <NavItem label={t("settings.nav.stats")} active={page === "stats"} onClick={() => openPage("stats")} />
-          <NavItem label={t("settings.nav.shortcuts")} active={page === "shortcuts"} onClick={() => openPage("shortcuts")} />
-          <NavItem label={t("settings.nav.diagnostics")} active={page === "diagnostics"} onClick={() => openPage("diagnostics")} />
+          <NavItem icon={faCircleInfo} mobile={isMobile} label={t("settings.nav.about")} active={page === "about"} onClick={() => openPage("about")} />
+          <NavItem icon={faPalette} mobile={isMobile} label={t("settings.nav.appearance")} active={page === "appearance"} onClick={() => openPage("appearance")} />
+          <NavItem icon={faGear} mobile={isMobile} label={t("settings.nav.system")} active={page === "system"} onClick={() => openPage("system")} />
+          <NavItem icon={faGlobe} mobile={isMobile} label={t("contexts.nav")} active={page === "contexts"} onClick={() => openPage("contexts")} />
+          <NavItem icon={faPlug} mobile={isMobile} label={t("settings.nav.mcp")} active={page === "mcp"} onClick={() => openPage("mcp")} />
+          <NavItem icon={faChartColumn} mobile={isMobile} label={t("settings.nav.stats")} active={page === "stats"} onClick={() => openPage("stats")} />
+          <NavItem icon={faKeyboard} mobile={isMobile} label={t("settings.nav.shortcuts")} active={page === "shortcuts"} onClick={() => openPage("shortcuts")} />
+          <NavItem icon={faStethoscope} mobile={isMobile} label={t("settings.nav.diagnostics")} active={page === "diagnostics"} onClick={() => openPage("diagnostics")} />
         </nav>
       </aside>
       )}
@@ -273,10 +278,10 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
         {isMobile && (
           <button
             onClick={() => setNavOpen(true)}
-            className="shrink-0 flex items-center gap-1 px-3 py-2 text-sm font-medium border-b"
+            className="shrink-0 flex items-center gap-1.5 px-4 py-3 text-[15px] font-medium border-b"
             style={{ background: "var(--panel)", borderColor: "var(--line)", color: "var(--ink)" }}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6" /></svg>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6" /></svg>
             {t("settings.sidebarTitle")}
           </button>
         )}

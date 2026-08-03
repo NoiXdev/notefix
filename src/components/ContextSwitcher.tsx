@@ -10,7 +10,7 @@ import PromptDialog from './PromptDialog';
 import SyncStatus from './SyncStatus';
 import { startServerAuth } from '../serverAuth';
 
-export default function ContextSwitcher({ onManage }: { onManage?: () => void }) {
+export default function ContextSwitcher({ onManage, mobile }: { onManage?: () => void; mobile?: boolean }) {
   const { t } = useTranslation();
   const [ctx, setCtx] = useState<ContextInfo[]>([]);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
@@ -90,7 +90,7 @@ export default function ContextSwitcher({ onManage }: { onManage?: () => void })
           const r = btnRef.current?.getBoundingClientRect();
           setMenu(r ? { x: r.left, y: r.bottom + 4 } : { x: 0, y: 0 });
         }}
-        className="w-full flex items-center justify-between gap-1.5 px-2 py-1.5 rounded text-xs text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
+        className={`w-full flex items-center justify-between gap-1.5 rounded text-gray-400 hover:text-white hover:bg-gray-800 transition-colors ${mobile ? "px-3 py-2.5 text-sm" : "px-2 py-1.5 text-xs"}`}
       >
         <span className="truncate flex items-center gap-1.5">
           {active?.kind === 'server' && <FontAwesomeIcon icon={faGlobe} className="text-[10px] shrink-0" />}

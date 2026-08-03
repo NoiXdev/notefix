@@ -37,17 +37,17 @@ export default function CombinedNoteList({ selectedId, onSelectNote, onCreate, o
   return (
     <div className={`${mobile ? 'w-full' : 'w-72 shrink-0'} flex flex-col bg-gray-950 border-r border-gray-900 h-full`}>
       <div className="p-2 border-b border-gray-900">
-        <ContextSwitcher onManage={onOpenContexts} />
+        <ContextSwitcher onManage={onOpenContexts} mobile={mobile} />
       </div>
-      <div className="flex items-center justify-between px-3 py-2 border-b border-gray-900">
-        <span className="text-xs text-gray-400">{t('combined.allContexts')}</span>
-        <div className="flex items-center gap-2">
+      <div className={`flex items-center justify-between border-b border-gray-900 ${mobile ? 'px-3 py-2.5' : 'px-3 py-2'}`}>
+        <span className={`text-gray-400 ${mobile ? 'text-sm' : 'text-xs'}`}>{t('combined.allContexts')}</span>
+        <div className={`flex items-center ${mobile ? 'gap-1' : 'gap-2'}`}>
           {onOpenSearch && (
-            <button onClick={onOpenSearch} title={t('search.open')} className="text-gray-400 hover:text-white">
+            <button onClick={onOpenSearch} title={t('search.open')} className={`flex items-center justify-center text-gray-400 hover:text-white ${mobile ? 'w-10 h-10 text-lg' : ''}`}>
               <FontAwesomeIcon icon={faMagnifyingGlass} />
             </button>
           )}
-          <button onClick={onCreate} title={t('noteList.newNote')} className="text-gray-400 hover:text-white">
+          <button onClick={onCreate} title={t('noteList.newNote')} className={`flex items-center justify-center text-gray-400 hover:text-white ${mobile ? 'w-10 h-10 text-lg' : ''}`}>
             <FontAwesomeIcon icon={faPlus} />
           </button>
         </div>
