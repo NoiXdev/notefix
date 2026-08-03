@@ -83,8 +83,14 @@ export default function ContextSwitcher({ onManage }: { onManage?: () => void })
         ref={btnRef}
         aria-label={t('contexts.switch')}
         title={t('contexts.switch')}
-        onClick={e => { setError(null); setMenu({ x: e.clientX, y: e.clientY }); }}
-        className="w-full flex items-center justify-between gap-1.5 px-2 py-1 rounded text-xs text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
+        onClick={() => {
+          setError(null);
+          // Anchor the menu to the button (drops straight below it) instead of
+          // the tap point — a proper dropdown that stays put on touch screens.
+          const r = btnRef.current?.getBoundingClientRect();
+          setMenu(r ? { x: r.left, y: r.bottom + 4 } : { x: 0, y: 0 });
+        }}
+        className="w-full flex items-center justify-between gap-1.5 px-2 py-1.5 rounded text-xs text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
       >
         <span className="truncate flex items-center gap-1.5">
           {active?.kind === 'server' && <FontAwesomeIcon icon={faGlobe} className="text-[10px] shrink-0" />}

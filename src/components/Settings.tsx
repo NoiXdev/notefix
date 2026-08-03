@@ -15,6 +15,7 @@ import ShortcutsSettings from "./ShortcutsSettings";
 import PromptDialog from "./PromptDialog";
 import { runSystemChecks } from "../systemChecks";
 import { OSS_LIBS } from "../licenses";
+import { useIsMobile } from "../hooks/useIsMobile";
 
 export type Page = "about" | "appearance" | "system" | "contexts" | "mcp" | "stats" | "shortcuts" | "diagnostics";
 
@@ -197,6 +198,11 @@ const LANGUAGES = [
 export default function Settings({ onClose, settings, onSetSetting, onExport, initialPage }: Props) {
   const { t } = useTranslation();
   const [page, setPage] = useState<Page>(initialPage ?? "about");
+  // Mobile: drill-down. `navOpen` shows the full-width nav list; picking an
+  // entry opens the page full-width with a back button (like list↔editor).
+  const isMobile = useIsMobile();
+  const [navOpen, setNavOpen] = useState(initialPage == null);
+  const openPage = (p: Page) => { setPage(p); setNavOpen(false); };
   const [info, setInfo] = useState<AppInfo | null>(null);
 
   useEffect(() => {
@@ -235,7 +241,8 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
 
   return (
     <div className="flex h-screen overflow-hidden">
-      <aside className="w-32 sm:w-52 shrink-0 bg-gray-950 flex flex-col h-full select-none">
+      {(!isMobile || navOpen) && (
+      <aside className={`${isMobile ? "w-full" : "w-52 shrink-0"} bg-gray-950 flex flex-col h-full select-none`}>
         <div className="px-4 py-3 flex items-center justify-between border-b border-gray-800">
           <span className="text-gray-400 text-xs font-semibold uppercase tracking-widest">{t("settings.sidebarTitle")}</span>
           <button
@@ -249,18 +256,31 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
           </button>
         </div>
         <nav className="flex-1 py-2">
-          <NavItem label={t("settings.nav.about")} active={page === "about"} onClick={() => setPage("about")} />
-          <NavItem label={t("settings.nav.appearance")} active={page === "appearance"} onClick={() => setPage("appearance")} />
-          <NavItem label={t("settings.nav.system")} active={page === "system"} onClick={() => setPage("system")} />
-          <NavItem label={t("contexts.nav")} active={page === "contexts"} onClick={() => setPage("contexts")} />
-          <NavItem label={t("settings.nav.mcp")} active={page === "mcp"} onClick={() => setPage("mcp")} />
-          <NavItem label={t("settings.nav.stats")} active={page === "stats"} onClick={() => setPage("stats")} />
-          <NavItem label={t("settings.nav.shortcuts")} active={page === "shortcuts"} onClick={() => setPage("shortcuts")} />
-          <NavItem label={t("settings.nav.diagnostics")} active={page === "diagnostics"} onClick={() => setPage("diagnostics")} />
+          <NavItem label={t("settings.nav.about")} active={page === "about"} onClick={() => openPage("about")} />
+          <NavItem label={t("settings.nav.appearance")} active={page === "appearance"} onClick={() => openPage("appearance")} />
+          <NavItem label={t("settings.nav.system")} active={page === "system"} onClick={() => openPage("system")} />
+          <NavItem label={t("contexts.nav")} active={page === "contexts"} onClick={() => openPage("contexts")} />
+          <NavItem label={t("settings.nav.mcp")} active={page === "mcp"} onClick={() => openPage("mcp")} />
+          <NavItem label={t("settings.nav.stats")} active={page === "stats"} onClick={() => openPage("stats")} />
+          <NavItem label={t("settings.nav.shortcuts")} active={page === "shortcuts"} onClick={() => openPage("shortcuts")} />
+          <NavItem label={t("settings.nav.diagnostics")} active={page === "diagnostics"} onClick={() => openPage("diagnostics")} />
         </nav>
       </aside>
+      )}
 
-      <main className="settings-scroll flex-1 overflow-auto px-4 py-6 sm:px-10 sm:py-10" style={{ background: "var(--paper)" }}>
+      {(!isMobile || !navOpen) && (
+      <main className="flex-1 flex flex-col min-w-0 overflow-hidden" style={{ background: "var(--paper)" }}>
+        {isMobile && (
+          <button
+            onClick={() => setNavOpen(true)}
+            className="shrink-0 flex items-center gap-1 px-3 py-2 text-sm font-medium border-b"
+            style={{ background: "var(--panel)", borderColor: "var(--line)", color: "var(--ink)" }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6" /></svg>
+            {t("settings.sidebarTitle")}
+          </button>
+        )}
+        <div className="settings-scroll flex-1 overflow-auto px-4 py-6 sm:px-10 sm:py-10">
         {page === "about" && info && (
           <div>
             <Logo size={56} className="mb-4" />
@@ -491,7 +511,9 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
         {page === "diagnostics" && (
           <SystemChecksPage settings={settings} onChangeLocation={changeLocation} />
         )}
+        </div>
       </main>
+      )}
     </div>
   );
 }
