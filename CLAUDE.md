@@ -15,8 +15,9 @@ command, check whether that command is `#[cfg(desktop)]`. If it is, hide the UI
 on mobile.** Gate it with `isMobilePlatform` from `src/platform.ts`.
 
 Already gated (keep this list current): update check (About), autostart /
-start-minimized / close-behavior / storage-location (System), and the
-autostart + window diagnostics checks. Candidates to revisit: MCP server.
+start-minimized / close-behavior / storage-location (System), the autostart +
+window diagnostics checks, and the MCP nav item (the MCP server targets local
+desktop AI clients, not phones).
 
 ### Two different "mobile" signals — don't confuse them
 

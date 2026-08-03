@@ -269,7 +269,7 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
           <NavItem icon={faPalette} mobile={isMobile} label={t("settings.nav.appearance")} active={page === "appearance"} onClick={() => openPage("appearance")} />
           <NavItem icon={faGear} mobile={isMobile} label={t("settings.nav.system")} active={page === "system"} onClick={() => openPage("system")} />
           <NavItem icon={faGlobe} mobile={isMobile} label={t("contexts.nav")} active={page === "contexts"} onClick={() => openPage("contexts")} />
-          <NavItem icon={faPlug} mobile={isMobile} label={t("settings.nav.mcp")} active={page === "mcp"} onClick={() => openPage("mcp")} />
+          {!isMobilePlatform && <NavItem icon={faPlug} mobile={isMobile} label={t("settings.nav.mcp")} active={page === "mcp"} onClick={() => openPage("mcp")} />}
           <NavItem icon={faChartColumn} mobile={isMobile} label={t("settings.nav.stats")} active={page === "stats"} onClick={() => openPage("stats")} />
           <NavItem icon={faKeyboard} mobile={isMobile} label={t("settings.nav.shortcuts")} active={page === "shortcuts"} onClick={() => openPage("shortcuts")} />
           <NavItem icon={faStethoscope} mobile={isMobile} label={t("settings.nav.diagnostics")} active={page === "diagnostics"} onClick={() => openPage("diagnostics")} />
