@@ -235,7 +235,7 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
 
   return (
     <div className="flex h-screen overflow-hidden">
-      <aside className="w-52 shrink-0 bg-gray-950 flex flex-col h-full select-none">
+      <aside className="w-32 sm:w-52 shrink-0 bg-gray-950 flex flex-col h-full select-none">
         <div className="px-4 py-3 flex items-center justify-between border-b border-gray-800">
           <span className="text-gray-400 text-xs font-semibold uppercase tracking-widest">{t("settings.sidebarTitle")}</span>
           <button
@@ -260,7 +260,7 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
         </nav>
       </aside>
 
-      <main className="settings-scroll flex-1 overflow-auto px-10 py-10" style={{ background: "var(--paper)" }}>
+      <main className="settings-scroll flex-1 overflow-auto px-4 py-6 sm:px-10 sm:py-10" style={{ background: "var(--paper)" }}>
         {page === "about" && info && (
           <div>
             <Logo size={56} className="mb-4" />

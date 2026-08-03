@@ -17,9 +17,10 @@ interface Props {
   onOpenSearch?: () => void;
   onOpenContexts: () => void;
   dateFormat: DateFormat;
+  mobile?: boolean;
 }
 
-export default function CombinedNoteList({ selectedId, onSelectNote, onCreate, onOpenSearch, onOpenContexts, dateFormat }: Props) {
+export default function CombinedNoteList({ selectedId, onSelectNote, onCreate, onOpenSearch, onOpenContexts, dateFormat, mobile }: Props) {
   const { t } = useTranslation();
   const [items, setItems] = useState<CombinedNote[]>([]);
 
@@ -34,7 +35,7 @@ export default function CombinedNoteList({ selectedId, onSelectNote, onCreate, o
   const labelOf = (c: CombinedNote) => c.contextLabel || t('contexts.localDefault');
 
   return (
-    <div className="w-72 shrink-0 flex flex-col bg-gray-950 border-r border-gray-900 h-full">
+    <div className={`${mobile ? 'w-full' : 'w-72 shrink-0'} flex flex-col bg-gray-950 border-r border-gray-900 h-full`}>
       <div className="p-2 border-b border-gray-900">
         <ContextSwitcher onManage={onOpenContexts} />
       </div>

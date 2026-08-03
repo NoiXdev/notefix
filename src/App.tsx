@@ -4,6 +4,7 @@ import { api } from './api';
 import { useNotes } from './hooks/useNotes';
 import { useFolders } from './hooks/useFolders';
 import { useSettings } from './hooks/useSettings';
+import { useIsMobile } from './hooks/useIsMobile';
 import NoteList from './components/NoteList';
 import CombinedNoteList from './components/CombinedNoteList';
 import NoteEditor from './components/NoteEditor';
@@ -54,10 +55,14 @@ export default function App() {
   const [contexts, setContexts] = useState<ContextInfo[]>([]);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
+  // Mobile: single-column. `mobileEditor` = showing the editor (vs. the list).
+  const isMobile = useIsMobile();
+  const [mobileEditor, setMobileEditor] = useState(false);
   const pendingSelectRef = useRef<string | null>(null);
   const initView = useRef(false);
-  const selectNote = (id: string) => { setSelectedId(id); setView('editor'); };
+  const selectNote = (id: string) => { setSelectedId(id); setView('editor'); setMobileEditor(true); };
   const selectCombined = (noteId: string, contextId: string) => {
+    setMobileEditor(true);
     if (contextId !== activeContextId) {
       pendingSelectRef.current = noteId;
       void api.contexts.switch(contextId);
@@ -301,7 +306,7 @@ export default function App() {
         />
       )}
       <div className="flex flex-1 min-h-0 overflow-hidden">
-      {settings.sidebarMode === 'combined' ? (
+      {(!isMobile || !mobileEditor) && (settings.sidebarMode === 'combined' ? (
         <CombinedNoteList
           selectedId={selectedId}
           activeContextId={activeContextId}
@@ -311,9 +316,11 @@ export default function App() {
           onOpenSearch={() => setSearchOpen(true)}
           onOpenContexts={() => { setSettingsPage('contexts'); setShowSettings(true); }}
           dateFormat={settings.dateFormat}
+          mobile={isMobile}
         />
       ) : (
       <NoteList
+        mobile={isMobile}
         notes={notes}
         folders={folders}
         selectedId={selectedId}
@@ -348,8 +355,20 @@ export default function App() {
         onEmptyTrash={emptyTrash}
         onExportNote={(n) => setExportNoteState(n)}
       />
-      )}
-      <main className="flex-1 overflow-hidden">
+      ))}
+      {(!isMobile || mobileEditor) && (
+      <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        {isMobile && (
+          <button
+            onClick={() => setMobileEditor(false)}
+            className="shrink-0 flex items-center gap-1 px-3 py-2 text-sm font-medium border-b"
+            style={{ background: 'var(--panel)', borderColor: 'var(--line)', color: 'var(--ink)' }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6" /></svg>
+            {t('common.notesBack')}
+          </button>
+        )}
+        <div className="flex-1 min-h-0 overflow-hidden">
         {view === 'dashboard' ? (
           <Dashboard
             notes={notes}
@@ -372,7 +391,9 @@ export default function App() {
             </div>
           </div>
         )}
+        </div>
       </main>
+      )}
       </div>
       {folderToDelete && (
         <DeleteFolderModal

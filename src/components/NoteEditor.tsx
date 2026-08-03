@@ -88,7 +88,7 @@ function ToolbarBtn({ onClick, active, title, children, findToggle }: ToolbarBtn
       data-find-toggle={findToggle ? '' : undefined}
       onMouseDown={e => { e.preventDefault(); onClick(); }}
       title={title}
-      className={`w-8 h-8 flex items-center justify-center rounded text-sm transition-colors select-none ${
+      className={`w-8 h-8 shrink-0 flex items-center justify-center rounded text-sm transition-colors select-none ${
         active
           ? 'bg-[var(--accent-strong)] text-gray-900'
           : 'text-gray-700 hover:bg-[var(--accent)]'
@@ -495,7 +495,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
       {/* Formatting toolbar — position (top/bottom) via flex order, or hidden. */}
       {toolbarPos !== 'hidden' && (
       <div
-        className={`shrink-0 flex items-center gap-0.5 px-3 py-2 ${toolbarPos === 'top' ? 'border-b' : 'border-t'}`}
+        className={`shrink-0 flex items-center gap-0.5 px-3 py-2 overflow-x-auto ${toolbarPos === 'top' ? 'border-b' : 'border-t'}`}
         style={{ background: 'var(--panel)', borderColor: 'var(--line)', order: toolbarPos === 'top' ? -1 : 0 }}
       >
         <ToolbarBtn onClick={() => editor.chain().focus().toggleBold().run()} active={editor.isActive('bold')} title={t('editor.bold')}>

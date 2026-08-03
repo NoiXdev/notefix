@@ -413,6 +413,7 @@ export const en = {
   common: {
     noteNotFound: 'Note not found.',
     selectOrCreate: 'Select a note or create a new one',
+    notesBack: 'Notes',
   },
   contexts: {
     nav: 'Contexts',

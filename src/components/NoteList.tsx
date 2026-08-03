@@ -30,6 +30,7 @@ interface Props {
   onDelete: (id: string) => void;
   onOpenSettings: () => void;
   onOpenSearch?: () => void;
+  mobile?: boolean;
   onOpenDashboard?: () => void;
   onTogglePin?: (id: string, pinned: boolean) => void;
   onArchive?: (id: string, archived: boolean) => void;
@@ -246,7 +247,7 @@ export default function NoteList(props: Props) {
   const globalPinned = pinnedScope === 'global' ? activeNotes.filter(n => n.pinned).sort(sortNotes) : [];
 
   return (
-    <aside className="w-60 shrink-0 bg-gray-950 flex flex-col h-full select-none">
+    <aside className={`${props.mobile ? 'w-full' : 'w-60 shrink-0'} bg-gray-950 flex flex-col h-full select-none`}>
       <div className="px-4 py-3 border-b border-gray-800">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1.5">
