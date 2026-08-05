@@ -2,12 +2,83 @@
 //! Tiptap HTML; MCP speaks Markdown. Task-list handling mirrors `src/markdown.ts`
 //! so notes created via MCP are indistinguishable from app-created ones.
 
-use comrak::{markdown_to_html, Options};
-use regex::Regex;
-use std::sync::OnceLock;
+use comrak::nodes::{ListType, NodeValue};
+use comrak::{create_formatter, parse_document, Arena, Options};
+use std::fmt::Write as _;
+
+// A regex/string post-process over comrak's rendered HTML cannot robustly
+// tell a task item's closing </li> apart from a *nested* task item's closing
+// </li> (a lazy `(.*?)</li>` match stops at the first one it finds, which is
+// the inner list's, swallowing the inner <ul> and leaving its raw <input>
+// unstripped). Overriding comrak's AST->HTML rendering for the two node
+// types involved sidesteps that entirely: `NodeValue::TaskItem` and
+// `NodeValue::List` are distinct, separately-typed nodes in the tree (a
+// nested task list is just another `List`/`TaskItem` subtree), so this
+// formatter's rules apply independently and correctly at every nesting
+// depth. It also reuses the exact "is this list a task list" answer comrak's
+// own parser already computed (`NodeList::is_task_list`), which is set as
+// soon as *any* item in a list is a task item — precisely the Tiptap rule
+// that a mixed list's `<ul>` must carry `data-type="taskList"` while a plain
+// item inside it stays a plain `<li>`.
+create_formatter!(TiptapFormatter, {
+    // comrak renders a GFM task item (`- [ ] x` / `- [x] x`) as
+    // `<li><input type="checkbox" .../> x</li>`. Tiptap instead expects
+    // `<li data-type="taskItem" data-checked="true|false">x</li>` with no
+    // `<input>` (Tiptap's NodeView renders its own checkbox), mirroring
+    // `fixTaskLists` in `src/markdown.ts`.
+    NodeValue::TaskItem(ref nti) => |context, entering| {
+        if entering {
+            context.cr()?;
+            context.write_str(if nti.symbol.is_some() {
+                r#"<li data-type="taskItem" data-checked="true">"#
+            } else {
+                r#"<li data-type="taskItem" data-checked="false">"#
+            })?;
+        } else {
+            context.write_str("</li>")?;
+            context.lf()?;
+        }
+    },
+    NodeValue::List(ref nl) => |context, entering| {
+        if entering {
+            context.cr()?;
+            match nl.list_type {
+                ListType::Bullet => {
+                    context.write_str("<ul")?;
+                    if nl.is_task_list {
+                        context.write_str(r#" data-type="taskList""#)?;
+                    }
+                    context.write_str(">")?;
+                }
+                ListType::Ordered => {
+                    context.write_str("<ol")?;
+                    if nl.is_task_list {
+                        context.write_str(r#" data-type="taskList""#)?;
+                    }
+                    if nl.start == 1 {
+                        context.write_str(">")?;
+                    } else {
+                        write!(context, " start=\"{}\">", nl.start)?;
+                    }
+                }
+            }
+            context.lf()?;
+        } else if nl.list_type == ListType::Bullet {
+            context.write_str("</ul>")?;
+            context.lf()?;
+        } else {
+            context.write_str("</ol>")?;
+            context.lf()?;
+        }
+    },
+});
 
 /// Markdown (GFM) -> HTML. Hard line breaks on (matches the frontend's
-/// `marked` `breaks: true`), tables/strikethrough/autolinks/task items enabled.
+/// `marked` `breaks: true`), tables/strikethrough/autolinks/task items
+/// enabled. Task-list items are rendered straight from comrak's AST into
+/// Tiptap's `data-type="taskList"` / `data-type="taskItem"` structure via
+/// `TiptapFormatter` above, so homogeneous, mixed, and arbitrarily nested
+/// task lists all convert correctly.
 // Consumed by the MCP note-conversion commands added in later tasks of this overhaul.
 #[allow(dead_code)]
 pub fn md_to_html(md: &str) -> String {
@@ -17,46 +88,13 @@ pub fn md_to_html(md: &str) -> String {
     opts.extension.tasklist = true;
     opts.extension.autolink = true;
     opts.render.hardbreaks = true;
-    let html = markdown_to_html(md, &opts);
-    tiptap_task_lists(&html).trim().to_string()
-}
 
-/// Rewrite comrak's GFM checkbox output into Tiptap's task-list structure,
-/// mirroring `fixTaskLists` in `src/markdown.ts`. comrak emits, per item:
-///   <li><input type="checkbox" disabled="" /> text</li>   (unchecked)
-///   <li><input type="checkbox" checked="" disabled="" /> text</li> (checked)
-/// A <ul> containing any such <li> becomes data-type="taskList".
-fn tiptap_task_lists(html: &str) -> String {
-    static ITEM: OnceLock<Regex> = OnceLock::new();
-    // Capture optional `checked` and the remaining item body.
-    let item = ITEM.get_or_init(|| {
-        Regex::new(r#"(?is)<li>\s*<input([^>]*?)type="checkbox"([^>]*?)/?>\s*(.*?)</li>"#).unwrap()
-    });
-    let mut out = html.to_string();
-    // Only bother if there is at least one checkbox item.
-    if !out.contains(r#"type="checkbox""#) {
-        return out;
-    }
-    out = item
-        .replace_all(&out, |c: &regex::Captures| {
-            let attrs = format!("{}{}", &c[1], &c[2]);
-            let checked = attrs.contains("checked");
-            format!(
-                r#"<li data-type="taskItem" data-checked="{}">{}</li>"#,
-                if checked { "true" } else { "false" },
-                c[3].trim()
-            )
-        })
-        .to_string();
-    // Tag any <ul> that now contains a taskItem. comrak groups consecutive task
-    // items into one <ul>; mark every <ul> whose first item is a taskItem.
-    static LIST: OnceLock<Regex> = OnceLock::new();
-    let list =
-        LIST.get_or_init(|| Regex::new(r#"(?is)<ul>(\s*<li data-type="taskItem")"#).unwrap());
-    out = list
-        .replace_all(&out, r#"<ul data-type="taskList">$1"#)
-        .to_string();
-    out
+    let arena = Arena::new();
+    let root = parse_document(&arena, md, &opts);
+    let mut html = String::new();
+    TiptapFormatter::format_document(root, &opts, &mut html)
+        .expect("formatting comrak's AST to a String is infallible");
+    html.trim().to_string()
 }
 
 #[cfg(test)]
@@ -114,5 +152,36 @@ mod tests {
     fn plain_list_is_not_marked_as_tasklist() {
         let h = md_to_html("- a\n- b");
         assert!(!h.contains("taskList"), "plain list wrongly tagged: {h}");
+    }
+
+    #[test]
+    fn task_list_mixed_items() {
+        let h = md_to_html("- a\n- [ ] b\n- [x] c");
+        assert!(h.contains(r#"data-type="taskList""#), "got: {h}");
+        assert!(
+            h.contains(r#"data-type="taskItem" data-checked="false""#),
+            "got: {h}"
+        );
+        assert!(
+            h.contains(r#"data-type="taskItem" data-checked="true""#),
+            "got: {h}"
+        );
+        // The plain item "a" must stay a plain <li>, not become a taskItem.
+        assert!(h.contains("<li>a</li>"), "got: {h}");
+        assert!(!h.contains("<input"), "input not stripped: {h}");
+    }
+
+    #[test]
+    fn task_list_nested() {
+        let h = md_to_html("- [ ] a\n  - [x] nested\n- [x] b");
+        assert!(!h.contains("<input"), "input not stripped: {h}");
+        // Both the outer and the nested <ul> must be tagged as taskList.
+        let task_list_count = h.matches(r#"data-type="taskList""#).count();
+        assert!(task_list_count >= 2, "got: {h}");
+        assert!(
+            h.contains(r#"data-type="taskItem" data-checked="true""#),
+            "got: {h}"
+        );
+        assert!(h.contains("nested"), "got: {h}");
     }
 }
