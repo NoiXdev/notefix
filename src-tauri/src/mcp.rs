@@ -4,10 +4,9 @@ use serde_json::{json, Value};
 use std::sync::{Arc, Mutex, OnceLock};
 use tauri::{AppHandle, Emitter, Manager};
 
-// Several methods below (`save`, `set_folder`, `set_archived`, `trash`,
-// `untrash`, `create_folder`, `now_ms`, `new_id`, `emit_changed`) have no
-// non-test caller yet — the write tool logic that wires them up lands in
-// later tasks. Remove this allow once it does.
+// `set_archived`, `trash`, and `untrash` have no non-test caller yet — the
+// archive/trash tool logic that wires them up lands in a later task. Remove
+// this allow once it does.
 #[allow(dead_code)]
 pub trait NoteStore: Send + Sync {
     /// All notes incl. archived and trashed (like `load_all_notes`).
@@ -122,9 +121,6 @@ fn group_json(folders: &[Folder], folder_id: Option<&str>) -> Value {
     }
 }
 
-// Resolves a groupId/groupName pair for the write tools; no non-test caller
-// yet (those tools land in later tasks). Remove this allow once they wire it.
-#[allow(dead_code)]
 fn resolve_group(
     store: &dyn NoteStore,
     group_id: Option<&str>,
@@ -209,13 +205,20 @@ fn snippet(plain: &str, q: &str) -> String {
     out
 }
 
+fn to_html(content: &str, format: Option<&str>) -> String {
+    match format.unwrap_or("markdown") {
+        "html" => content.to_string(),
+        "text" => crate::mdconv::wrap_plaintext(content),
+        _ => crate::mdconv::md_to_html(content),
+    }
+}
+
 fn call_tool(
     name: &str,
     args: &Value,
     store: &dyn NoteStore,
     allow_write: bool,
 ) -> Result<String, String> {
-    let _ = allow_write;
     let s = |k: &str| args.get(k).and_then(|v| v.as_str()).map(|v| v.to_string());
     match name {
         "list_notes" => {
@@ -292,6 +295,71 @@ fn call_tool(
                 })
                 .collect();
             Ok(json!(items).to_string())
+        }
+        "create_note" => {
+            if !allow_write {
+                return Err("writing disabled".into());
+            }
+            let content = s("content").ok_or("content is required")?;
+            let folder_id =
+                resolve_group(store, s("groupId").as_deref(), s("groupName").as_deref())?;
+            let note = Note {
+                id: store.new_id(),
+                content: to_html(&content, s("format").as_deref()),
+                updated_at: store.now_ms(),
+                folder_id: folder_id.clone(),
+                ..Default::default()
+            };
+            store.save(&note)?;
+            store.emit_changed();
+            let folders = store.list_folders()?;
+            Ok(json!({
+                "id": note.id,
+                "group": group_json(&folders, folder_id.as_deref()),
+                "status": "active",
+            })
+            .to_string())
+        }
+        "append_note" => {
+            if !allow_write {
+                return Err("writing disabled".into());
+            }
+            let id = s("id").ok_or("id is required")?;
+            let text = s("text").ok_or("text is required")?;
+            let mut note = store.get_note(&id)?.ok_or("note not found")?;
+            note.content
+                .push_str(&to_html(&text, s("format").as_deref()));
+            note.updated_at = store.now_ms();
+            store.save(&note)?;
+            store.emit_changed();
+            Ok(json!({ "id": note.id, "status": status_of(&note) }).to_string())
+        }
+        "update_note" => {
+            if !allow_write {
+                return Err("writing disabled".into());
+            }
+            let id = s("id").ok_or("id is required")?;
+            let mut note = store.get_note(&id)?.ok_or("note not found")?;
+            if let Some(content) = s("content") {
+                note.content = to_html(&content, s("format").as_deref());
+                note.updated_at = store.now_ms();
+                store.save(&note)?;
+            }
+            // Move only when a group param is present (either key).
+            if args.get("groupId").is_some() || args.get("groupName").is_some() {
+                let folder_id =
+                    resolve_group(store, s("groupId").as_deref(), s("groupName").as_deref())?;
+                store.set_folder(&id, folder_id.as_deref())?;
+                note.folder_id = folder_id;
+            }
+            store.emit_changed();
+            let folders = store.list_folders()?;
+            Ok(json!({
+                "id": note.id,
+                "group": group_json(&folders, note.folder_id.as_deref()),
+                "status": status_of(&note),
+            })
+            .to_string())
         }
         _ => Err(format!("unknown tool {name}")),
     }
@@ -537,9 +605,6 @@ pub async fn apply(
 #[cfg(test)]
 mod tests {
     use super::*;
-    // `folders`/`seq` back `list_folders`/`create_folder`/`new_id`, which have
-    // no test caller yet (their tools land in Tasks 7-11).
-    #[allow(dead_code)]
     struct Fake {
         notes: std::sync::Mutex<Vec<Note>>,
         folders: std::sync::Mutex<Vec<Folder>>,
@@ -860,5 +925,106 @@ mod tests {
         let c = items.iter().find(|i| i["name"] == "C").unwrap();
         assert_eq!(c["parentId"], p.id);
         assert_eq!(c["path"], "P/C");
+    }
+
+    #[test]
+    fn create_note_converts_markdown_and_sets_group() {
+        let s = fake();
+        let f = s.create_folder("Home", None).unwrap();
+        let v = call_json(
+            &s,
+            "create_note",
+            json!({"content":"# Hi\n- [ ] task","groupName":"Home"}),
+            true,
+        );
+        assert_eq!(v["status"], "active");
+        assert_eq!(v["group"]["name"], "Home");
+        let id = v["id"].as_str().unwrap().to_string();
+        let stored = s.get_note(&id).unwrap().unwrap();
+        assert!(
+            stored.content.contains("<h1>Hi</h1>"),
+            "got: {}",
+            stored.content
+        );
+        assert!(
+            stored.content.contains(r#"data-type="taskItem""#),
+            "got: {}",
+            stored.content
+        );
+        assert_eq!(stored.folder_id.as_deref(), Some(f.id.as_str()));
+    }
+
+    #[test]
+    fn create_note_blocked_when_writing_disabled() {
+        let s = fake();
+        assert_eq!(
+            call_tool("create_note", &json!({"content":"x"}), &s, false).unwrap_err(),
+            "writing disabled"
+        );
+    }
+
+    #[test]
+    fn create_note_unknown_group_errors() {
+        let s = fake();
+        assert!(call_tool(
+            "create_note",
+            &json!({"content":"x","groupName":"ghost"}),
+            &s,
+            true
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn append_note_appends_converted_html() {
+        let s = fake();
+        let _ = call_tool(
+            "append_note",
+            &json!({"id":"a","text":"**more**"}),
+            &s,
+            true,
+        )
+        .unwrap();
+        let stored = s.get_note("a").unwrap().unwrap();
+        assert!(
+            stored.content.contains("<p>Hello world</p>"),
+            "got: {}",
+            stored.content
+        );
+        assert!(
+            stored.content.contains("<strong>more</strong>"),
+            "got: {}",
+            stored.content
+        );
+    }
+
+    #[test]
+    fn update_note_replaces_content_and_moves() {
+        let s = fake();
+        let f = s.create_folder("Dest", None).unwrap();
+        let _ = call_tool(
+            "update_note",
+            &json!({"id":"a","content":"## New","groupName":"Dest"}),
+            &s,
+            true,
+        )
+        .unwrap();
+        let stored = s.get_note("a").unwrap().unwrap();
+        assert!(
+            stored.content.contains("<h2>New</h2>"),
+            "got: {}",
+            stored.content
+        );
+        assert_eq!(stored.folder_id.as_deref(), Some(f.id.as_str()));
+    }
+
+    #[test]
+    fn update_note_move_only_keeps_content() {
+        let s = fake();
+        let f = s.create_folder("Dest", None).unwrap();
+        let _ = call_tool("update_note", &json!({"id":"a","groupId": f.id}), &s, true).unwrap();
+        let stored = s.get_note("a").unwrap().unwrap();
+        assert_eq!(stored.content, "<p>Hello world</p>"); // unchanged
+        assert_eq!(stored.folder_id.as_deref(), Some(f.id.as_str()));
     }
 }
