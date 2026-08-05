@@ -8,6 +8,7 @@ mod images;
 mod imagesync;
 mod linkmeta;
 mod mcp;
+mod mdconv;
 mod migrate;
 mod profiles;
 mod revisions;
