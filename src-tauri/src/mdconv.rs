@@ -79,8 +79,6 @@ create_formatter!(TiptapFormatter, {
 /// Tiptap's `data-type="taskList"` / `data-type="taskItem"` structure via
 /// `TiptapFormatter` above, so homogeneous, mixed, and arbitrarily nested
 /// task lists all convert correctly.
-// Consumed by the MCP note-conversion commands added in later tasks of this overhaul.
-#[allow(dead_code)]
 pub fn md_to_html(md: &str) -> String {
     let mut opts = Options::default();
     opts.extension.table = true;
@@ -245,8 +243,6 @@ pub fn title_from_html(html: &str) -> String {
 }
 
 /// Wrap literal text as HTML paragraphs, escaping markup. For `format:"text"`.
-// Consumed by the MCP note-conversion commands added in later tasks of this overhaul.
-#[allow(dead_code)]
 pub fn wrap_plaintext(text: &str) -> String {
     if text.is_empty() {
         return "<p></p>".to_string();

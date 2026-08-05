@@ -65,22 +65,22 @@ fn tool_defs() -> Value {
             "groupId": { "type": "string" } }, "required": ["query"] } },
         { "name": "list_groups", "description": "List groups (folders) as JSON: {id, name, parentId, path}. Use these ids/names to target a group when creating or moving notes.",
           "inputSchema": { "type": "object", "properties": {} } },
-        { "name": "create_note", "description": "Create a note. 'content' is GitHub-Flavored Markdown by default and is converted to the app's rich format (headings, bold, lists, task lists, tables). Pass format 'html' or 'text' to override. Optionally place it in a group via groupId or groupName (groupName must match exactly one existing group).",
+        { "name": "create_note", "description": "Create a note. 'content' is GitHub-Flavored Markdown by default and is converted to the app's rich format (headings, bold, lists, task lists, tables). Pass format 'text' to override. Optionally place it in a group via groupId or groupName (groupName must match exactly one existing group).",
           "inputSchema": { "type": "object", "properties": {
             "content": { "type": "string" },
-            "format": { "type": "string", "enum": ["markdown", "html", "text"] },
+            "format": { "type": "string", "enum": ["markdown", "text"] },
             "groupId": { "type": "string" },
             "groupName": { "type": "string" } }, "required": ["content"] } },
-        { "name": "append_note", "description": "Append to a note. 'text' is Markdown by default (format 'html'/'text' to override) and is converted before appending.",
+        { "name": "append_note", "description": "Append to a note. 'text' is Markdown by default (format 'text' to override) and is converted before appending.",
           "inputSchema": { "type": "object", "properties": {
             "id": { "type": "string" },
             "text": { "type": "string" },
-            "format": { "type": "string", "enum": ["markdown", "html", "text"] } }, "required": ["id", "text"] } },
-        { "name": "update_note", "description": "Replace a note's whole content (Markdown by default; format 'html'/'text' to override) and/or move it to another group via groupId or groupName. Omit 'content' to move only.",
+            "format": { "type": "string", "enum": ["markdown", "text"] } }, "required": ["id", "text"] } },
+        { "name": "update_note", "description": "Replace a note's whole content (Markdown by default; format 'text' to override) and/or move it to another group via groupId or groupName. Omit 'content' to move only.",
           "inputSchema": { "type": "object", "properties": {
             "id": { "type": "string" },
             "content": { "type": "string" },
-            "format": { "type": "string", "enum": ["markdown", "html", "text"] },
+            "format": { "type": "string", "enum": ["markdown", "text"] },
             "groupId": { "type": "string" },
             "groupName": { "type": "string" } }, "required": ["id"] } },
         { "name": "create_group", "description": "Create a group (folder). Optionally nest it under an existing group via parentId. Returns the new group {id, name, parentId, path}.",
@@ -208,7 +208,16 @@ fn snippet(plain: &str, q: &str) -> String {
             .trim()
             .to_string();
     };
-    let start = lower[..byte_idx].chars().count().saturating_sub(40);
+    // `lower` (from `to_lowercase()`) can have a different char count than
+    // the original `chars` (some characters expand when lowercased, e.g.
+    // 'İ' -> "i̇"), so a char index computed from `lower`'s bytes must be
+    // clamped to `chars.len()` before it's used to slice `chars` — otherwise
+    // `start` (or `end`) could exceed `chars.len()` and panic the slice.
+    let start = lower[..byte_idx]
+        .chars()
+        .count()
+        .saturating_sub(40)
+        .min(chars.len());
     let end = (start + 120).min(chars.len());
     let mut out = String::new();
     if start > 0 {
@@ -223,8 +232,11 @@ fn snippet(plain: &str, q: &str) -> String {
 
 fn to_html(content: &str, format: Option<&str>) -> String {
     match format.unwrap_or("markdown") {
-        "html" => content.to_string(),
         "text" => crate::mdconv::wrap_plaintext(content),
+        // "markdown", None, or any other/unrecognized value (including the
+        // now-removed "html" override): a write must never store caller-
+        // supplied HTML verbatim, so it always goes through the Markdown
+        // converter.
         _ => crate::mdconv::md_to_html(content),
     }
 }
@@ -355,16 +367,28 @@ fn call_tool(
                 return Err("writing disabled".into());
             }
             let id = s("id").ok_or("id is required")?;
+            // Resolve the group (when present) BEFORE any mutation, mirroring
+            // create_note's ordering: an invalid/ambiguous groupId/groupName
+            // must error out before content is saved, so a bad group can
+            // never leave the note's content mutated with the error still
+            // returned.
+            let folder_id = if args.get("groupId").is_some() || args.get("groupName").is_some() {
+                Some(resolve_group(
+                    store,
+                    s("groupId").as_deref(),
+                    s("groupName").as_deref(),
+                )?)
+            } else {
+                None
+            };
             let mut note = store.get_note(&id)?.ok_or("note not found")?;
             if let Some(content) = s("content") {
                 note.content = to_html(&content, s("format").as_deref());
                 note.updated_at = store.now_ms();
                 store.save(&note)?;
             }
-            // Move only when a group param is present (either key).
-            if args.get("groupId").is_some() || args.get("groupName").is_some() {
-                let folder_id =
-                    resolve_group(store, s("groupId").as_deref(), s("groupName").as_deref())?;
+            // Move only when a group param was present (either key).
+            if let Some(folder_id) = folder_id {
                 store.set_folder(&id, folder_id.as_deref())?;
                 note.folder_id = folder_id;
             }
@@ -487,7 +511,10 @@ pub fn handle_rpc(
                 .and_then(|u| u.as_str())
                 .unwrap_or("");
             match store.get_note(uri.strip_prefix("note://").unwrap_or("")) {
-                Ok(Some(note)) => Some(ok(
+                // Match resources/list, which filters out trashed notes:
+                // a trashed note isn't readable via the resources surface
+                // even though it's still fetchable via the get_note tool.
+                Ok(Some(note)) if note.deleted_at.is_none() => Some(ok(
                     &id,
                     json!({ "contents": [{ "uri": uri, "mimeType": "text/markdown", "text": crate::mdconv::html_to_md(&note.content) }] }),
                 )),
@@ -826,6 +853,22 @@ mod tests {
         assert_eq!(r["result"]["contents"][0]["mimeType"], "text/markdown");
     }
     #[test]
+    fn resources_read_trashed_note_is_not_found() {
+        // resources/list already filters out trashed notes; resources/read
+        // must be consistent and refuse to read one by URI too (the get_note
+        // TOOL is unaffected and may still fetch any note by id).
+        let s = fake();
+        s.trash("a", 9).unwrap();
+        let r = handle_rpc(
+            &call("resources/read", json!({"uri":"note://a"})),
+            &s,
+            false,
+            "v",
+        )
+        .unwrap();
+        assert_eq!(r["error"]["message"], "note not found");
+    }
+    #[test]
     fn notification_has_no_response() {
         assert!(handle_rpc(
             &call("notifications/initialized", json!({})),
@@ -1027,6 +1070,40 @@ mod tests {
     }
 
     #[test]
+    fn snippet_does_not_panic_on_expanding_lowercase() {
+        // 'İ' (U+0130) lowercases to TWO chars ("i" + a combining dot
+        // above), so `lower` can have more chars than `chars` (the
+        // original). With a long-enough run of 'İ' immediately before a
+        // late match, the char index computed from `lower`'s bytes minus 40
+        // exceeds `chars.len()`, which used to panic the `chars[start..end]`
+        // slice. 42 copies contribute 42 extra chars once lowered, enough to
+        // push `start` (44) past `chars.len()` (43) for a match on the very
+        // last character.
+        let plain = format!("{}z", "İ".repeat(42));
+        let q = plain.to_lowercase();
+        // Must not panic; clamped to an empty/short in-bounds result instead.
+        let _ = snippet(&plain, &q[q.len() - 1..]);
+    }
+
+    #[test]
+    fn search_notes_snippet_does_not_panic_on_expanding_lowercase() {
+        // Same expanding-lowercase scenario, exercised through the actual
+        // search_notes path (query lowercased once, then passed to snippet).
+        let s = fake();
+        let content = format!("<p>{}z</p>", "İ".repeat(42));
+        s.save(&Note {
+            id: "tr".into(),
+            content,
+            updated_at: 2,
+            ..Default::default()
+        })
+        .unwrap();
+        let arr = call_json(&s, "search_notes", json!({"query":"z"}), false);
+        let items = arr.as_array().unwrap();
+        assert!(items.iter().any(|i| i["id"] == "tr"), "got: {items:?}");
+    }
+
+    #[test]
     fn list_groups_returns_tree_fields() {
         let s = fake();
         let p = s.create_folder("P", None).unwrap();
@@ -1088,6 +1165,28 @@ mod tests {
     }
 
     #[test]
+    fn create_note_format_html_is_not_stored_verbatim() {
+        // Per product decision, writes must never store caller-supplied HTML
+        // as-is: a "format":"html" override no longer exists on the write
+        // path, so it falls through to the Markdown converter like any other
+        // unrecognized format value, and raw HTML tags never survive intact.
+        let s = fake();
+        let v = call_json(
+            &s,
+            "create_note",
+            json!({"content":"<script>alert(1)</script>","format":"html"}),
+            true,
+        );
+        let id = v["id"].as_str().unwrap().to_string();
+        let stored = s.get_note(&id).unwrap().unwrap();
+        assert!(
+            !stored.content.contains("<script>"),
+            "raw HTML passthrough still present: {}",
+            stored.content
+        );
+    }
+
+    #[test]
     fn append_note_appends_converted_html() {
         let s = fake();
         let _ = call_tool(
@@ -1128,6 +1227,25 @@ mod tests {
             stored.content
         );
         assert_eq!(stored.folder_id.as_deref(), Some(f.id.as_str()));
+    }
+
+    #[test]
+    fn update_note_invalid_group_leaves_content_and_write_unapplied() {
+        let s = fake();
+        let before = s.get_note("a").unwrap().unwrap().content;
+        let err = call_tool(
+            "update_note",
+            &json!({"id":"a","content":"## New","groupName":"ghost"}),
+            &s,
+            true,
+        )
+        .unwrap_err();
+        assert!(err.contains("group not found"), "got: {err}");
+        // The group is resolved before any save, so a bad group must leave
+        // the note completely untouched -- content included.
+        let after = s.get_note("a").unwrap().unwrap();
+        assert_eq!(after.content, before);
+        assert_eq!(after.folder_id, None);
     }
 
     #[test]
