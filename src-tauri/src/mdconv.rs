@@ -4,9 +4,7 @@
 
 use comrak::nodes::{ListType, NodeValue};
 use comrak::{create_formatter, parse_document, Arena, Options};
-use regex::Regex;
 use std::fmt::Write as _;
-use std::sync::OnceLock;
 
 // A regex/string post-process over comrak's rendered HTML cannot robustly
 // tell a task item's closing </li> apart from a *nested* task item's closing
@@ -99,61 +97,86 @@ pub fn md_to_html(md: &str) -> String {
     html.trim().to_string()
 }
 
-// Placeholder tokens standing in for the literal GFM checkbox markers while
-// the document passes through `htmd`. `htmd` 0.5.5 has no element handler for
-// `<input>` (a Tiptap task item's checkbox never survives conversion) and its
-// text escaping rewrites a literal `[ ]`/`[x]` in text content into
-// `\[ \]`/`\[x\]` (its rule for anything that looks like Markdown link
-// syntax), so neither an `<input type="checkbox">` nor bare `[ ]`/`[x]` text
-// makes it through unchanged. These all-uppercase, punctuation-free tokens
-// trip none of `htmd`'s escaping rules, so they pass through `htmd::convert`
-// byte-for-byte and can be swapped back for the real markers afterwards.
-const TASK_UNCHECKED_TOKEN: &str = "NOTEFIXTASKUNCHECKEDMARKER";
-const TASK_CHECKED_TOKEN: &str = "NOTEFIXTASKCHECKEDMARKER";
-
-/// Rewrite Tiptap task items (`<li data-type="taskItem"
-/// data-checked="true|false">`) into plain `<li>`s prefixed with a checkbox
-/// placeholder token, and their enclosing `<ul data-type="taskList">` into a
-/// plain `<ul>`, so the generic HTML->Markdown pass treats them as an
-/// ordinary bullet list. `html_to_md` swaps the tokens for literal `[ ]`/
-/// `[x]` markers once `htmd` has rendered the surrounding `- ` bullet.
+/// Custom `<li>` handler, installed on top of `htmd`'s built-in one, that
+/// renders a Tiptap task item (`<li data-type="taskItem"
+/// data-checked="true|false">`) as a GFM checkbox item (`- [x]`/`- [ ]`)
+/// instead of a plain bullet.
+///
+/// `htmd` 0.5.5 has no element handler for `<input>` (a task item's checkbox
+/// never survives conversion) and its text escaping rewrites a literal
+/// `[ ]`/`[x]` appearing in text content into `\[ \]`/`\[x\]` (its rule for
+/// anything that could be mistaken for Markdown link syntax). So the marker
+/// can't be produced by pre-editing the HTML or the item's text before
+/// handing it to `htmd` (an earlier version of this function tried exactly
+/// that, via a regex pre-pass and placeholder tokens) -- it has to be
+/// written by this handler itself, directly into the converted output,
+/// after `htmd`'s own text escaping has already run on the item's children.
+///
+/// Registering this via `HtmlToMarkdownBuilder::add_handler` makes `htmd`
+/// call it once per `<li>` as it walks the *parsed DOM tree*, the same way
+/// it calls its own built-in list-item handler. That is what makes nesting
+/// depth a non-issue here, unlike a regex over raw HTML text: a task item
+/// nested inside another task item's `<ul>` gets its own independent call to
+/// this function, so a nested checked/unchecked state can never be
+/// swallowed as opaque text by a lazy match on an ancestor's closing `</li>`.
+/// A plain `<li>` (no `data-checked`) falls back to `htmd`'s built-in
+/// handler unchanged, via `Handlers::fallback`.
+///
 /// Inverse of `TiptapFormatter`'s `NodeValue::TaskItem`/`NodeValue::List`
 /// handling in `md_to_html`.
-fn pre_tasks(html: &str) -> String {
-    static LI_RE: OnceLock<Regex> = OnceLock::new();
-    static CHECKED_RE: OnceLock<Regex> = OnceLock::new();
-    let li_re = LI_RE.get_or_init(|| Regex::new(r#"(?is)<li\s+([^>]*)>(.*?)</li>"#).unwrap());
-    let checked_re =
-        CHECKED_RE.get_or_init(|| Regex::new(r#"data-checked="(true|false)""#).unwrap());
+fn task_item_handler(
+    handlers: &dyn htmd::element_handler::Handlers,
+    element: htmd::Element,
+) -> Option<htmd::element_handler::HandlerResult> {
+    let checked = element
+        .attrs
+        .iter()
+        .find(|attr| &attr.name.local == "data-checked")
+        .map(|attr| attr.value.to_string());
+    let mark = match checked.as_deref() {
+        Some("true") => "x",
+        Some("false") => " ",
+        // Not a Tiptap task item (or an attribute value it never actually
+        // emits): defer to htmd's own <li> handler.
+        _ => return handlers.fallback(element),
+    };
 
-    let rewritten = li_re.replace_all(html, |c: &regex::Captures| {
-        let attrs = &c[1];
-        let body = &c[2];
-        if attrs.contains(r#"data-type="taskItem""#) {
-            if let Some(checked) = checked_re.captures(attrs) {
-                let token = if &checked[1] == "true" {
-                    TASK_CHECKED_TOKEN
-                } else {
-                    TASK_UNCHECKED_TOKEN
-                };
-                return format!("<li>{token} {body}</li>");
+    let bullet = match handlers.options().bullet_list_marker {
+        htmd::options::BulletListMarker::Asterisk => '*',
+        htmd::options::BulletListMarker::Dash => '-',
+    };
+    let spacing = " ".repeat(handlers.options().ul_bullet_spacing as usize);
+    let prefix = format!("{bullet}{spacing}[{mark}] ");
+
+    let content = handlers.walk_children(element.node).content;
+    let content = content.trim_start_matches('\n');
+    // Indent any continuation lines (e.g. a nested list under this item) so
+    // they line up under the item's own text, matching htmd's plain bullet
+    // list-item indentation.
+    let indent = " ".repeat(prefix.chars().count());
+    let indented = content
+        .lines()
+        .enumerate()
+        .map(|(i, line)| {
+            if i == 0 || line.is_empty() {
+                line.to_string()
+            } else {
+                format!("{indent}{line}")
             }
-        }
-        c[0].to_string()
-    });
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
 
-    rewritten
-        .replace(r#"<ul data-type="taskList">"#, "<ul>")
-        .to_string()
+    Some(format!("\n{prefix}{indented}").into())
 }
 
 /// Tiptap HTML -> GFM Markdown. Inverse of `md_to_html`: headings, emphasis,
-/// lists, code, links and tables go through `htmd`; task items round-trip
-/// via `pre_tasks`'s placeholder tokens so they land back on `- [ ]`/`- [x]`.
+/// lists, code, links and tables go through `htmd`'s built-in handlers; task
+/// items, at any nesting depth, go through `task_item_handler` above so they
+/// land back on `- [ ]`/`- [x]`.
 // Not yet called outside tests; wired up by a later task's MCP command.
 #[allow(dead_code)]
 pub fn html_to_md(html: &str) -> String {
-    let prepared = pre_tasks(html);
     // Dash bullets with single-space spacing match GFM (and `md_to_html`'s
     // own comrak output), so a note round-tripped through both directions
     // keeps the same list style.
@@ -163,12 +186,11 @@ pub fn html_to_md(html: &str) -> String {
             ul_bullet_spacing: 1,
             ..Default::default()
         })
+        .add_handler(vec!["li"], task_item_handler)
         .build();
     converter
-        .convert(&prepared)
+        .convert(html)
         .unwrap_or_default()
-        .replace(TASK_UNCHECKED_TOKEN, "[ ]")
-        .replace(TASK_CHECKED_TOKEN, "[x]")
         .trim()
         .to_string()
 }
@@ -260,6 +282,44 @@ mod tests {
         let m = html_to_md(html);
         assert!(m.contains("- [ ] todo"), "got: {m}");
         assert!(m.contains("- [x] done"), "got: {m}");
+    }
+
+    #[test]
+    fn html_to_md_nested_task_items() {
+        // The exact HTML `md_to_html` produces for "- [ ] a\n  - [x] nested\n- [x] b":
+        // an outer taskList <ul> whose first <li> is itself an unchecked task item
+        // containing a nested taskList <ul> with one checked task item, followed by
+        // a sibling checked task item.
+        let html = concat!(
+            r#"<ul data-type="taskList">"#,
+            "\n",
+            r#"<li data-type="taskItem" data-checked="false">a"#,
+            "\n",
+            r#"<ul data-type="taskList">"#,
+            "\n",
+            r#"<li data-type="taskItem" data-checked="true">nested</li>"#,
+            "\n",
+            r#"</ul>"#,
+            "\n",
+            r#"</li>"#,
+            "\n",
+            r#"<li data-type="taskItem" data-checked="true">b</li>"#,
+            "\n",
+            r#"</ul>"#,
+        );
+        let m = html_to_md(html);
+        assert!(m.contains("- [ ] a"), "outer unchecked item missing: {m}");
+        assert!(m.contains("- [x] b"), "sibling checked item missing: {m}");
+        // The nested item must keep its checked marker (not become a plain bullet)
+        // and stay indented under its parent.
+        assert!(
+            m.contains("  - [x] nested") || m.contains("    - [x] nested"),
+            "nested checked item lost its marker or indentation: {m}"
+        );
+        assert!(
+            !m.contains("- nested"),
+            "nested item became a plain bullet, checked state was lost: {m}"
+        );
     }
 
     #[test]
