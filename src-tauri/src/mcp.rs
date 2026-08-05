@@ -81,6 +81,114 @@ fn tool_defs() -> Value {
     ])
 }
 
+// Pure handler helpers — status derivation, group resolution, and JSON
+// builders shared by the read/write tool handlers. No non-test caller yet;
+// Task 8 wires these into `call_tool`. Remove this allow once it does.
+#[allow(dead_code)]
+fn status_of(n: &Note) -> &'static str {
+    if n.deleted_at.is_some() {
+        "trashed"
+    } else if n.archived {
+        "archived"
+    } else {
+        "active"
+    }
+}
+
+#[allow(dead_code)]
+fn folder_path(folders: &[Folder], id: &str) -> String {
+    let mut names = Vec::new();
+    let mut cur = Some(id.to_string());
+    let mut guard = 0;
+    while let Some(cid) = cur {
+        guard += 1;
+        if guard > 64 {
+            break; // defensive against cycles
+        }
+        match folders.iter().find(|f| f.id == cid) {
+            Some(f) => {
+                names.push(f.name.clone());
+                cur = f.parent_id.clone();
+            }
+            None => break,
+        }
+    }
+    names.reverse();
+    names.join("/")
+}
+
+#[allow(dead_code)]
+fn group_json(folders: &[Folder], folder_id: Option<&str>) -> Value {
+    match folder_id {
+        Some(fid) => match folders.iter().find(|f| f.id == fid) {
+            Some(f) => json!({ "id": f.id, "name": f.name, "path": folder_path(folders, fid) }),
+            None => Value::Null,
+        },
+        None => Value::Null,
+    }
+}
+
+#[allow(dead_code)]
+fn resolve_group(
+    store: &dyn NoteStore,
+    group_id: Option<&str>,
+    group_name: Option<&str>,
+) -> Result<Option<String>, String> {
+    match (group_id, group_name) {
+        (Some(_), Some(_)) => Err("specify groupId or groupName, not both".into()),
+        (Some(id), None) => {
+            let folders = store.list_folders()?;
+            if folders.iter().any(|f| f.id == id) {
+                Ok(Some(id.to_string()))
+            } else {
+                Err("group not found".into())
+            }
+        }
+        (None, Some(name)) => {
+            let folders = store.list_folders()?;
+            let matches: Vec<&Folder> = folders
+                .iter()
+                .filter(|f| f.name.to_lowercase() == name.to_lowercase())
+                .collect();
+            match matches.as_slice() {
+                [] => Err("group not found".into()),
+                [one] => Ok(Some(one.id.clone())),
+                many => Err(format!(
+                    "ambiguous group name '{}': {}",
+                    name,
+                    many.iter()
+                        .map(|f| f.id.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )),
+            }
+        }
+        (None, None) => Ok(None),
+    }
+}
+
+#[allow(dead_code)]
+fn note_summary(n: &Note, folders: &[Folder]) -> Value {
+    json!({
+        "id": n.id,
+        "title": crate::mdconv::title_from_html(&n.content),
+        "group": group_json(folders, n.folder_id.as_deref()),
+        "contentType": "markdown",
+        "status": status_of(n),
+        "updatedAt": n.updated_at,
+    })
+}
+
+#[allow(dead_code)]
+fn note_full(n: &Note, folders: &[Folder], content: &str, content_type: &str) -> Value {
+    let mut v = note_summary(n, folders);
+    v["content"] = json!(content);
+    v["contentType"] = json!(content_type);
+    v["pinned"] = json!(n.pinned);
+    v["dueAt"] = json!(n.due_at);
+    v
+}
+
 fn call_tool(
     name: &str,
     args: &Value,
@@ -465,5 +573,70 @@ mod tests {
     fn html_text_roundtrip_helpers() {
         assert_eq!(html_to_text("<p>Hi</p><p>there</p>"), "Hi\nthere");
         assert_eq!(text_to_html("a\nb"), "<p>a</p><p>b</p>");
+    }
+
+    #[test]
+    fn status_of_derives_from_fields() {
+        let mut n = Note {
+            id: "x".into(),
+            ..Default::default()
+        };
+        assert_eq!(status_of(&n), "active");
+        n.archived = true;
+        assert_eq!(status_of(&n), "archived");
+        n.deleted_at = Some(1);
+        assert_eq!(status_of(&n), "trashed"); // trashed wins over archived
+    }
+
+    #[test]
+    fn folder_path_walks_parents() {
+        let folders = vec![
+            Folder {
+                id: "p".into(),
+                name: "Work".into(),
+                ..Default::default()
+            },
+            Folder {
+                id: "c".into(),
+                name: "Proj".into(),
+                parent_id: Some("p".into()),
+                ..Default::default()
+            },
+        ];
+        assert_eq!(folder_path(&folders, "c"), "Work/Proj");
+        assert_eq!(folder_path(&folders, "p"), "Work");
+    }
+
+    #[test]
+    fn resolve_group_by_id_name_and_errors() {
+        let s = fake();
+        let f = s.create_folder("Home", None).unwrap();
+        // by id
+        assert_eq!(
+            resolve_group(&s, Some(f.id.as_str()), None).unwrap(),
+            Some(f.id.clone())
+        );
+        // by name (case-insensitive)
+        assert_eq!(
+            resolve_group(&s, None, Some("home")).unwrap(),
+            Some(f.id.clone())
+        );
+        // neither -> None
+        assert_eq!(resolve_group(&s, None, None).unwrap(), None);
+        // unknown id
+        assert!(resolve_group(&s, Some("nope"), None).is_err());
+        // unknown name
+        assert!(resolve_group(&s, None, Some("ghost")).is_err());
+        // both -> error
+        assert!(resolve_group(&s, Some(f.id.as_str()), Some("Home")).is_err());
+    }
+
+    #[test]
+    fn resolve_group_ambiguous_name_errors() {
+        let s = fake();
+        s.create_folder("Dup", None).unwrap();
+        s.create_folder("Dup", None).unwrap();
+        let e = resolve_group(&s, None, Some("Dup")).unwrap_err();
+        assert!(e.contains("ambiguous"), "got: {e}");
     }
 }
