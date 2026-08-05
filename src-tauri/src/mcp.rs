@@ -24,7 +24,6 @@ pub trait NoteStore: Send + Sync {
     fn emit_changed(&self);
 }
 
-#[allow(dead_code)]
 pub fn html_to_text(html: &str) -> String {
     let nl = regex::Regex::new(r"(?is)</(p|div|h[1-6]|li)>|<br\s*/?>")
         .unwrap()
@@ -42,23 +41,6 @@ pub fn html_to_text(html: &str) -> String {
         .to_string()
 }
 
-#[allow(dead_code)]
-pub fn text_to_html(text: &str) -> String {
-    if text.is_empty() {
-        return "<p></p>".to_string();
-    }
-    text.lines()
-        .map(|l| {
-            format!(
-                "<p>{}</p>",
-                l.replace('&', "&amp;")
-                    .replace('<', "&lt;")
-                    .replace('>', "&gt;")
-            )
-        })
-        .collect()
-}
-
 fn ok(id: &Value, result: Value) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "result": result })
 }
@@ -68,11 +50,49 @@ fn rpc_err(id: &Value, code: i64, msg: &str) -> Value {
 
 fn tool_defs() -> Value {
     json!([
-        { "name": "list_notes", "description": "List all notes (id and title).", "inputSchema": { "type": "object", "properties": {} } },
-        { "name": "get_note", "description": "Get a note's text by id.", "inputSchema": { "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] } },
-        { "name": "search_notes", "description": "Search notes by text (case-insensitive).", "inputSchema": { "type": "object", "properties": { "query": { "type": "string" } }, "required": ["query"] } },
-        { "name": "create_note", "description": "Create a new note from text.", "inputSchema": { "type": "object", "properties": { "content": { "type": "string" } }, "required": ["content"] } },
-        { "name": "append_note", "description": "Append text to a note.", "inputSchema": { "type": "object", "properties": { "id": { "type": "string" }, "text": { "type": "string" } }, "required": ["id", "text"] } }
+        { "name": "list_notes", "description": "List notes as JSON. Each item: {id, title, group, contentType, status, updatedAt}. Optional filters: status (active|archived|trashed|all, default active) and groupId.",
+          "inputSchema": { "type": "object", "properties": {
+            "status": { "type": "string", "enum": ["active", "archived", "trashed", "all"] },
+            "groupId": { "type": "string" } } } },
+        { "name": "get_note", "description": "Get one note as JSON including its content. Content is returned as Markdown by default (contentType 'markdown'); pass format 'html' or 'text' for other representations.",
+          "inputSchema": { "type": "object", "properties": {
+            "id": { "type": "string" },
+            "format": { "type": "string", "enum": ["markdown", "html", "text"] } }, "required": ["id"] } },
+        { "name": "search_notes", "description": "Search notes by text (case-insensitive). Returns JSON summaries with a snippet. Optional status (default active) and groupId filters.",
+          "inputSchema": { "type": "object", "properties": {
+            "query": { "type": "string" },
+            "status": { "type": "string", "enum": ["active", "archived", "trashed", "all"] },
+            "groupId": { "type": "string" } }, "required": ["query"] } },
+        { "name": "list_groups", "description": "List groups (folders) as JSON: {id, name, parentId, path}. Use these ids/names to target a group when creating or moving notes.",
+          "inputSchema": { "type": "object", "properties": {} } },
+        { "name": "create_note", "description": "Create a note. 'content' is GitHub-Flavored Markdown by default and is converted to the app's rich format (headings, bold, lists, task lists, tables). Pass format 'html' or 'text' to override. Optionally place it in a group via groupId or groupName (groupName must match exactly one existing group).",
+          "inputSchema": { "type": "object", "properties": {
+            "content": { "type": "string" },
+            "format": { "type": "string", "enum": ["markdown", "html", "text"] },
+            "groupId": { "type": "string" },
+            "groupName": { "type": "string" } }, "required": ["content"] } },
+        { "name": "append_note", "description": "Append to a note. 'text' is Markdown by default (format 'html'/'text' to override) and is converted before appending.",
+          "inputSchema": { "type": "object", "properties": {
+            "id": { "type": "string" },
+            "text": { "type": "string" },
+            "format": { "type": "string", "enum": ["markdown", "html", "text"] } }, "required": ["id", "text"] } },
+        { "name": "update_note", "description": "Replace a note's whole content (Markdown by default; format 'html'/'text' to override) and/or move it to another group via groupId or groupName. Omit 'content' to move only.",
+          "inputSchema": { "type": "object", "properties": {
+            "id": { "type": "string" },
+            "content": { "type": "string" },
+            "format": { "type": "string", "enum": ["markdown", "html", "text"] },
+            "groupId": { "type": "string" },
+            "groupName": { "type": "string" } }, "required": ["id"] } },
+        { "name": "create_group", "description": "Create a group (folder). Optionally nest it under an existing group via parentId. Returns the new group {id, name, parentId, path}.",
+          "inputSchema": { "type": "object", "properties": {
+            "name": { "type": "string" },
+            "parentId": { "type": "string" } }, "required": ["name"] } },
+        { "name": "archive_note", "description": "Archive a note (moves it out of the active list; reversible with restore_note).",
+          "inputSchema": { "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] } },
+        { "name": "delete_note", "description": "Move a note to trash (soft-delete; reversible with restore_note).",
+          "inputSchema": { "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] } },
+        { "name": "restore_note", "description": "Restore a note to active from trash or archive.",
+          "inputSchema": { "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] } }
     ])
 }
 
@@ -450,6 +470,7 @@ pub fn handle_rpc(
                 .all_notes()
                 .unwrap_or_default()
                 .into_iter()
+                .filter(|n| n.deleted_at.is_none())
                 .map(|n| {
                     json!({
                         "uri": format!("note://{}", n.id),
@@ -748,9 +769,61 @@ mod tests {
         assert!(r["result"]["capabilities"]["tools"].is_object());
     }
     #[test]
-    fn tools_list_has_five() {
+    fn tools_list_has_all_tools() {
         let r = handle_rpc(&call("tools/list", json!({})), &fake(), false, "v").unwrap();
-        assert_eq!(r["result"]["tools"].as_array().unwrap().len(), 5);
+        let names: Vec<String> = r["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap().to_string())
+            .collect();
+        for expected in [
+            "list_notes",
+            "get_note",
+            "search_notes",
+            "list_groups",
+            "create_note",
+            "append_note",
+            "update_note",
+            "create_group",
+            "archive_note",
+            "delete_note",
+            "restore_note",
+        ] {
+            assert!(
+                names.contains(&expected.to_string()),
+                "missing {expected}: {names:?}"
+            );
+        }
+        // create_note advertises that content is Markdown:
+        let cn = r["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "create_note")
+            .unwrap();
+        assert!(cn["description"]
+            .as_str()
+            .unwrap()
+            .to_lowercase()
+            .contains("markdown"));
+    }
+
+    #[test]
+    fn resources_read_returns_markdown() {
+        let s = fake();
+        let r = handle_rpc(
+            &call("resources/read", json!({"uri":"note://a"})),
+            &s,
+            false,
+            "v",
+        )
+        .unwrap();
+        assert!(r["result"]["contents"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("Hello world"));
+        assert_eq!(r["result"]["contents"][0]["mimeType"], "text/markdown");
     }
     #[test]
     fn notification_has_no_response() {
@@ -765,7 +838,6 @@ mod tests {
     #[test]
     fn html_text_roundtrip_helpers() {
         assert_eq!(html_to_text("<p>Hi</p><p>there</p>"), "Hi\nthere");
-        assert_eq!(text_to_html("a\nb"), "<p>a</p><p>b</p>");
     }
 
     #[test]
