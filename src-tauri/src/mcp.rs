@@ -5,9 +5,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 use tauri::{AppHandle, Emitter, Manager};
 
 // Several methods below (`save`, `set_folder`, `set_archived`, `trash`,
-// `untrash`, `list_folders`, `create_folder`, `now_ms`, `new_id`,
-// `emit_changed`) have no non-test caller yet — the read/write tool logic
-// that wires them up lands in Tasks 7-11. Remove this allow once they do.
+// `untrash`, `create_folder`, `now_ms`, `new_id`, `emit_changed`) have no
+// non-test caller yet — the write tool logic that wires them up lands in
+// later tasks. Remove this allow once it does.
 #[allow(dead_code)]
 pub trait NoteStore: Send + Sync {
     /// All notes incl. archived and trashed (like `load_all_notes`).
@@ -81,10 +81,6 @@ fn tool_defs() -> Value {
     ])
 }
 
-// Pure handler helpers — status derivation, group resolution, and JSON
-// builders shared by the read/write tool handlers. No non-test caller yet;
-// Task 8 wires these into `call_tool`. Remove this allow once it does.
-#[allow(dead_code)]
 fn status_of(n: &Note) -> &'static str {
     if n.deleted_at.is_some() {
         "trashed"
@@ -95,7 +91,6 @@ fn status_of(n: &Note) -> &'static str {
     }
 }
 
-#[allow(dead_code)]
 fn folder_path(folders: &[Folder], id: &str) -> String {
     let mut names = Vec::new();
     let mut cur = Some(id.to_string());
@@ -117,7 +112,6 @@ fn folder_path(folders: &[Folder], id: &str) -> String {
     names.join("/")
 }
 
-#[allow(dead_code)]
 fn group_json(folders: &[Folder], folder_id: Option<&str>) -> Value {
     match folder_id {
         Some(fid) => match folders.iter().find(|f| f.id == fid) {
@@ -128,6 +122,8 @@ fn group_json(folders: &[Folder], folder_id: Option<&str>) -> Value {
     }
 }
 
+// Resolves a groupId/groupName pair for the write tools; no non-test caller
+// yet (those tools land in later tasks). Remove this allow once they wire it.
 #[allow(dead_code)]
 fn resolve_group(
     store: &dyn NoteStore,
@@ -167,7 +163,6 @@ fn resolve_group(
     }
 }
 
-#[allow(dead_code)]
 fn note_summary(n: &Note, folders: &[Folder]) -> Value {
     json!({
         "id": n.id,
@@ -179,7 +174,6 @@ fn note_summary(n: &Note, folders: &[Folder]) -> Value {
     })
 }
 
-#[allow(dead_code)]
 fn note_full(n: &Note, folders: &[Folder], content: &str, content_type: &str) -> Value {
     let mut v = note_summary(n, folders);
     v["content"] = json!(content);
@@ -189,21 +183,115 @@ fn note_full(n: &Note, folders: &[Folder], content: &str, content_type: &str) ->
     v
 }
 
+/// A short window (~120 chars) of `plain` around the first occurrence of the
+/// already-lowercased `q`, with leading/trailing ellipses when clipped.
+fn snippet(plain: &str, q: &str) -> String {
+    let chars: Vec<char> = plain.chars().collect();
+    let lower = plain.to_lowercase();
+    let Some(byte_idx) = lower.find(q) else {
+        return chars
+            .iter()
+            .take(120)
+            .collect::<String>()
+            .trim()
+            .to_string();
+    };
+    let start = lower[..byte_idx].chars().count().saturating_sub(40);
+    let end = (start + 120).min(chars.len());
+    let mut out = String::new();
+    if start > 0 {
+        out.push('…');
+    }
+    out.push_str(chars[start..end].iter().collect::<String>().trim());
+    if end < chars.len() {
+        out.push('…');
+    }
+    out
+}
+
 fn call_tool(
     name: &str,
     args: &Value,
     store: &dyn NoteStore,
     allow_write: bool,
 ) -> Result<String, String> {
-    let _ = (args, allow_write);
+    let _ = allow_write;
+    let s = |k: &str| args.get(k).and_then(|v| v.as_str()).map(|v| v.to_string());
     match name {
         "list_notes" => {
-            let notes = store.all_notes()?;
-            Ok(json!(notes
+            let status = s("status").unwrap_or_else(|| "active".into());
+            let group = s("groupId");
+            let folders = store.list_folders()?;
+            let items: Vec<Value> = store
+                .all_notes()?
+                .into_iter()
+                .filter(|n| status == "all" || status_of(n) == status)
+                .filter(|n| {
+                    group
+                        .as_deref()
+                        .is_none_or(|g| n.folder_id.as_deref() == Some(g))
+                })
+                .map(|n| note_summary(&n, &folders))
+                .collect();
+            Ok(json!(items).to_string())
+        }
+        "get_note" => {
+            let id = s("id").unwrap_or_default();
+            let n = store.get_note(&id)?.ok_or("note not found")?;
+            let folders = store.list_folders()?;
+            let fmt = s("format").unwrap_or_else(|| "markdown".into());
+            let content = match fmt.as_str() {
+                "html" => n.content.clone(),
+                "text" => html_to_text(&n.content),
+                _ => crate::mdconv::html_to_md(&n.content),
+            };
+            let ct = match fmt.as_str() {
+                "html" => "html",
+                "text" => "text",
+                _ => "markdown",
+            };
+            Ok(note_full(&n, &folders, &content, ct).to_string())
+        }
+        "search_notes" => {
+            let q = s("query").unwrap_or_default().to_lowercase();
+            let status = s("status").unwrap_or_else(|| "active".into());
+            let group = s("groupId");
+            let folders = store.list_folders()?;
+            let items: Vec<Value> = store
+                .all_notes()?
+                .into_iter()
+                .filter(|n| status == "all" || status_of(n) == status)
+                .filter(|n| {
+                    group
+                        .as_deref()
+                        .is_none_or(|g| n.folder_id.as_deref() == Some(g))
+                })
+                .filter_map(|n| {
+                    let plain = html_to_text(&n.content);
+                    if !plain.to_lowercase().contains(&q) || q.is_empty() {
+                        return None;
+                    }
+                    let mut v = note_summary(&n, &folders);
+                    v["snippet"] = json!(snippet(&plain, &q));
+                    Some(v)
+                })
+                .collect();
+            Ok(json!(items).to_string())
+        }
+        "list_groups" => {
+            let folders = store.list_folders()?;
+            let items: Vec<Value> = folders
                 .iter()
-                .map(|n| json!({"id": n.id.clone()}))
-                .collect::<Vec<_>>())
-            .to_string())
+                .map(|f| {
+                    json!({
+                        "id": f.id,
+                        "name": f.name,
+                        "parentId": f.parent_id,
+                        "path": folder_path(&folders, &f.id),
+                    })
+                })
+                .collect();
+            Ok(json!(items).to_string())
         }
         _ => Err(format!("unknown tool {name}")),
     }
@@ -638,5 +726,139 @@ mod tests {
         s.create_folder("Dup", None).unwrap();
         let e = resolve_group(&s, None, Some("Dup")).unwrap_err();
         assert!(e.contains("ambiguous"), "got: {e}");
+    }
+
+    fn call_json(store: &dyn NoteStore, name: &str, args: Value, allow_write: bool) -> Value {
+        let text = call_tool(name, &args, store, allow_write).unwrap();
+        serde_json::from_str(&text).unwrap()
+    }
+
+    #[test]
+    fn list_notes_returns_summaries_with_group_and_status() {
+        let s = fake();
+        let f = s.create_folder("Work", None).unwrap();
+        s.save(&Note {
+            id: "b".into(),
+            content: "<p>Second</p>".into(),
+            folder_id: Some(f.id.clone()),
+            updated_at: 2,
+            ..Default::default()
+        })
+        .unwrap();
+        let arr = call_json(&s, "list_notes", json!({}), false);
+        let items = arr.as_array().unwrap();
+        assert_eq!(items.len(), 2); // "a" (seed) + "b", both active
+        let b = items.iter().find(|i| i["id"] == "b").unwrap();
+        assert_eq!(b["group"]["name"], "Work");
+        assert_eq!(b["contentType"], "markdown");
+        assert_eq!(b["status"], "active");
+        assert!(b["title"].as_str().unwrap().contains("Second"));
+    }
+
+    #[test]
+    fn list_notes_status_filter() {
+        let s = fake();
+        s.save(&Note {
+            id: "arch".into(),
+            content: "<p>x</p>".into(),
+            archived: true,
+            updated_at: 2,
+            ..Default::default()
+        })
+        .unwrap();
+        s.save(&Note {
+            id: "del".into(),
+            content: "<p>y</p>".into(),
+            deleted_at: Some(9),
+            updated_at: 3,
+            ..Default::default()
+        })
+        .unwrap();
+        let active = call_json(&s, "list_notes", json!({}), false);
+        assert_eq!(active.as_array().unwrap().len(), 1); // only seed "a"
+        let archived = call_json(&s, "list_notes", json!({"status":"archived"}), false);
+        assert_eq!(archived.as_array().unwrap()[0]["id"], "arch");
+        let trashed = call_json(&s, "list_notes", json!({"status":"trashed"}), false);
+        assert_eq!(trashed.as_array().unwrap()[0]["id"], "del");
+        let all = call_json(&s, "list_notes", json!({"status":"all"}), false);
+        assert_eq!(all.as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn list_notes_group_filter() {
+        let s = fake();
+        let f = s.create_folder("G", None).unwrap();
+        s.save(&Note {
+            id: "in".into(),
+            content: "<p>x</p>".into(),
+            folder_id: Some(f.id.clone()),
+            updated_at: 2,
+            ..Default::default()
+        })
+        .unwrap();
+        let arr = call_json(&s, "list_notes", json!({"groupId": f.id}), false);
+        let items = arr.as_array().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["id"], "in");
+    }
+
+    #[test]
+    fn get_note_returns_markdown_content() {
+        let s = fake();
+        s.save(&Note {
+            id: "m".into(),
+            content: "<h1>Title</h1><p>body</p>".into(),
+            updated_at: 2,
+            ..Default::default()
+        })
+        .unwrap();
+        let v = call_json(&s, "get_note", json!({"id":"m"}), false);
+        assert_eq!(v["contentType"], "markdown");
+        assert!(v["content"].as_str().unwrap().contains("# Title"));
+        assert!(v.get("pinned").is_some());
+    }
+
+    #[test]
+    fn get_note_html_format() {
+        let s = fake();
+        let v = call_json(&s, "get_note", json!({"id":"a","format":"html"}), false);
+        assert_eq!(v["contentType"], "html");
+        assert!(v["content"]
+            .as_str()
+            .unwrap()
+            .contains("<p>Hello world</p>"));
+    }
+
+    #[test]
+    fn get_note_missing_errors() {
+        let s = fake();
+        assert!(call_tool("get_note", &json!({"id":"zzz"}), &s, false).is_err());
+    }
+
+    #[test]
+    fn search_notes_matches_and_snippets() {
+        let s = fake();
+        let arr = call_json(&s, "search_notes", json!({"query":"hello"}), false);
+        let items = arr.as_array().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["id"], "a");
+        assert!(items[0]["snippet"]
+            .as_str()
+            .unwrap()
+            .to_lowercase()
+            .contains("hello"));
+    }
+
+    #[test]
+    fn list_groups_returns_tree_fields() {
+        let s = fake();
+        let p = s.create_folder("P", None).unwrap();
+        s.create_folder("C", Some(p.id.as_str())).unwrap();
+        let arr = call_json(&s, "list_groups", json!({}), false);
+        let items = arr.as_array().unwrap();
+        assert_eq!(items.len(), 2);
+        let c = items.iter().find(|i| i["name"] == "C").unwrap();
+        assert_eq!(c["parentId"], p.id);
+        assert_eq!(c["path"], "P/C");
     }
 }
