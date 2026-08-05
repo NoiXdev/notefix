@@ -174,8 +174,6 @@ fn task_item_handler(
 /// lists, code, links and tables go through `htmd`'s built-in handlers; task
 /// items, at any nesting depth, go through `task_item_handler` above so they
 /// land back on `- [ ]`/`- [x]`.
-// Not yet called outside tests; wired up by a later task's MCP command.
-#[allow(dead_code)]
 pub fn html_to_md(html: &str) -> String {
     // Dash bullets with single-space spacing match GFM (and `md_to_html`'s
     // own comrak output), so a note round-tripped through both directions
@@ -237,8 +235,6 @@ fn unescape_markdown(line: &str) -> String {
 /// first line that happens to start with a Markdown-significant character
 /// (`#hashtag`, `-1 lemons`, `*starred*`) survives as human-readable text
 /// rather than being mangled or left with a stray `\`.
-// Consumed by the MCP note-conversion commands added in later tasks of this overhaul.
-#[allow(dead_code)]
 pub fn title_from_html(html: &str) -> String {
     let md = html_to_md(html);
     let Some(line) = md.lines().find(|l| !l.trim().is_empty()) else {
