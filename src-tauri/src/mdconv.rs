@@ -195,6 +195,37 @@ pub fn html_to_md(html: &str) -> String {
         .to_string()
 }
 
+/// First non-empty text line of an HTML fragment — used as a note's title.
+// Consumed by the MCP note-conversion commands added in later tasks of this overhaul.
+#[allow(dead_code)]
+pub fn title_from_html(html: &str) -> String {
+    html_to_md(html)
+        .lines()
+        .map(|l| l.trim_start_matches(['#', '-', '*', '>', ' ']).trim())
+        .find(|l| !l.is_empty())
+        .unwrap_or("")
+        .to_string()
+}
+
+/// Wrap literal text as HTML paragraphs, escaping markup. For `format:"text"`.
+// Consumed by the MCP note-conversion commands added in later tasks of this overhaul.
+#[allow(dead_code)]
+pub fn wrap_plaintext(text: &str) -> String {
+    if text.is_empty() {
+        return "<p></p>".to_string();
+    }
+    text.lines()
+        .map(|l| {
+            format!(
+                "<p>{}</p>",
+                l.replace('&', "&amp;")
+                    .replace('<', "&lt;")
+                    .replace('>', "&gt;")
+            )
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -320,6 +351,29 @@ mod tests {
             !m.contains("- nested"),
             "nested item became a plain bullet, checked state was lost: {m}"
         );
+    }
+
+    #[test]
+    fn round_trip_preserves_structure() {
+        let md = "# Groceries\n\n- [ ] milk\n- [x] eggs";
+        let back = html_to_md(&md_to_html(md));
+        assert!(back.contains("# Groceries"), "got: {back}");
+        assert!(back.contains("- [ ] milk"), "got: {back}");
+        assert!(back.contains("- [x] eggs"), "got: {back}");
+    }
+
+    #[test]
+    fn title_from_html_takes_first_line() {
+        assert_eq!(title_from_html("<h1>Hello</h1><p>world</p>"), "Hello");
+        assert_eq!(title_from_html("<p></p><p>Second</p>"), "Second");
+        assert_eq!(title_from_html(""), "");
+    }
+
+    #[test]
+    fn wrap_plaintext_escapes_and_wraps() {
+        assert_eq!(wrap_plaintext("a\nb"), "<p>a</p><p>b</p>");
+        assert_eq!(wrap_plaintext("<b>&"), "<p>&lt;b&gt;&amp;</p>");
+        assert_eq!(wrap_plaintext(""), "<p></p>");
     }
 
     #[test]
