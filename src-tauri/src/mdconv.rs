@@ -195,16 +195,57 @@ pub fn html_to_md(html: &str) -> String {
         .to_string()
 }
 
+/// Strip one leading Markdown block prefix — an ATX heading marker
+/// (`#`..`######`), a blockquote marker (`>`), or a list bullet
+/// (`-`/`*`/`+`) — but only when followed by whitespace, which is what
+/// makes it real block syntax rather than literal text (e.g. `#hashtag` or
+/// `-1 lemons` keep their leading character).
+fn strip_markdown_block_prefix(line: &str) -> &str {
+    static PREFIX: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = PREFIX.get_or_init(|| regex::Regex::new(r"^(#{1,6}|>|[-*+])\s+").unwrap());
+    match re.find(line) {
+        Some(m) => &line[m.end()..],
+        None => line,
+    }
+}
+
+/// Undo `htmd`'s backslash-escaping of characters that would otherwise read
+/// as Markdown syntax (e.g. `\*starred\*`, `\- 1 lemons`), so a title built
+/// from literal text that merely *looks* like Markdown doesn't carry stray
+/// backslashes.
+fn unescape_markdown(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            if let Some(&next) = chars.peek() {
+                if next.is_ascii_punctuation() {
+                    out.push(next);
+                    chars.next();
+                    continue;
+                }
+            }
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// First non-empty text line of an HTML fragment — used as a note's title.
+/// Strips one leading Markdown block marker (heading/blockquote/bullet) and
+/// unescapes any backslash-escaping `html_to_md` introduced, so a literal
+/// first line that happens to start with a Markdown-significant character
+/// (`#hashtag`, `-1 lemons`, `*starred*`) survives as human-readable text
+/// rather than being mangled or left with a stray `\`.
 // Consumed by the MCP note-conversion commands added in later tasks of this overhaul.
 #[allow(dead_code)]
 pub fn title_from_html(html: &str) -> String {
-    html_to_md(html)
-        .lines()
-        .map(|l| l.trim_start_matches(['#', '-', '*', '>', ' ']).trim())
-        .find(|l| !l.is_empty())
-        .unwrap_or("")
-        .to_string()
+    let md = html_to_md(html);
+    let Some(line) = md.lines().find(|l| !l.trim().is_empty()) else {
+        return String::new();
+    };
+    let without_prefix = strip_markdown_block_prefix(line.trim());
+    unescape_markdown(without_prefix.trim())
 }
 
 /// Wrap literal text as HTML paragraphs, escaping markup. For `format:"text"`.
@@ -365,8 +406,29 @@ mod tests {
     #[test]
     fn title_from_html_takes_first_line() {
         assert_eq!(title_from_html("<h1>Hello</h1><p>world</p>"), "Hello");
+        assert_eq!(title_from_html("<h3>Deep</h3>"), "Deep");
         assert_eq!(title_from_html("<p></p><p>Second</p>"), "Second");
         assert_eq!(title_from_html(""), "");
+    }
+
+    #[test]
+    fn title_from_html_keeps_literal_markdown_looking_text() {
+        // A leading marker not followed by real block syntax is literal text
+        // and must be kept, not stripped as if it were a heading/bullet.
+        assert_eq!(title_from_html("<p>#hashtag</p>"), "#hashtag");
+        assert_eq!(title_from_html("<p>-1 lemons</p>"), "-1 lemons");
+        // htmd escapes "- " / "*x*" as Markdown-significant; the escapes
+        // must be undone so no stray backslash leaks into the title.
+        assert_eq!(title_from_html("<p>- 1 lemons</p>"), "- 1 lemons");
+        assert_eq!(title_from_html("<p>*starred*</p>"), "*starred*");
+    }
+
+    #[test]
+    fn title_from_html_strips_real_block_markers() {
+        assert_eq!(
+            title_from_html("<blockquote><p>Quote me</p></blockquote>"),
+            "Quote me"
+        );
     }
 
     #[test]
