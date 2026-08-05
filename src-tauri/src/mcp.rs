@@ -4,10 +4,6 @@ use serde_json::{json, Value};
 use std::sync::{Arc, Mutex, OnceLock};
 use tauri::{AppHandle, Emitter, Manager};
 
-// `set_archived`, `trash`, and `untrash` have no non-test caller yet — the
-// archive/trash tool logic that wires them up lands in a later task. Remove
-// this allow once it does.
-#[allow(dead_code)]
 pub trait NoteStore: Send + Sync {
     /// All notes incl. archived and trashed (like `load_all_notes`).
     fn all_notes(&self) -> Result<Vec<Note>, String>;
@@ -360,6 +356,50 @@ fn call_tool(
                 "status": status_of(&note),
             })
             .to_string())
+        }
+        "create_group" => {
+            if !allow_write {
+                return Err("writing disabled".into());
+            }
+            let name = s("name").ok_or("name is required")?;
+            let parent = s("parentId");
+            let f = store.create_folder(&name, parent.as_deref())?;
+            let folders = store.list_folders()?;
+            Ok(json!({
+                "id": f.id,
+                "name": f.name,
+                "parentId": f.parent_id,
+                "path": folder_path(&folders, &f.id),
+            })
+            .to_string())
+        }
+        "archive_note" => {
+            if !allow_write {
+                return Err("writing disabled".into());
+            }
+            let id = s("id").ok_or("id is required")?;
+            store.set_archived(&id, true)?;
+            store.emit_changed();
+            Ok(json!({ "id": id, "status": "archived" }).to_string())
+        }
+        "delete_note" => {
+            if !allow_write {
+                return Err("writing disabled".into());
+            }
+            let id = s("id").ok_or("id is required")?;
+            store.trash(&id, store.now_ms())?;
+            store.emit_changed();
+            Ok(json!({ "id": id, "status": "trashed" }).to_string())
+        }
+        "restore_note" => {
+            if !allow_write {
+                return Err("writing disabled".into());
+            }
+            let id = s("id").ok_or("id is required")?;
+            store.untrash(&id)?;
+            store.set_archived(&id, false)?;
+            store.emit_changed();
+            Ok(json!({ "id": id, "status": "active" }).to_string())
         }
         _ => Err(format!("unknown tool {name}")),
     }
@@ -1026,5 +1066,53 @@ mod tests {
         let stored = s.get_note("a").unwrap().unwrap();
         assert_eq!(stored.content, "<p>Hello world</p>"); // unchanged
         assert_eq!(stored.folder_id.as_deref(), Some(f.id.as_str()));
+    }
+
+    #[test]
+    fn create_group_returns_group_object() {
+        let s = fake();
+        let v = call_json(&s, "create_group", json!({"name":"Projects"}), true);
+        assert_eq!(v["name"], "Projects");
+        assert!(v["id"].as_str().unwrap().starts_with("id"));
+        assert_eq!(v["path"], "Projects");
+        assert_eq!(s.list_folders().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn archive_then_restore_roundtrip() {
+        let s = fake();
+        let a = call_json(&s, "archive_note", json!({"id":"a"}), true);
+        assert_eq!(a["status"], "archived");
+        assert!(s.get_note("a").unwrap().unwrap().archived);
+        let r = call_json(&s, "restore_note", json!({"id":"a"}), true);
+        assert_eq!(r["status"], "active");
+        assert!(!s.get_note("a").unwrap().unwrap().archived);
+    }
+
+    #[test]
+    fn delete_then_restore_roundtrip() {
+        let s = fake();
+        let d = call_json(&s, "delete_note", json!({"id":"a"}), true);
+        assert_eq!(d["status"], "trashed");
+        assert!(s.get_note("a").unwrap().unwrap().deleted_at.is_some());
+        let r = call_json(&s, "restore_note", json!({"id":"a"}), true);
+        assert_eq!(r["status"], "active");
+        assert!(s.get_note("a").unwrap().unwrap().deleted_at.is_none());
+    }
+
+    #[test]
+    fn lifecycle_tools_write_gated() {
+        let s = fake();
+        for t in [
+            "create_group",
+            "archive_note",
+            "delete_note",
+            "restore_note",
+        ] {
+            assert_eq!(
+                call_tool(t, &json!({"id":"a","name":"n"}), &s, false).unwrap_err(),
+                "writing disabled"
+            );
+        }
     }
 }
