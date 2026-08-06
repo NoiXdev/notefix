@@ -57,6 +57,14 @@ the biometric UI on that check rather than on `isMobilePlatform` alone.
   Always delete `src-tauri/gen/android/app/build/outputs/apk` (or `gradlew
   clean`) first — rebuilding over an existing APK appends instead of rewriting
   and doubles its size.
-- Android toolchain lives at `/opt/homebrew/share/android-commandlinetools`
-  (JDK 17 at `/opt/homebrew/opt/openjdk@17`); `adb` is at
-  `$ANDROID_HOME/platform-tools/adb` (not on PATH).
+- Play Store release (signed AAB): `npx tauri android build --aab` → output at
+  `src-tauri/gen/android/app/build/outputs/bundle/universalRelease/app-universal-release.aab`.
+  Signing is wired in `app/build.gradle.kts` via the gitignored
+  `src-tauri/gen/android/keystore.properties` (upload keystore `~/notefix-upload.jks`,
+  alias `notefix`). Bump `tauri.android.versionCode` in `tauri.properties` before
+  every Play upload. Never commit the keystore or its password.
+- Android toolchain: SDK at `~/Library/Android/sdk` (installed NDK
+  `27.2.12479018`, platform android-36, build-tools 36.0.0). JDK 17 via
+  `brew install openjdk@17` (keg-only) — builds need
+  `export JAVA_HOME="/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home"`.
+  `adb` is at `$ANDROID_HOME/platform-tools/adb` (not on PATH).
