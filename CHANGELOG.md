@@ -1,4 +1,27 @@
-## [0.5.0](https://github.com/NoiXdev/notefix/compare/v0.4.0...v) (2026-08-03)
+## [0.6.0](https://github.com/NoiXdev/notefix/compare/v0.5.0...v) (2026-08-06)
+
+
+### Features
+
+* **mcp:** add html->markdown with task-item fidelity ([eb7d51b](https://github.com/NoiXdev/notefix/commit/eb7d51b52c82ee93ae97477787c403f1239923d8))
+* **mcp:** add mdconv module with core markdown->html ([1a3a9e8](https://github.com/NoiXdev/notefix/commit/1a3a9e84d234b164219a89abaac02bcac143e7cc))
+* **mcp:** add title + plaintext helpers and round-trip tests ([b34de8e](https://github.com/NoiXdev/notefix/commit/b34de8e3c505bf57c3a70f3e12589211309501a4))
+* **mcp:** advertise all 11 tools, markdown resources, cleanup ([9fb5dc3](https://github.com/NoiXdev/notefix/commit/9fb5dc341a59d86c93aef36aa7a7c036cc5734c0))
+* **mcp:** convert markdown task lists to Tiptap structure ([a2fa904](https://github.com/NoiXdev/notefix/commit/a2fa904a42a9e625ffbb3932d6f75a77680f5397))
+* **mcp:** group creation + archive/trash/restore lifecycle ([b4a8577](https://github.com/NoiXdev/notefix/commit/b4a8577e07972c7474f0757be55d088b204a815f))
+* **mcp:** JSON read tools with group/status filters ([bad016d](https://github.com/NoiXdev/notefix/commit/bad016d85e9e9c9d886b30cdcd991f951796fbe5))
+* **mcp:** markdown-aware create/append/update note tools ([b513354](https://github.com/NoiXdev/notefix/commit/b5133549a4606ba75658908788ccdee6f2ad5cb5))
+* **mcp:** status/group-resolution/json-builder helpers ([e1114ca](https://github.com/NoiXdev/notefix/commit/e1114cabc452a0dead2461f3f7d2f326b8054628))
+
+
+### Bug Fixes
+
+* **mcp:** render task-list Tiptap markup from comrak's AST, not regex ([9c6152b](https://github.com/NoiXdev/notefix/commit/9c6152bb854b0d82a9231b16528cadc00b5603ba))
+* **mcp:** resolve final review findings on the MCP server overhaul ([2a895d9](https://github.com/NoiXdev/notefix/commit/2a895d9382e6ba4b85c028896447280c4d71612e))
+* **mcp:** round-trip nested Tiptap task items in html_to_md ([7073a35](https://github.com/NoiXdev/notefix/commit/7073a3566e67779cdff31be56034aac65cbd24ea))
+* **mcp:** stop title_from_html mangling literal markdown-looking text ([493939e](https://github.com/NoiXdev/notefix/commit/493939e6d25b9eabeef205f43ee33948f9d08f49))
+
+## [0.5.0](https://github.com/NoiXdev/notefix/compare/v0.4.0...v0.5.0) (2026-08-03)
 
 
 ### Features
