@@ -1,7 +1,11 @@
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import GridLayout, { WidthProvider } from 'react-grid-layout';
-import type { Layout } from 'react-grid-layout';
+// react-grid-layout v2 dropped the WidthProvider HOC from its main entry; the
+// `/legacy` entry keeps the v1-compatible API (WidthProvider + width-managed
+// GridLayout). Types come from the main entry (`Layout` is now the array type,
+// `LayoutItem` a single item).
+import GridLayout, { WidthProvider } from 'react-grid-layout/legacy';
+import type { Layout, LayoutItem } from 'react-grid-layout';
 import type { NoteMeta, Stats, Folder } from '../types';
 import type { DashboardWidget } from '../hooks/useSettings';
 import { WIDGETS, WIDGET_KEYS, WIDGET_SIZES } from '../dashboardWidgets';
@@ -46,12 +50,12 @@ export default function Dashboard({ notes, folders, stats, layout, editMode, onS
   const active = layout.filter(w => WIDGETS[w.key]);
   const available = WIDGET_KEYS.filter(k => !active.some(w => w.key === k));
 
-  const rglLayout: Layout[] = active.map(w => {
+  const rglLayout: LayoutItem[] = active.map(w => {
     const s = WIDGET_SIZES[w.key];
     return { i: w.key, x: w.x, y: w.y, w: w.w, h: w.h, minW: s.minW, minH: s.minH };
   });
 
-  const persist = (l: Layout[]) => {
+  const persist = (l: Layout) => {
     onChangeLayout(l.filter(it => WIDGETS[it.i]).map(it => ({ key: it.i, x: it.x, y: it.y, w: it.w, h: it.h })));
   };
 

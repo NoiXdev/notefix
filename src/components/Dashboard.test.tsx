@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 
 // react-grid-layout misst Breite/ResizeObserver — in jsdom nicht vorhanden.
 // Passthrough-Mock (wie react-select/emoji-picker): rendert nur die Kinder.
-vi.mock('react-grid-layout', () => ({
+vi.mock('react-grid-layout/legacy', () => ({
   __esModule: true,
   default: ({ children }: { children: ReactNode }) => children,
   WidthProvider: (C: unknown) => C,
