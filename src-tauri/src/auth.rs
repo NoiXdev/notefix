@@ -25,9 +25,12 @@ pub struct Pkce {
 }
 
 fn random_b64url(n_bytes: usize) -> String {
-    use rand::RngCore;
+    // rand 0.9: OsRng can fail, so it implements TryRngCore rather than RngCore.
+    use rand::TryRngCore;
     let mut bytes = vec![0u8; n_bytes];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    rand::rngs::OsRng
+        .try_fill_bytes(&mut bytes)
+        .expect("OS random number generator unavailable");
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&bytes)
 }
 
