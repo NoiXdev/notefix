@@ -28,6 +28,7 @@ export const fr = {
     backToNotes: 'Retour aux notes',
     nav: {
       about: 'À propos',
+      apps: 'Apps',
       appearance: 'Apparence',
       system: 'Système',
       stats: 'Statistiques',
@@ -175,6 +176,18 @@ export const fr = {
       archived: 'Archivées',
       characters: 'Caractères',
       words: 'Mots',
+    },
+    apps: {
+      title: 'Notefix partout',
+      subtitle: 'Retrouvez Notefix sur tous vos appareils.',
+      comingSoon: 'Bientôt disponible',
+      android: 'Android',
+      androidDesc: 'Pour smartphones & tablettes Android',
+      ios: 'iPhone & iPad',
+      iosDesc: 'Pour iOS & iPadOS',
+      server: 'Serveur de sync',
+      serverDesc: 'Gardez vos notes synchronisées entre appareils.',
+      openPlayStore: 'Ouvrir dans le Play Store',
     },
   },
   shortcuts: {

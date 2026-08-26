@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import type { IconDefinition } from "@fortawesome/fontawesome-svg-core";
-import { faGlobe, faCircleInfo, faPalette, faGear, faPlug, faChartColumn, faKeyboard, faStethoscope, faChevronRight } from "@fortawesome/free-solid-svg-icons";
+import { faGlobe, faCircleInfo, faPalette, faGear, faPlug, faChartColumn, faKeyboard, faStethoscope, faChevronRight, faDownload, faServer } from "@fortawesome/free-solid-svg-icons";
+import { faAndroid, faApple, faGooglePlay } from "@fortawesome/free-brands-svg-icons";
 import { api, type AppInfo, type UpdateInfo } from "../api";
 import type { ContextInfo } from "../contexts";
 import { startServerAuth } from "../serverAuth";
@@ -19,7 +20,7 @@ import { OSS_LIBS } from "../licenses";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { isMobilePlatform } from "../platform";
 
-export type Page = "about" | "appearance" | "system" | "contexts" | "mcp" | "stats" | "shortcuts" | "diagnostics";
+export type Page = "about" | "apps" | "appearance" | "system" | "contexts" | "mcp" | "stats" | "shortcuts" | "diagnostics";
 
 interface NavItemProps {
   label: string;
@@ -82,6 +83,68 @@ function UpdateChecker({ settings, onSetSetting }: {
           label={t("update.onStart")}
         />
       </label>
+    </div>
+  );
+}
+
+/** "Get Notefix everywhere" — promote the other platforms + the sync server. */
+function AppsPage() {
+  const { t } = useTranslation();
+  const rows: {
+    icon: IconDefinition;
+    name: string;
+    desc: string;
+    soon?: boolean;
+    action?: { label: string; icon: IconDefinition; url: string };
+  }[] = [
+    {
+      icon: faAndroid,
+      name: t("settings.apps.android"),
+      desc: t("settings.apps.androidDesc"),
+      action: {
+        label: t("settings.apps.openPlayStore"),
+        icon: faGooglePlay,
+        url: "https://play.google.com/store/apps/details?id=dev.noix.notefix",
+      },
+    },
+    { icon: faApple, name: t("settings.apps.ios"), desc: t("settings.apps.iosDesc"), soon: true },
+    { icon: faServer, name: t("settings.apps.server"), desc: t("settings.apps.serverDesc"), soon: true },
+  ];
+  return (
+    <div>
+      <h1 className="text-2xl font-bold text-gray-900 mb-1">{t("settings.apps.title")}</h1>
+      <p className="text-sm text-gray-500 mb-6">{t("settings.apps.subtitle")}</p>
+      <div className="flex flex-col gap-3 max-w-md">
+        {rows.map(r => (
+          <div
+            key={r.name}
+            className="flex items-center gap-4 p-4 rounded-lg border"
+            style={{ borderColor: "var(--line-muted)", background: "var(--paper-raised)" }}
+          >
+            <FontAwesomeIcon icon={r.icon} className="text-2xl w-8 text-center shrink-0" style={{ color: "var(--ink)" }} />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-semibold text-gray-900">{r.name}</span>
+                {r.soon && (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-medium" style={{ background: "var(--line)", color: "#1c1917" }}>
+                    {t("settings.apps.comingSoon")}
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-gray-500 mt-0.5">{r.desc}</p>
+            </div>
+            {r.action && (
+              <button
+                onClick={() => api.openExternal(r.action!.url)}
+                className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium"
+                style={{ background: "var(--accent-strong)", color: "#1c1917" }}
+              >
+                <FontAwesomeIcon icon={r.action.icon} /> {r.action.label}
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -266,6 +329,7 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
         </div>
         <nav className="flex-1 py-2">
           <NavItem icon={faCircleInfo} mobile={isMobile} label={t("settings.nav.about")} active={page === "about"} onClick={() => openPage("about")} />
+          <NavItem icon={faDownload} mobile={isMobile} label={t("settings.nav.apps")} active={page === "apps"} onClick={() => openPage("apps")} />
           <NavItem icon={faPalette} mobile={isMobile} label={t("settings.nav.appearance")} active={page === "appearance"} onClick={() => openPage("appearance")} />
           <NavItem icon={faGear} mobile={isMobile} label={t("settings.nav.system")} active={page === "system"} onClick={() => openPage("system")} />
           <NavItem icon={faGlobe} mobile={isMobile} label={t("contexts.nav")} active={page === "contexts"} onClick={() => openPage("contexts")} />
@@ -319,6 +383,8 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
             </div>
           </div>
         )}
+
+        {page === "apps" && <AppsPage />}
 
         {page === "appearance" && (
           <div>

@@ -28,6 +28,7 @@ export const en = {
     backToNotes: 'Back to notes',
     nav: {
       about: 'About',
+      apps: 'Apps',
       appearance: 'Appearance',
       system: 'System',
       stats: 'Statistics',
@@ -175,6 +176,18 @@ export const en = {
       archived: 'Archived',
       characters: 'Characters',
       words: 'Words',
+    },
+    apps: {
+      title: 'Notefix everywhere',
+      subtitle: 'Get Notefix on all your devices.',
+      comingSoon: 'Coming soon',
+      android: 'Android',
+      androidDesc: 'For Android phones & tablets',
+      ios: 'iPhone & iPad',
+      iosDesc: 'For iOS & iPadOS',
+      server: 'Sync server',
+      serverDesc: 'Keep your notes in sync across devices.',
+      openPlayStore: 'Open in Play Store',
     },
   },
   shortcuts: {
