@@ -359,6 +359,8 @@ pub fn run() {
             commands::vault_unlock_biometric,
             commands::note_set_protected,
             commands::folder_set_locked,
+            commands::note_set_mcp_hidden,
+            commands::folder_set_mcp_hidden,
             linkmeta::fetch_link_meta,
             update::check_for_update,
         ])

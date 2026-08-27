@@ -40,6 +40,12 @@ pub struct Note {
     /// plain metadata, like `folder_id`.
     #[serde(default)]
     pub title: String,
+    /// "Hide from MCP" opt-out (schema v14). LOCAL only — see
+    /// `Store::is_effectively_mcp_hidden`/`set_note_mcp_hidden` and
+    /// `sync::note_to_wire`, which deliberately never carries it over the
+    /// wire (a device's local hide preference isn't shared data).
+    #[serde(default)]
+    pub mcp_hidden: bool,
 }
 
 pub struct Store {
@@ -47,14 +53,14 @@ pub struct Store {
     pub sync_enabled: bool,
 }
 
-// `protected` is appended at index 11, `title` at index 12. `row_to_note`
-// reads both into `Note` (consumed by the sync wire mapping in `sync.rs`),
-// and `row_to_meta` reads the same indices: `protected` to blank the
-// preview/task counts for ciphertext rows, `title` passed through unchanged
-// (it's plaintext metadata even for a protected note). Every query built
-// from `COLS` implicitly carries both — including `search_notes`, which also
-// calls `row_to_meta`.
-const COLS: &str = "id, content, updated_at, pinned, archived, color, due_at, folder_id, position, deleted_at, dirty, protected, title";
+// `protected` is appended at index 11, `title` at index 12, `mcp_hidden` at
+// index 13. `row_to_note` reads all three into `Note` (`mcp_hidden` is never
+// forwarded to the sync wire mapping in `sync.rs`, unlike `protected`/
+// `title`), and `row_to_meta` reads the same indices: `protected` to blank
+// the preview/task counts for ciphertext rows, `title` and `mcp_hidden`
+// passed through unchanged. Every query built from `COLS` implicitly carries
+// all three — including `search_notes`, which also calls `row_to_meta`.
+const COLS: &str = "id, content, updated_at, pinned, archived, color, due_at, folder_id, position, deleted_at, dirty, protected, title, mcp_hidden";
 
 fn now_ms() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -79,6 +85,7 @@ fn row_to_note(r: &rusqlite::Row) -> rusqlite::Result<Note> {
         dirty: r.get(10)?,
         protected: r.get(11)?,
         title: r.get(12)?,
+        mcp_hidden: r.get(13)?,
     })
 }
 
@@ -106,6 +113,9 @@ pub struct NoteMeta {
     /// (unlike `preview`), so the list stays findable while the body is
     /// sealed.
     pub title: String,
+    /// "Hide from MCP" flag — see `Note::mcp_hidden`. Exposed here so the
+    /// frontend's context menu can show the current state.
+    pub mcp_hidden: bool,
 }
 
 /// A search match: the note's list metadata plus a snippet around the hit.
@@ -209,6 +219,7 @@ fn row_to_meta(r: &rusqlite::Row) -> rusqlite::Result<NoteMeta> {
         tasks_total,
         protected,
         title: r.get(12)?,
+        mcp_hidden: r.get(13)?,
     })
 }
 
@@ -725,6 +736,96 @@ impl Store {
         }
         Ok(false)
     }
+
+    // "Hide from MCP" plumbing (schema v14) — a LOCAL-only opt-out,
+    // independent of the protected-notes vault above. Mirrors
+    // `note_protected`/`set_note_protected`/`folder_locked`/
+    // `set_folder_locked`/`folder_chain_has_lock`/`is_effectively_protected`
+    // field-for-field, but for `mcp_hidden` instead of `protected`/`locked`.
+    // Consumed by the MCP surface (`mcp::NoteStore::is_effectively_mcp_hidden`
+    // / `folder_chain_has_mcp_hidden`) and the `note_set_mcp_hidden` /
+    // `folder_set_mcp_hidden` Tauri commands.
+
+    #[allow(dead_code)] // API symmetry with `note_protected`; not read elsewhere yet.
+    pub fn note_mcp_hidden(&self, id: &str) -> rusqlite::Result<bool> {
+        self.conn
+            .query_row("SELECT mcp_hidden FROM notes WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+    }
+
+    pub fn set_note_mcp_hidden(&self, id: &str, v: bool) -> rusqlite::Result<()> {
+        self.conn
+            .execute("UPDATE notes SET mcp_hidden = ?2 WHERE id = ?1", (id, v))?;
+        Ok(())
+    }
+
+    #[allow(dead_code)] // API symmetry with `folder_locked`; not read elsewhere yet.
+    pub fn folder_mcp_hidden(&self, id: &str) -> rusqlite::Result<bool> {
+        self.conn
+            .query_row("SELECT mcp_hidden FROM folders WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+    }
+
+    pub fn set_folder_mcp_hidden(&self, id: &str, v: bool) -> rusqlite::Result<()> {
+        self.conn
+            .execute("UPDATE folders SET mcp_hidden = ?2 WHERE id = ?1", (id, v))?;
+        Ok(())
+    }
+
+    /// True if `folder_id` — or any of its ancestors — has `mcp_hidden` set.
+    /// Cycle-safe via a visited set, mirroring `folder_chain_has_lock`.
+    pub fn folder_chain_has_mcp_hidden(&self, folder_id: Option<&str>) -> rusqlite::Result<bool> {
+        use rusqlite::OptionalExtension;
+        let mut folder_id: Option<String> = folder_id.map(str::to_string);
+        let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
+        while let Some(fid) = folder_id {
+            if !visited.insert(fid.clone()) {
+                break; // cycle detected — stop instead of looping forever
+            }
+            let folder: Option<(bool, Option<String>)> = self
+                .conn
+                .query_row(
+                    "SELECT mcp_hidden, parent_id FROM folders WHERE id = ?1",
+                    [&fid],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?;
+            let Some((hidden, parent_id)) = folder else {
+                break;
+            };
+            if hidden {
+                return Ok(true);
+            }
+            folder_id = parent_id;
+        }
+        Ok(false)
+    }
+
+    /// True if the note itself has `mcp_hidden` set, or lives (directly or
+    /// nested) inside an `mcp_hidden` folder. Cycle-safe, mirroring
+    /// `is_effectively_protected`. This is independent of — and trumps —
+    /// `is_effectively_protected`: the MCP surface must treat an
+    /// effectively-hidden note as absent whether or not it's also protected.
+    pub fn is_effectively_mcp_hidden(&self, note_id: &str) -> rusqlite::Result<bool> {
+        use rusqlite::OptionalExtension;
+        let row: Option<(bool, Option<String>)> = self
+            .conn
+            .query_row(
+                "SELECT mcp_hidden, folder_id FROM notes WHERE id = ?1",
+                [note_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        let Some((hidden, folder_id)) = row else {
+            return Ok(false);
+        };
+        if hidden {
+            return Ok(true);
+        }
+        self.folder_chain_has_mcp_hidden(folder_id.as_deref())
+    }
 }
 
 /// Upsert a server note against an arbitrary connection (used inside a tx).
@@ -779,6 +880,7 @@ mod tests {
             dirty: false,
             protected: false,
             title: String::new(),
+            mcp_hidden: false,
         }
     }
 
@@ -1331,6 +1433,95 @@ mod tests {
         let mut ids = s.note_ids_in_subtree("a").unwrap();
         ids.sort();
         assert_eq!(ids, vec!["in-a".to_string(), "in-b".to_string()]);
+    }
+
+    // ---- "Hide from MCP" (schema v14) — mirrors the protected/locked tests
+    // above, but for `mcp_hidden` instead of `protected`/`locked`. ----
+
+    #[test]
+    fn note_mcp_hidden_defaults_false_and_is_settable() {
+        let s = store();
+        s.save_note(&note("a", "<p>hi</p>", 1000)).unwrap();
+        assert!(!s.note_mcp_hidden("a").unwrap());
+        s.set_note_mcp_hidden("a", true).unwrap();
+        assert!(s.note_mcp_hidden("a").unwrap());
+        s.set_note_mcp_hidden("a", false).unwrap();
+        assert!(!s.note_mcp_hidden("a").unwrap());
+    }
+
+    #[test]
+    fn folder_mcp_hidden_defaults_false_and_is_settable() {
+        let s = store();
+        crate::folders::create_folder(&s.conn, "f", "Secret", None).unwrap();
+        assert!(!s.folder_mcp_hidden("f").unwrap());
+        s.set_folder_mcp_hidden("f", true).unwrap();
+        assert!(s.folder_mcp_hidden("f").unwrap());
+    }
+
+    #[test]
+    fn effective_mcp_hidden_via_own_flag() {
+        let s = store();
+        s.save_note(&note("a", "<p>hi</p>", 1000)).unwrap();
+        assert!(!s.is_effectively_mcp_hidden("a").unwrap());
+        s.set_note_mcp_hidden("a", true).unwrap();
+        assert!(s.is_effectively_mcp_hidden("a").unwrap());
+    }
+
+    #[test]
+    fn effective_mcp_hidden_via_ancestor_folder() {
+        let s = store();
+        crate::folders::create_folder(&s.conn, "parent", "Parent", None).unwrap();
+        crate::folders::create_folder(&s.conn, "child", "Child", Some("parent")).unwrap();
+        s.save_note(&Note {
+            folder_id: Some("child".into()),
+            ..note("n", "<p>x</p>", 1000)
+        })
+        .unwrap();
+        assert!(!s.is_effectively_mcp_hidden("n").unwrap());
+        s.set_folder_mcp_hidden("parent", true).unwrap();
+        assert!(
+            s.is_effectively_mcp_hidden("n").unwrap(),
+            "an mcp_hidden ancestor two levels up still hides the note"
+        );
+    }
+
+    #[test]
+    fn effective_mcp_hidden_is_independent_of_protection() {
+        // A note can be effectively-hidden without being protected at all —
+        // the two flags are orthogonal (see the doc comment on
+        // `is_effectively_mcp_hidden`).
+        let s = store();
+        s.save_note(&note("a", "<p>hi</p>", 1000)).unwrap();
+        s.set_note_mcp_hidden("a", true).unwrap();
+        assert!(s.is_effectively_mcp_hidden("a").unwrap());
+        assert!(!s.is_effectively_protected("a").unwrap());
+    }
+
+    #[test]
+    fn is_effectively_mcp_hidden_terminates_on_cyclic_folder_graph() {
+        let s = store();
+        crate::folders::create_folder(&s.conn, "a", "A", None).unwrap();
+        crate::folders::create_folder(&s.conn, "b", "B", Some("a")).unwrap();
+        s.conn
+            .execute("UPDATE folders SET parent_id = 'b' WHERE id = 'a'", [])
+            .unwrap();
+        s.save_note(&Note {
+            folder_id: Some("b".into()),
+            ..note("n", "<p>x</p>", 1000)
+        })
+        .unwrap();
+        assert!(!s.is_effectively_mcp_hidden("n").unwrap());
+        s.set_folder_mcp_hidden("a", true).unwrap();
+        assert!(s.is_effectively_mcp_hidden("n").unwrap());
+    }
+
+    #[test]
+    fn load_notes_meta_exposes_mcp_hidden() {
+        let s = store();
+        s.save_note(&note("a", "<p>hi</p>", 1000)).unwrap();
+        s.set_note_mcp_hidden("a", true).unwrap();
+        let meta = s.load_notes_meta().unwrap();
+        assert!(meta[0].mcp_hidden);
     }
 
     #[test]

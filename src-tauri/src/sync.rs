@@ -74,6 +74,11 @@ pub fn note_from_wire(v: &Value) -> Note {
         // today's behavior for a server that doesn't persist this field yet.
         protected: v["protected"].as_bool().unwrap_or(false),
         title: v["title"].as_str().unwrap_or_default().to_string(),
+        // `mcp_hidden` is a LOCAL-only flag (see `storage::Note::mcp_hidden`)
+        // and is never put on the wire in the first place — always false
+        // here, and `upsert_note_from_server_conn` deliberately never writes
+        // this column, so a pull can't clobber whatever was set locally.
+        mcp_hidden: false,
     }
 }
 
@@ -110,6 +115,8 @@ pub fn folder_from_wire(v: &Value) -> Folder {
         // field defaults to unlocked, matching today's behavior for a server
         // that doesn't persist this field yet.
         locked: v["locked"].as_bool().unwrap_or(false),
+        // LOCAL-only flag, never on the wire — see `note_from_wire` above.
+        mcp_hidden: false,
     }
 }
 
@@ -318,6 +325,7 @@ mod tests {
             dirty: true,
             protected: false,
             title: "My Title".into(),
+            mcp_hidden: false,
         };
         let back = note_from_wire(&note_to_wire(&n));
         assert_eq!(back.id, "n1");
@@ -327,6 +335,24 @@ mod tests {
         assert!(!back.dirty); // wire never carries dirty
         assert!(!back.protected);
         assert_eq!(back.title, n.title);
+    }
+
+    #[test]
+    fn note_wire_never_carries_mcp_hidden() {
+        // "Hide from MCP" (schema v14) is a LOCAL-only opt-out — it must never
+        // reach the wire payload, protected or not.
+        let n = Note {
+            id: "n1".into(),
+            mcp_hidden: true,
+            ..Default::default()
+        };
+        let wire = note_to_wire(&n);
+        assert!(
+            wire.get("mcpHidden").is_none() && wire.get("mcp_hidden").is_none(),
+            "got: {wire}"
+        );
+        // And a server round-trip can't turn it on either.
+        assert!(!note_from_wire(&wire).mcp_hidden);
     }
 
     #[test]
@@ -382,6 +408,7 @@ mod tests {
             deleted_at: Some(1_700_000_005_000),
             dirty: true,
             locked: false,
+            mcp_hidden: false,
         };
         let back = folder_from_wire(&folder_to_wire(&f));
         assert_eq!(back.name, "Work");
@@ -422,6 +449,46 @@ mod tests {
         });
         apply_pulled(&s, &[], &[server_note]).unwrap();
         assert_eq!(s.load_all_notes().unwrap()[0].content, "server");
+    }
+
+    #[test]
+    fn apply_pulled_never_clobbers_local_mcp_hidden() {
+        // `mcp_hidden` is LOCAL-only: a pulled note/folder update (which never
+        // carries the field — see `note_wire_never_carries_mcp_hidden`) must
+        // not reset a locally-set flag back to false.
+        let s = Store::open_in_memory().unwrap();
+        crate::migrate::run_migrations(&s.conn).unwrap();
+        s.save_note(&Note {
+            id: "n1".into(),
+            content: "local".into(),
+            updated_at: 1,
+            ..Default::default()
+        })
+        .unwrap();
+        s.set_note_mcp_hidden("n1", true).unwrap();
+        crate::folders::create_folder(&s.conn, "f1", "Work", None).unwrap();
+        s.set_folder_mcp_hidden("f1", true).unwrap();
+
+        let server_note = note_to_wire(&Note {
+            id: "n1".into(),
+            content: "server".into(),
+            updated_at: 1_700_000_000_000,
+            ..Default::default()
+        });
+        let server_folder = folder_to_wire(&Folder {
+            id: "f1".into(),
+            name: "Work".into(),
+            updated_at: 1_700_000_000_000,
+            ..Default::default()
+        });
+        apply_pulled(&s, &[server_folder], &[server_note]).unwrap();
+
+        assert_eq!(s.load_all_notes().unwrap()[0].content, "server"); // other fields DO update
+        assert!(s.note_mcp_hidden("n1").unwrap(), "local flag must survive");
+        assert!(
+            s.folder_mcp_hidden("f1").unwrap(),
+            "local flag must survive"
+        );
     }
 
     #[test]

@@ -148,6 +148,19 @@ pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
         set_meta(conn, "schema_version", "13")?;
     }
 
+    if version < 14 {
+        // "Hide from MCP" (schema v14) — a LOCAL-only opt-out flag, independent
+        // of the protected-notes vault: a note or folder marked here is never
+        // returned or writable via the local MCP server, whether or not it's
+        // also protected. Never synced (see `sync::note_to_wire`/
+        // `folder_to_wire`, which deliberately omit it).
+        conn.execute_batch(
+            "ALTER TABLE notes   ADD COLUMN mcp_hidden INTEGER NOT NULL DEFAULT 0;
+             ALTER TABLE folders ADD COLUMN mcp_hidden INTEGER NOT NULL DEFAULT 0;",
+        )?;
+        set_meta(conn, "schema_version", "14")?;
+    }
+
     Ok(())
 }
 
@@ -225,7 +238,7 @@ mod tests {
         let s = store();
         assert_eq!(
             get_meta(&s.conn, "schema_version").unwrap().as_deref(),
-            Some("13")
+            Some("14")
         );
     }
 
@@ -235,8 +248,27 @@ mod tests {
         run_migrations(&s.conn).unwrap();
         assert_eq!(
             get_meta(&s.conn, "schema_version").unwrap().as_deref(),
-            Some("13")
+            Some("14")
         );
+    }
+
+    #[test]
+    fn migration_v14_adds_mcp_hidden_columns_defaulting_false() {
+        let s = store();
+        s.save_note(&Note {
+            id: "n".into(),
+            content: "<p>x</p>".into(),
+            updated_at: 1,
+            ..Default::default()
+        })
+        .unwrap();
+        crate::folders::create_folder(&s.conn, "f", "F", None).unwrap();
+        assert!(!s.note_mcp_hidden("n").unwrap());
+        assert!(!s.folder_mcp_hidden("f").unwrap());
+        s.set_note_mcp_hidden("n", true).unwrap();
+        s.set_folder_mcp_hidden("f", true).unwrap();
+        assert!(s.note_mcp_hidden("n").unwrap());
+        assert!(s.folder_mcp_hidden("f").unwrap());
     }
 
     #[test]
@@ -260,7 +292,11 @@ mod tests {
                  deleted_at INTEGER,
                  dirty      INTEGER NOT NULL DEFAULT 0,
                  protected  INTEGER NOT NULL DEFAULT 0
-             );",
+             );
+             -- Minimal stand-in so the v14 step below (`ALTER TABLE folders
+             -- ADD COLUMN mcp_hidden`), which now also runs from this
+             -- synthetic v12 baseline, has a table to alter.
+             CREATE TABLE folders (id TEXT PRIMARY KEY);",
         )
         .unwrap();
         set_meta(&conn, "schema_version", "12").unwrap();
@@ -279,7 +315,7 @@ mod tests {
 
         assert_eq!(
             get_meta(&conn, "schema_version").unwrap().as_deref(),
-            Some("13")
+            Some("14")
         );
         let title_of = |id: &str| -> String {
             conn.query_row("SELECT title FROM notes WHERE id = ?1", [id], |r| r.get(0))

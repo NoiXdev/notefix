@@ -61,6 +61,7 @@ mod tests {
             dirty: false,
             protected: false,
             title: String::new(),
+            mcp_hidden: false,
         }
     }
 

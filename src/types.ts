@@ -30,6 +30,8 @@ export interface NoteMeta {
   /** Plaintext title (first line of content) — stays visible even when
    *  `content` is sealed for a protected note, so the note stays findable. */
   title: string;
+  /** "Hide from MCP" opt-out — local only, independent of `protected`. */
+  mcpHidden: boolean;
 }
 
 export interface Folder {
@@ -41,6 +43,8 @@ export interface Folder {
   color: string;
   sort: string;
   locked: boolean;
+  /** "Hide from MCP" opt-out — local only, independent of `locked`. */
+  mcpHidden: boolean;
 }
 
 export interface Stats {

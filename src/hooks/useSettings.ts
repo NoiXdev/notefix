@@ -27,6 +27,11 @@ export type EditorWidth = 'full' | 'medium' | 'narrow';
 export const EDITOR_WIDTHS: EditorWidth[] = ['full', 'medium', 'narrow'];
 export type VaultLockScope = 'session' | 'perNote';
 export const VAULT_LOCK_SCOPES: VaultLockScope[] = ['session', 'perNote'];
+/** MCP access to protected (vault) notes: 'off' never exposes them (default);
+ *  'read' returns decrypted content while the vault is unlocked; 'readwrite'
+ *  additionally allows the local MCP server to modify them. */
+export type McpProtectedAccess = 'off' | 'read' | 'readwrite';
+export const MCP_PROTECTED_ACCESS: McpProtectedAccess[] = ['off', 'read', 'readwrite'];
 
 export interface DashboardWidget { key: string; x: number; y: number; w: number; h: number; }
 
@@ -56,6 +61,7 @@ export interface AppSettings {
   mcpAuthRequired: boolean;
   mcpToken: string;
   mcpAllowWrite: boolean;
+  mcpProtectedAccess: McpProtectedAccess;
   checkUpdatesOnStart: boolean;
   updateDismissedVersion: string;
   searchScope: 'context' | 'global';
@@ -109,6 +115,7 @@ const DEFAULTS: AppSettings = {
   mcpAuthRequired: true,
   mcpToken: '',
   mcpAllowWrite: false,
+  mcpProtectedAccess: 'off',
   checkUpdatesOnStart: true,
   updateDismissedVersion: '',
   searchScope: 'context',
@@ -191,6 +198,9 @@ export function useSettings() {
       mcpAuthRequired: raw.mcpAuthRequired !== 'false',
       mcpToken: typeof raw.mcpToken === 'string' ? raw.mcpToken : '',
       mcpAllowWrite: raw.mcpAllowWrite === 'true',
+      mcpProtectedAccess: (MCP_PROTECTED_ACCESS as string[]).includes(raw.mcpProtectedAccess)
+        ? (raw.mcpProtectedAccess as McpProtectedAccess)
+        : 'off',
       checkUpdatesOnStart: raw.checkUpdatesOnStart !== 'false',
       updateDismissedVersion: typeof raw.updateDismissedVersion === 'string' ? raw.updateDismissedVersion : '',
       searchScope: raw.searchScope === 'global' ? 'global' : 'context',

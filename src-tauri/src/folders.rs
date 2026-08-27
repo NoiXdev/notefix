@@ -22,6 +22,12 @@ pub struct Folder {
     pub dirty: bool,
     #[serde(default)]
     pub locked: bool,
+    /// "Hide from MCP" opt-out (schema v14). LOCAL only — see
+    /// `Store::is_effectively_mcp_hidden`/`set_folder_mcp_hidden` and
+    /// `sync::folder_to_wire`, which deliberately never carries it over the
+    /// wire.
+    #[serde(default)]
+    pub mcp_hidden: bool,
 }
 
 pub enum DeleteMode {
@@ -48,7 +54,7 @@ fn now_ms() -> i64 {
 }
 
 pub fn load_folders(conn: &Connection) -> rusqlite::Result<Vec<Folder>> {
-    let mut stmt = conn.prepare("SELECT id, name, parent_id, position, icon, color, sort, updated_at, deleted_at, dirty, locked FROM folders WHERE deleted_at IS NULL ORDER BY position, name")?;
+    let mut stmt = conn.prepare("SELECT id, name, parent_id, position, icon, color, sort, updated_at, deleted_at, dirty, locked, mcp_hidden FROM folders WHERE deleted_at IS NULL ORDER BY position, name")?;
     let rows = stmt.query_map([], |r| {
         Ok(Folder {
             id: r.get(0)?,
@@ -62,6 +68,7 @@ pub fn load_folders(conn: &Connection) -> rusqlite::Result<Vec<Folder>> {
             deleted_at: r.get(8)?,
             dirty: r.get(9)?,
             locked: r.get(10)?,
+            mcp_hidden: r.get(11)?,
         })
     })?;
     rows.collect()
@@ -247,7 +254,7 @@ pub fn touch_folder(conn: &Connection, id: &str) -> rusqlite::Result<()> {
 }
 
 pub fn load_dirty_folders(conn: &Connection) -> rusqlite::Result<Vec<Folder>> {
-    let mut stmt = conn.prepare("SELECT id, name, parent_id, position, icon, color, sort, updated_at, deleted_at, dirty, locked FROM folders WHERE dirty = 1")?;
+    let mut stmt = conn.prepare("SELECT id, name, parent_id, position, icon, color, sort, updated_at, deleted_at, dirty, locked, mcp_hidden FROM folders WHERE dirty = 1")?;
     let rows = stmt.query_map([], |r| {
         Ok(Folder {
             id: r.get(0)?,
@@ -261,6 +268,7 @@ pub fn load_dirty_folders(conn: &Connection) -> rusqlite::Result<Vec<Folder>> {
             deleted_at: r.get(8)?,
             dirty: r.get(9)?,
             locked: r.get(10)?,
+            mcp_hidden: r.get(11)?,
         })
     })?;
     rows.collect()
@@ -322,6 +330,7 @@ mod tests {
             dirty: false,
             protected: false,
             title: String::new(),
+            mcp_hidden: false,
         }
     }
 
@@ -359,6 +368,15 @@ mod tests {
         assert!(!load_folders(&s.conn).unwrap()[0].locked);
         s.set_folder_locked("a", true).unwrap();
         assert!(load_folders(&s.conn).unwrap()[0].locked);
+    }
+
+    #[test]
+    fn load_folders_exposes_mcp_hidden() {
+        let s = store();
+        create_folder(&s.conn, "a", "A", None).unwrap();
+        assert!(!load_folders(&s.conn).unwrap()[0].mcp_hidden);
+        s.set_folder_mcp_hidden("a", true).unwrap();
+        assert!(load_folders(&s.conn).unwrap()[0].mcp_hidden);
     }
 
     #[test]

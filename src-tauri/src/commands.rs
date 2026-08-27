@@ -75,7 +75,11 @@ fn seal_content(dek: &Dek, note_id: &str, html: &str) -> String {
 /// Reverses `seal_content`: base64-decode, open the AEAD blob (checking the
 /// note id as associated data), then validate the plaintext is UTF-8. Every
 /// failure maps to a plain `String` — never key material or plaintext.
-fn open_content(dek: &Dek, note_id: &str, stored: &str) -> Result<String, String> {
+///
+/// `pub(crate)` so the MCP surface (`mcp.rs`) can decrypt an
+/// effectively-protected note's content for a read tool when
+/// `mcpProtectedAccess` allows it — see `mcp::StoreAccess::decrypt_protected`.
+pub(crate) fn open_content(dek: &Dek, note_id: &str, stored: &str) -> Result<String, String> {
     let blob = base64::engine::general_purpose::STANDARD
         .decode(stored)
         .map_err(|e| e.to_string())?;
@@ -123,7 +127,13 @@ fn folder_chain_has_lock(store: &Store, starting_folder_id: Option<&str>) -> Res
 /// primitive shared by every "plaintext note enters a locked context" path
 /// (`reconcile_folder_move`, `reconcile_reorder`, `note_set_protected(true)`,
 /// `folder_set_locked(true)`), so all of them mark the row dirty identically.
-fn encrypt_note_in_place(store: &Store, id: &str, dek: &Dek) -> Result<(), String> {
+///
+/// `pub(crate)` so the MCP surface (`mcp.rs`) can reuse it too: when
+/// `mcpProtectedAccess` is "readwrite" and the vault is unlocked, a write tool
+/// writes its new plaintext into `content` (still under the same store lock)
+/// and immediately calls this to reseal it — see
+/// `mcp::StoreAccess::write_protected`.
+pub(crate) fn encrypt_note_in_place(store: &Store, id: &str, dek: &Dek) -> Result<(), String> {
     let plaintext = store
         .load_note_content(id)
         .map_err(|e| e.to_string())?
@@ -410,6 +420,28 @@ pub fn notes_set_color(
     {
         let store = store.lock().map_err(|e| e.to_string())?;
         store.set_color(&id, &color).map_err(|e| e.to_string())?;
+    }
+    broadcast_changed(&app, webview.label());
+    crate::tray::rebuild_menu(&app);
+    Ok(())
+}
+
+/// Sets a note's "Hide from MCP" opt-out (schema v14). Plaintext local flag —
+/// no vault involved. See `Store::is_effectively_mcp_hidden` for how it's
+/// enforced on the MCP surface.
+#[tauri::command]
+pub fn note_set_mcp_hidden(
+    app: AppHandle,
+    webview: WebviewWindow,
+    store: State<'_, Mutex<Store>>,
+    id: String,
+    hidden: bool,
+) -> Result<(), String> {
+    {
+        let store = store.lock().map_err(|e| e.to_string())?;
+        store
+            .set_note_mcp_hidden(&id, hidden)
+            .map_err(|e| e.to_string())?;
     }
     broadcast_changed(&app, webview.label());
     crate::tray::rebuild_menu(&app);
@@ -750,6 +782,28 @@ pub fn folder_set_color(
         if store.sync_enabled {
             crate::folders::touch_folder(&store.conn, &id).map_err(|e| e.to_string())?;
         }
+    }
+    notify(&app, &webview);
+    Ok(())
+}
+
+/// Sets a folder's "Hide from MCP" opt-out (schema v14) — every note in its
+/// subtree becomes effectively hidden too, mirroring how a locked folder
+/// protects its subtree (`Store::is_effectively_mcp_hidden`). Plaintext local
+/// flag — no vault involved, and (unlike `locked`) never synced.
+#[tauri::command]
+pub fn folder_set_mcp_hidden(
+    app: AppHandle,
+    webview: WebviewWindow,
+    store: State<'_, Mutex<Store>>,
+    id: String,
+    hidden: bool,
+) -> Result<(), String> {
+    {
+        let store = store.lock().map_err(|e| e.to_string())?;
+        store
+            .set_folder_mcp_hidden(&id, hidden)
+            .map_err(|e| e.to_string())?;
     }
     notify(&app, &webview);
     Ok(())

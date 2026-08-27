@@ -165,6 +165,13 @@ export const fr = {
       token: 'Jeton d’accès',
       regenerate: 'Régénérer',
       allowWrite: 'Autoriser l’écriture (créer & ajouter)',
+      protectedAccess: 'Accès aux notes protégées',
+      protectedAccessOptions: {
+        off: 'Désactivé',
+        read: 'Lecture (coffre déverrouillé)',
+        readwrite: 'Lecture et écriture (coffre déverrouillé)',
+      },
+      protectedAccessWarning: 'Expose les notes protégées déchiffrées au client IA connecté, et ne fonctionne que lorsque le coffre est déverrouillé.',
       status: 'URL du serveur',
       demo: 'Claude Desktop',
       demoHint: 'Ajoutez ceci à votre claude_desktop_config.json (utilise mcp-remote).',
@@ -492,6 +499,8 @@ export const fr = {
     unlockNote: 'Déverrouiller la note',
     lockFolder: 'Verrouiller le dossier',
     unlockFolder: 'Déverrouiller le dossier',
+    hideFromMcp: 'Masquer à l’IA',
+    showToMcp: 'Afficher à l’IA',
   },
   security: {
     title: 'Sécurité',

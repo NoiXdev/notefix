@@ -382,6 +382,17 @@ export default function App() {
     }
   };
 
+  // "Hide from MCP" is a plaintext local flag — no vault involved, so (unlike
+  // protect/lock) it applies directly without an unlock gate.
+  const setNoteMcpHidden = async (id: string, next: boolean) => {
+    await api.notes.setMcpHidden(id, next);
+    await reloadNotes();
+  };
+  const setFolderMcpHidden = async (id: string, next: boolean) => {
+    await api.folders.setMcpHidden(id, next);
+    await reloadFolders();
+  };
+
   const cancelVaultDialog = () => { setVaultDialog(null); setPendingProtect(null); };
 
   const afterUnlockOrSetup = () => {
@@ -478,6 +489,8 @@ export default function App() {
         onExportNote={(n) => setExportNoteState(n)}
         onProtectNote={(id, next) => requestProtect('note', id, next)}
         onLockFolder={(id, next) => requestProtect('folder', id, next)}
+        onSetNoteMcpHidden={(id, next) => void setNoteMcpHidden(id, next)}
+        onSetFolderMcpHidden={(id, next) => void setFolderMcpHidden(id, next)}
         vaultExists={vault.status.exists}
         vaultUnlocked={vault.status.unlocked}
         onLockVault={() => void vault.lock()}

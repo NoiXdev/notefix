@@ -75,6 +75,35 @@ describe("useSettings — vaultLockScope", () => {
   });
 });
 
+describe("useSettings — mcpProtectedAccess", () => {
+  it("defaults to off", async () => {
+    const { result } = renderHook(() => useSettings());
+    await waitFor(() => expect(result.current.settings.mcpProtectedAccess).toBe("off"));
+  });
+
+  it("loads a stored read/readwrite value and falls back to off for junk", async () => {
+    mockLoad.mockResolvedValue({ mcpProtectedAccess: "read" });
+    const { result } = renderHook(() => useSettings());
+    await waitFor(() => expect(result.current.settings.mcpProtectedAccess).toBe("read"));
+
+    mockLoad.mockResolvedValue({ mcpProtectedAccess: "readwrite" });
+    const { result: result2 } = renderHook(() => useSettings());
+    await waitFor(() => expect(result2.current.settings.mcpProtectedAccess).toBe("readwrite"));
+
+    mockLoad.mockResolvedValue({ mcpProtectedAccess: "bogus" });
+    const { result: result3 } = renderHook(() => useSettings());
+    await waitFor(() => expect(result3.current.settings.mcpProtectedAccess).toBe("off"));
+  });
+
+  it("setSetting persists mcpProtectedAccess", async () => {
+    const { result } = renderHook(() => useSettings());
+    await waitFor(() => expect(result.current.settings.mcpProtectedAccess).toBe("off"));
+    await act(async () => { await result.current.setSetting("mcpProtectedAccess", "readwrite"); });
+    expect(result.current.settings.mcpProtectedAccess).toBe("readwrite");
+    expect(mockSet).toHaveBeenCalledWith("mcpProtectedAccess", "readwrite");
+  });
+});
+
 describe("useSettings — auto-lock toggles", () => {
   it("autoLockIdle and autoLockOnHide default to true", async () => {
     const { result } = renderHook(() => useSettings());

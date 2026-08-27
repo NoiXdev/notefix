@@ -165,6 +165,13 @@ export const en = {
       token: 'Access token',
       regenerate: 'Regenerate',
       allowWrite: 'Allow writing (create & append)',
+      protectedAccess: 'Access to protected notes',
+      protectedAccessOptions: {
+        off: 'Off',
+        read: 'Read (while unlocked)',
+        readwrite: 'Read & write (while unlocked)',
+      },
+      protectedAccessWarning: 'Exposes decrypted protected notes to the connected AI client, and only works while the vault is unlocked.',
       status: 'Server URL',
       demo: 'Claude Desktop',
       demoHint: 'Add this to your claude_desktop_config.json (uses mcp-remote).',
@@ -492,6 +499,8 @@ export const en = {
     unlockNote: 'Unlock note',
     lockFolder: 'Lock folder',
     unlockFolder: 'Unlock folder',
+    hideFromMcp: 'Hide from AI',
+    showToMcp: 'Show to AI',
   },
   security: {
     title: 'Security',

@@ -165,6 +165,13 @@ export const de = {
       token: 'Zugriffstoken',
       regenerate: 'Neu generieren',
       allowWrite: 'Schreiben erlauben (anlegen & ergänzen)',
+      protectedAccess: 'Zugriff auf geschützte Notizen',
+      protectedAccessOptions: {
+        off: 'Aus',
+        read: 'Lesen (bei entsperrtem Tresor)',
+        readwrite: 'Lesen & Schreiben (bei entsperrtem Tresor)',
+      },
+      protectedAccessWarning: 'Macht entschlüsselte geschützte Notizen für den verbundenen KI-Client sichtbar und funktioniert nur bei entsperrtem Tresor.',
       status: 'Server-URL',
       demo: 'Claude Desktop',
       demoHint: 'Füge dies in deine claude_desktop_config.json ein (nutzt mcp-remote).',
@@ -492,6 +499,8 @@ export const de = {
     unlockNote: 'Notiz entsperren',
     lockFolder: 'Ordner sperren',
     unlockFolder: 'Ordner entsperren',
+    hideFromMcp: 'Vor KI verbergen',
+    showToMcp: 'KI zeigen',
   },
   security: {
     title: 'Sicherheit',

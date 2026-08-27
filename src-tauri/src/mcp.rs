@@ -26,6 +26,35 @@ pub trait NoteStore: Send + Sync {
     /// True if `folder_id` (or any ancestor) is locked — used to refuse
     /// creating/placing a plaintext note inside a locked subtree.
     fn folder_chain_has_lock(&self, folder_id: Option<&str>) -> Result<bool, String>;
+    /// True if the note is individually hidden-from-MCP, or lives inside a
+    /// folder marked hidden-from-MCP (or a nested subtree thereof). This is a
+    /// LOCAL-only opt-out (schema v14), independent of protection, and trumps
+    /// everything: reads exclude it, writes refuse it, whether or not the
+    /// note is also protected.
+    fn is_effectively_mcp_hidden(&self, id: &str) -> Result<bool, String>;
+    /// True if `folder_id` (or any ancestor) is hidden-from-MCP — used to
+    /// refuse creating/placing/moving a note into a hidden subtree, mirroring
+    /// `folder_chain_has_lock`.
+    fn folder_chain_has_mcp_hidden(&self, folder_id: Option<&str>) -> Result<bool, String>;
+    /// The live `mcpProtectedAccess` setting ("off"/"read"/"readwrite"),
+    /// read fresh on every call so a settings change takes effect without an
+    /// MCP server restart.
+    fn mcp_protected_access(&self) -> String;
+    /// True if the protected-notes vault currently holds an unlocked DEK.
+    fn vault_unlocked(&self) -> bool;
+    /// Decrypts an effectively-protected note's stored ciphertext `content`
+    /// into plaintext HTML. Callers must already have confirmed the vault is
+    /// unlocked and the read policy allows it — this only performs the AEAD
+    /// open. Any failure (locked vault, corrupt/foreign ciphertext) is an
+    /// `Err`; callers must treat that as "note absent", never return the
+    /// ciphertext or a partial result.
+    fn decrypt_protected(&self, id: &str, ciphertext: &str) -> Result<String, String>;
+    /// Overwrites an effectively-protected note's content with
+    /// `plaintext_html` and immediately reseals it (ciphertext on disk,
+    /// `protected` stays true), atomically under one store-lock acquisition
+    /// so no concurrent MCP request can observe the note as plaintext at
+    /// rest. Requires the vault to be unlocked.
+    fn write_protected(&self, id: &str, plaintext_html: &str) -> Result<(), String>;
     fn now_ms(&self) -> i64;
     fn new_id(&self) -> String;
     fn emit_changed(&self);
@@ -248,6 +277,56 @@ fn to_html(content: &str, format: Option<&str>) -> String {
     }
 }
 
+/// Resolves a note for a READ tool (list_notes/get_note/search_notes).
+/// `Ok(None)` means MCP must treat it as absent:
+/// - effectively hidden-from-MCP (trumps everything), or
+/// - effectively protected while `mcpProtectedAccess` is "off" or the vault
+///   is locked (today's default-safe behavior, unchanged), or
+/// - effectively protected, access allowed, vault unlocked, but decrypting
+///   its ciphertext failed — never surface ciphertext or a partial result.
+///
+/// Otherwise returns a clone of `n` whose `content` is guaranteed to be
+/// plaintext HTML (decrypted on the fly for an allowed protected note), so
+/// callers can feed it straight into `note_summary`/`note_full` unchanged.
+fn visible_for_read(store: &dyn NoteStore, n: &Note) -> Result<Option<Note>, String> {
+    if store.is_effectively_mcp_hidden(&n.id)? {
+        return Ok(None);
+    }
+    if store.is_effectively_protected(&n.id)? {
+        if store.mcp_protected_access() == "off" || !store.vault_unlocked() {
+            return Ok(None);
+        }
+        return Ok(match store.decrypt_protected(&n.id, &n.content) {
+            Ok(plaintext) => {
+                let mut opened = n.clone();
+                opened.content = plaintext;
+                Some(opened)
+            }
+            Err(_) => None,
+        });
+    }
+    Ok(Some(n.clone()))
+}
+
+/// Checks whether `id`'s note may be written to via MCP (append_note /
+/// update_note). `Ok(true)` = write allowed AND the note is effectively
+/// protected — the caller must go through `decrypt_protected` +
+/// `write_protected` rather than the plain `save` path. `Ok(false)` = write
+/// allowed and the note is plain. `Err` = refuse outright:
+/// - effectively hidden-from-MCP (trumps everything, checked first), or
+/// - effectively protected but `mcpProtectedAccess` isn't "readwrite", or the
+///   vault is locked.
+fn writable_protected(store: &dyn NoteStore, id: &str) -> Result<bool, String> {
+    if store.is_effectively_mcp_hidden(id)? {
+        return Err("note hidden from MCP".into());
+    }
+    let protected = store.is_effectively_protected(id)?;
+    if protected && (store.mcp_protected_access() != "readwrite" || !store.vault_unlocked()) {
+        return Err("note is protected".into());
+    }
+    Ok(protected)
+}
+
 fn call_tool(
     name: &str,
     args: &Value,
@@ -271,11 +350,13 @@ fn call_tool(
                 {
                     continue;
                 }
-                // Vault-protected notes never appear on the MCP surface — their
-                // content is ciphertext and their title ciphertext-derived.
-                if store.is_effectively_protected(&n.id)? {
+                // Hidden-from-MCP notes never appear; a protected note appears
+                // only when `mcpProtectedAccess` allows it (decrypted) — see
+                // `visible_for_read`. Default settings behave exactly as
+                // before: protected notes stay excluded.
+                let Some(n) = visible_for_read(store, &n)? else {
                     continue;
-                }
+                };
                 items.push(note_summary(&n, &folders));
             }
             Ok(json!(items).to_string())
@@ -283,11 +364,10 @@ fn call_tool(
         "get_note" => {
             let id = s("id").unwrap_or_default();
             let n = store.get_note(&id)?.ok_or("note not found")?;
-            // A protected note is invisible to MCP — report it as absent rather
-            // than returning ciphertext content or a ciphertext-derived title.
-            if store.is_effectively_protected(&id)? {
-                return Err("note not found".into());
-            }
+            // Hidden/disallowed-protected notes are invisible to MCP — report
+            // them as absent rather than leaking ciphertext/a ciphertext-
+            // derived title, or an existence signal.
+            let n = visible_for_read(store, &n)?.ok_or("note not found")?;
             let folders = store.list_folders()?;
             let fmt = s("format").unwrap_or_else(|| "markdown".into());
             let content = match fmt.as_str() {
@@ -318,10 +398,12 @@ fn call_tool(
                 {
                     continue;
                 }
-                // Never scan (or match) a protected note's ciphertext content.
-                if store.is_effectively_protected(&n.id)? {
+                // Hidden notes are never scanned; a protected note's ciphertext
+                // is only decrypted (and then scanned) when policy allows it —
+                // see `visible_for_read`.
+                let Some(n) = visible_for_read(store, &n)? else {
                     continue;
-                }
+                };
                 let plain = html_to_text(&n.content);
                 if q.is_empty() || !plain.to_lowercase().contains(&q) {
                     continue;
@@ -359,6 +441,11 @@ fn call_tool(
             if store.folder_chain_has_lock(folder_id.as_deref())? {
                 return Err("folder is locked".into());
             }
+            // Same refusal for a hidden-from-MCP subtree — a note created
+            // there would be effectively hidden the instant it's placed.
+            if store.folder_chain_has_mcp_hidden(folder_id.as_deref())? {
+                return Err("folder hidden from MCP".into());
+            }
             let note = Note {
                 id: store.new_id(),
                 content: to_html(&content, s("format").as_deref()),
@@ -382,17 +469,24 @@ fn call_tool(
             }
             let id = s("id").ok_or("id is required")?;
             let text = s("text").ok_or("text is required")?;
-            // A protected note's stored content is ciphertext; appending
-            // plaintext would both leak it at rest and corrupt the blob so the
-            // app could no longer decrypt it. Refuse, touching nothing.
-            if store.is_effectively_protected(&id)? {
-                return Err("note is protected".into());
-            }
+            // Hidden-from-MCP notes are never writable, full stop. A protected
+            // note's stored content is ciphertext: appending plaintext would
+            // both leak it at rest and corrupt the blob, so it's refused
+            // UNLESS `mcpProtectedAccess` is "readwrite" and the vault is
+            // unlocked — in which case the addition is appended to the
+            // decrypted plaintext and the whole thing is resealed atomically,
+            // never leaving plaintext on disk. Touches nothing on refusal.
+            let protected = writable_protected(store, &id)?;
             let mut note = store.get_note(&id)?.ok_or("note not found")?;
-            note.content
-                .push_str(&to_html(&text, s("format").as_deref()));
-            note.updated_at = store.now_ms();
-            store.save(&note)?;
+            let addition = to_html(&text, s("format").as_deref());
+            if protected {
+                let plaintext = store.decrypt_protected(&id, &note.content)?;
+                store.write_protected(&id, &format!("{plaintext}{addition}"))?;
+            } else {
+                note.content.push_str(&addition);
+                note.updated_at = store.now_ms();
+                store.save(&note)?;
+            }
             store.emit_changed();
             Ok(json!({ "id": note.id, "status": status_of(&note) }).to_string())
         }
@@ -415,22 +509,33 @@ fn call_tool(
             } else {
                 None
             };
-            // Refuse — before any mutation — to modify a protected note (its
-            // content is ciphertext) or to move a note into a locked subtree
-            // (MCP has no vault key to encrypt-on-place).
-            if store.is_effectively_protected(&id)? {
-                return Err("note is protected".into());
-            }
+            // Refuse — before any mutation — a hidden-from-MCP note (trumps
+            // everything) or a protected note MCP isn't allowed to touch
+            // (`mcpProtectedAccess` isn't "readwrite", or the vault is
+            // locked); and refuse moving into a locked or hidden subtree
+            // (MCP has no vault key to encrypt-on-place a *different*
+            // plaintext note landing there, and a hidden destination would
+            // just make this note vanish from MCP the instant it moves).
+            let protected = writable_protected(store, &id)?;
             if let Some(dest) = folder_id.as_ref() {
                 if store.folder_chain_has_lock(dest.as_deref())? {
                     return Err("folder is locked".into());
                 }
+                if store.folder_chain_has_mcp_hidden(dest.as_deref())? {
+                    return Err("folder hidden from MCP".into());
+                }
             }
             let mut note = store.get_note(&id)?.ok_or("note not found")?;
             if let Some(content) = s("content") {
-                note.content = to_html(&content, s("format").as_deref());
-                note.updated_at = store.now_ms();
-                store.save(&note)?;
+                let html = to_html(&content, s("format").as_deref());
+                if protected {
+                    // Full replace — no need to decrypt the old content first.
+                    store.write_protected(&id, &html)?;
+                } else {
+                    note.content = html;
+                    note.updated_at = store.now_ms();
+                    store.save(&note)?;
+                }
             }
             // Move only when a group param was present (either key).
             if let Some(folder_id) = folder_id {
@@ -467,6 +572,9 @@ fn call_tool(
                 return Err("writing disabled".into());
             }
             let id = s("id").ok_or("id is required")?;
+            if store.is_effectively_mcp_hidden(&id)? {
+                return Err("note hidden from MCP".into());
+            }
             store.set_archived(&id, true)?;
             store.emit_changed();
             Ok(json!({ "id": id, "status": "archived" }).to_string())
@@ -476,6 +584,9 @@ fn call_tool(
                 return Err("writing disabled".into());
             }
             let id = s("id").ok_or("id is required")?;
+            if store.is_effectively_mcp_hidden(&id)? {
+                return Err("note hidden from MCP".into());
+            }
             store.trash(&id, store.now_ms())?;
             store.emit_changed();
             Ok(json!({ "id": id, "status": "trashed" }).to_string())
@@ -485,6 +596,9 @@ fn call_tool(
                 return Err("writing disabled".into());
             }
             let id = s("id").ok_or("id is required")?;
+            if store.is_effectively_mcp_hidden(&id)? {
+                return Err("note hidden from MCP".into());
+            }
             store.untrash(&id)?;
             store.set_archived(&id, false)?;
             store.emit_changed();
@@ -644,6 +758,50 @@ impl NoteStore for StoreAccess {
             .folder_chain_has_lock(folder_id)
             .map_err(|e| e.to_string())
     }
+    fn is_effectively_mcp_hidden(&self, id: &str) -> Result<bool, String> {
+        let st = self.app.state::<Mutex<crate::storage::Store>>();
+        let store = st.lock().unwrap();
+        store
+            .is_effectively_mcp_hidden(id)
+            .map_err(|e| e.to_string())
+    }
+    fn folder_chain_has_mcp_hidden(&self, folder_id: Option<&str>) -> Result<bool, String> {
+        let st = self.app.state::<Mutex<crate::storage::Store>>();
+        let store = st.lock().unwrap();
+        store
+            .folder_chain_has_mcp_hidden(folder_id)
+            .map_err(|e| e.to_string())
+    }
+    fn mcp_protected_access(&self) -> String {
+        let st = self.app.state::<Mutex<crate::storage::Store>>();
+        let store = st.lock().unwrap();
+        crate::settings::get_string(&store.conn, "mcpProtectedAccess", "off")
+    }
+    fn vault_unlocked(&self) -> bool {
+        let vst = self.app.state::<Mutex<crate::vault::state::VaultState>>();
+        let vault = vst.lock().unwrap();
+        vault.is_unlocked()
+    }
+    fn decrypt_protected(&self, id: &str, ciphertext: &str) -> Result<String, String> {
+        let vst = self.app.state::<Mutex<crate::vault::state::VaultState>>();
+        let vault = vst.lock().unwrap();
+        let dek = vault.dek().ok_or_else(|| "vault locked".to_string())?;
+        crate::commands::open_content(dek, id, ciphertext)
+    }
+    fn write_protected(&self, id: &str, plaintext_html: &str) -> Result<(), String> {
+        let st = self.app.state::<Mutex<crate::storage::Store>>();
+        let vst = self.app.state::<Mutex<crate::vault::state::VaultState>>();
+        // Both locks held for the whole operation: writing the plaintext and
+        // resealing it happen as one critical section, so no concurrent MCP
+        // request can ever observe the note's content column as plaintext.
+        let store = st.lock().unwrap();
+        let vault = vst.lock().unwrap();
+        let dek = vault.dek().ok_or_else(|| "vault locked".to_string())?;
+        store
+            .set_content_silent(id, plaintext_html)
+            .map_err(|e| e.to_string())?;
+        crate::commands::encrypt_note_in_place(&store, id, dek)
+    }
     fn now_ms(&self) -> i64 {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -764,6 +922,15 @@ mod tests {
         notes: std::sync::Mutex<Vec<Note>>,
         folders: std::sync::Mutex<Vec<Folder>>,
         seq: std::sync::Mutex<u64>,
+        // Feature 4 (MCP access to protected notes) test plumbing: the real
+        // `StoreAccess` reads these from the managed `VaultState` / settings
+        // table; the Fake just holds them directly. A "protected" note's
+        // `content` in these tests is a fake ciphertext of the form
+        // "CIPHER:<plaintext>" — `decrypt_protected`/`write_protected` below
+        // strip/add that prefix instead of doing real AEAD, which is already
+        // covered by the `vault`/`commands` unit tests.
+        vault_unlocked: std::sync::Mutex<bool>,
+        mcp_protected_access: std::sync::Mutex<String>,
     }
     impl NoteStore for Fake {
         fn all_notes(&self) -> Result<Vec<Note>, String> {
@@ -859,6 +1026,62 @@ mod tests {
             }
             Ok(false)
         }
+        fn is_effectively_mcp_hidden(&self, id: &str) -> Result<bool, String> {
+            let folder_id = {
+                let notes = self.notes.lock().unwrap();
+                let Some(n) = notes.iter().find(|n| n.id == id) else {
+                    return Ok(false);
+                };
+                if n.mcp_hidden {
+                    return Ok(true);
+                }
+                n.folder_id.clone()
+            };
+            self.folder_chain_has_mcp_hidden(folder_id.as_deref())
+        }
+        fn folder_chain_has_mcp_hidden(&self, folder_id: Option<&str>) -> Result<bool, String> {
+            let folders = self.folders.lock().unwrap();
+            let mut fid = folder_id.map(|s| s.to_string());
+            let mut visited = std::collections::HashSet::new();
+            while let Some(id) = fid {
+                if !visited.insert(id.clone()) {
+                    break;
+                }
+                let Some(f) = folders.iter().find(|f| f.id == id) else {
+                    break;
+                };
+                if f.mcp_hidden {
+                    return Ok(true);
+                }
+                fid = f.parent_id.clone();
+            }
+            Ok(false)
+        }
+        fn mcp_protected_access(&self) -> String {
+            self.mcp_protected_access.lock().unwrap().clone()
+        }
+        fn vault_unlocked(&self) -> bool {
+            *self.vault_unlocked.lock().unwrap()
+        }
+        fn decrypt_protected(&self, _id: &str, ciphertext: &str) -> Result<String, String> {
+            if !self.vault_unlocked() {
+                return Err("vault locked".into());
+            }
+            ciphertext
+                .strip_prefix("CIPHER:")
+                .map(str::to_string)
+                .ok_or_else(|| "decrypt failed".into())
+        }
+        fn write_protected(&self, id: &str, plaintext_html: &str) -> Result<(), String> {
+            if !self.vault_unlocked() {
+                return Err("vault locked".into());
+            }
+            let mut v = self.notes.lock().unwrap();
+            let n = v.iter_mut().find(|n| n.id == id).ok_or("note not found")?;
+            n.content = format!("CIPHER:{plaintext_html}");
+            n.protected = true;
+            Ok(())
+        }
         fn now_ms(&self) -> i64 {
             1_000
         }
@@ -880,6 +1103,11 @@ mod tests {
             }]),
             folders: std::sync::Mutex::new(vec![]),
             seq: std::sync::Mutex::new(0),
+            // Defaults match the app: vault locked, protected access "off" —
+            // so existing (pre-Feature-4) tests keep exercising the unchanged
+            // default-safe behavior without opting into anything.
+            vault_unlocked: std::sync::Mutex::new(false),
+            mcp_protected_access: std::sync::Mutex::new("off".to_string()),
         }
     }
     fn call(method: &str, params: Value) -> Value {
@@ -1497,5 +1725,242 @@ mod tests {
         )
         .unwrap_err();
         assert!(e.contains("locked"), "got: {e}");
+    }
+
+    // ---- Feature 3: "Hide from MCP" (schema v14) — LOCAL-only opt-out that
+    // trumps everything, independent of protection. ----
+
+    #[test]
+    fn mcp_read_tools_exclude_hidden_note() {
+        let s = fake();
+        s.notes.lock().unwrap()[0].mcp_hidden = true;
+
+        assert!(call_tool("get_note", &json!({"id":"a"}), &s, false).is_err());
+        let list = call_json(&s, "list_notes", json!({"status":"all"}), false);
+        assert!(list.as_array().unwrap().is_empty(), "got: {list}");
+        let search = call_json(&s, "search_notes", json!({"query":"hello"}), false);
+        assert!(search.as_array().unwrap().is_empty(), "got: {search}");
+    }
+
+    #[test]
+    fn mcp_write_tools_refuse_hidden_note() {
+        let s = fake();
+        s.notes.lock().unwrap()[0].mcp_hidden = true;
+        for (tool, args) in [
+            ("append_note", json!({"id":"a","text":"x"})),
+            ("update_note", json!({"id":"a","content":"## New"})),
+            ("archive_note", json!({"id":"a"})),
+            ("delete_note", json!({"id":"a"})),
+            ("restore_note", json!({"id":"a"})),
+        ] {
+            let e = call_tool(tool, &args, &s, true).unwrap_err();
+            assert!(e.contains("hidden"), "{tool} got: {e}");
+        }
+    }
+
+    #[test]
+    fn mcp_create_note_refuses_hidden_folder() {
+        let s = fake();
+        s.folders.lock().unwrap().push(Folder {
+            id: "hidden".into(),
+            name: "Hidden".into(),
+            mcp_hidden: true,
+            ..Default::default()
+        });
+        let e = call_tool(
+            "create_note",
+            &json!({"content":"secret","groupId":"hidden"}),
+            &s,
+            true,
+        )
+        .unwrap_err();
+        assert!(e.contains("hidden"), "got: {e}");
+        assert_eq!(s.all_notes().unwrap().len(), 1); // nothing created
+    }
+
+    #[test]
+    fn mcp_note_inside_hidden_folder_is_excluded_and_write_refused() {
+        // Physically not hidden itself, but living in an mcp_hidden folder ->
+        // effectively hidden via the folder-chain walk (mirrors the analogous
+        // locked-folder test above).
+        let s = fake();
+        s.folders.lock().unwrap().push(Folder {
+            id: "hidden".into(),
+            name: "Hidden".into(),
+            mcp_hidden: true,
+            ..Default::default()
+        });
+        s.save(&Note {
+            id: "inside".into(),
+            content: "<p>hidden text</p>".into(),
+            folder_id: Some("hidden".into()),
+            updated_at: 2,
+            ..Default::default()
+        })
+        .unwrap();
+
+        assert!(call_tool("get_note", &json!({"id":"inside"}), &s, false).is_err());
+        let e = call_tool("append_note", &json!({"id":"inside","text":"x"}), &s, true).unwrap_err();
+        assert!(e.contains("hidden"), "got: {e}");
+        // Also can't be moved INTO a hidden folder from outside.
+        let e = call_tool(
+            "update_note",
+            &json!({"id":"a","groupId":"hidden"}),
+            &s,
+            true,
+        )
+        .unwrap_err();
+        assert!(e.contains("hidden"), "got: {e}");
+    }
+
+    #[test]
+    fn mcp_hidden_trumps_protected_even_with_readwrite_access() {
+        // Even wide-open protected-notes access must not resurrect a note
+        // that's also marked hidden-from-MCP — hidden trumps everything.
+        let s = fake();
+        {
+            let mut notes = s.notes.lock().unwrap();
+            notes[0].mcp_hidden = true;
+            notes[0].protected = true;
+            notes[0].content = "CIPHER:<p>Hello world</p>".into();
+        }
+        *s.mcp_protected_access.lock().unwrap() = "readwrite".to_string();
+        *s.vault_unlocked.lock().unwrap() = true;
+
+        assert!(call_tool("get_note", &json!({"id":"a"}), &s, false).is_err());
+        let e = call_tool(
+            "update_note",
+            &json!({"id":"a","content":"## New"}),
+            &s,
+            true,
+        )
+        .unwrap_err();
+        assert!(e.contains("hidden"), "got: {e}");
+    }
+
+    // ---- Feature 4: MCP access to protected notes (`mcpProtectedAccess`) —
+    // the full off/read/readwrite × locked/unlocked matrix. "off" (any vault
+    // state) is exercised by `mcp_read_tools_exclude_protected_note` and
+    // `mcp_write_tools_refuse_protected_note_and_leave_content` above:
+    // `fake()`'s defaults are access="off"/vault locked, so those two tests
+    // already prove the default-safe behavior is unchanged. ----
+
+    #[test]
+    fn mcp_protected_access_read_unlocked_returns_decrypted_content() {
+        let s = fake();
+        {
+            let mut notes = s.notes.lock().unwrap();
+            notes[0].protected = true;
+            notes[0].content = "CIPHER:<p>Hello world</p>".into();
+        }
+        *s.mcp_protected_access.lock().unwrap() = "read".to_string();
+        *s.vault_unlocked.lock().unwrap() = true;
+
+        let v = call_json(&s, "get_note", json!({"id":"a"}), false);
+        assert!(
+            v["content"].as_str().unwrap().contains("Hello world"),
+            "got: {v}"
+        );
+
+        let list = call_json(&s, "list_notes", json!({"status":"all"}), false);
+        assert_eq!(list.as_array().unwrap().len(), 1, "got: {list}");
+
+        let search = call_json(&s, "search_notes", json!({"query":"hello"}), false);
+        assert_eq!(search.as_array().unwrap().len(), 1, "got: {search}");
+    }
+
+    #[test]
+    fn mcp_protected_access_read_locked_excludes_protected_note() {
+        let s = fake();
+        {
+            let mut notes = s.notes.lock().unwrap();
+            notes[0].protected = true;
+            notes[0].content = "CIPHER:<p>Hello world</p>".into();
+        }
+        *s.mcp_protected_access.lock().unwrap() = "read".to_string();
+        // Vault stays locked — "read" alone is not enough.
+
+        assert!(call_tool("get_note", &json!({"id":"a"}), &s, false).is_err());
+        let list = call_json(&s, "list_notes", json!({"status":"all"}), false);
+        assert!(list.as_array().unwrap().is_empty(), "got: {list}");
+    }
+
+    #[test]
+    fn mcp_protected_access_readwrite_unlocked_write_succeeds_and_reseals() {
+        let s = fake();
+        {
+            let mut notes = s.notes.lock().unwrap();
+            notes[0].protected = true;
+            notes[0].content = "CIPHER:<p>Hello world</p>".into();
+        }
+        *s.mcp_protected_access.lock().unwrap() = "readwrite".to_string();
+        *s.vault_unlocked.lock().unwrap() = true;
+
+        let v = call_json(
+            &s,
+            "update_note",
+            json!({"id":"a","content":"## New"}),
+            true,
+        );
+        assert_eq!(v["id"], "a");
+
+        let stored = s.get_note("a").unwrap().unwrap();
+        assert!(stored.protected, "must stay protected, got: {stored:?}");
+        assert_ne!(
+            stored.content, "<h2>New</h2>",
+            "must never leave plaintext on disk"
+        );
+        assert!(
+            stored.content.starts_with("CIPHER:") && stored.content.contains("<h2>New</h2>"),
+            "must be resealed with the new content, got: {}",
+            stored.content
+        );
+    }
+
+    #[test]
+    fn mcp_protected_access_readwrite_locked_refuses_write() {
+        let s = fake();
+        {
+            let mut notes = s.notes.lock().unwrap();
+            notes[0].protected = true;
+            notes[0].content = "CIPHER:<p>Hello world</p>".into();
+        }
+        *s.mcp_protected_access.lock().unwrap() = "readwrite".to_string();
+        // Vault stays locked — "readwrite" alone is not enough.
+
+        let e = call_tool(
+            "update_note",
+            &json!({"id":"a","content":"## New"}),
+            &s,
+            true,
+        )
+        .unwrap_err();
+        assert!(e.contains("protected"), "got: {e}");
+        assert_eq!(
+            s.get_note("a").unwrap().unwrap().content,
+            "CIPHER:<p>Hello world</p>",
+            "must be untouched"
+        );
+    }
+
+    #[test]
+    fn mcp_protected_access_decrypt_failure_is_treated_as_absent() {
+        // Simulated corrupt/foreign ciphertext: missing the fake "CIPHER:"
+        // marker, so `decrypt_protected` errors. Must never surface as
+        // ciphertext or a partial result — treated exactly like "not found".
+        let s = fake();
+        {
+            let mut notes = s.notes.lock().unwrap();
+            notes[0].protected = true;
+            notes[0].content = "not-actually-ciphertext".into();
+        }
+        *s.mcp_protected_access.lock().unwrap() = "read".to_string();
+        *s.vault_unlocked.lock().unwrap() = true;
+
+        assert!(call_tool("get_note", &json!({"id":"a"}), &s, false).is_err());
+        let list = call_json(&s, "list_notes", json!({"status":"all"}), false);
+        assert!(list.as_array().unwrap().is_empty(), "got: {list}");
+        let search = call_json(&s, "search_notes", json!({"query":"hello"}), false);
+        assert!(search.as_array().unwrap().is_empty(), "got: {search}");
     }
 }

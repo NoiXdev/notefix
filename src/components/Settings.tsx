@@ -471,6 +471,12 @@ const MCP_BINDS: { value: "internal" | "external"; labelKey: string }[] = [
   { value: "external", labelKey: "settings.mcp.binds.external" },
 ];
 
+const MCP_PROTECTED_ACCESS: { value: import("../hooks/useSettings").McpProtectedAccess; labelKey: string }[] = [
+  { value: "off", labelKey: "settings.mcp.protectedAccessOptions.off" },
+  { value: "read", labelKey: "settings.mcp.protectedAccessOptions.read" },
+  { value: "readwrite", labelKey: "settings.mcp.protectedAccessOptions.readwrite" },
+];
+
 const VAULT_LOCK_SCOPES: { value: import("../hooks/useSettings").VaultLockScope; labelKey: string }[] = [
   { value: "session", labelKey: "security.lockScopes.session" },
   { value: "perNote", labelKey: "security.lockScopes.perNote" },
@@ -1057,6 +1063,22 @@ function McpPage({ settings, onSetSetting }: { settings: AppSettings; onSetSetti
           <span>{t("settings.mcp.allowWrite")}</span>
           <Toggle checked={settings.mcpAllowWrite ?? false} onChange={() => onSetSetting("mcpAllowWrite", !settings.mcpAllowWrite)} label={t("settings.mcp.allowWrite")} />
         </label>
+
+        <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
+          <span>{t("settings.mcp.protectedAccess")}</span>
+          <div className="w-40">
+            <Select
+              value={settings.mcpProtectedAccess ?? "off"}
+              options={MCP_PROTECTED_ACCESS.map(o => ({ value: o.value, label: t(o.labelKey) }))}
+              onChange={v => onSetSetting("mcpProtectedAccess", v as import("../hooks/useSettings").McpProtectedAccess)}
+            />
+          </div>
+        </label>
+        {settings.mcpProtectedAccess !== "off" && (
+          <div className="rounded border px-3 py-2 text-xs" style={{ background: "#fee2e2", borderColor: "#fca5a5", color: "#991b1b" }}>
+            {t("settings.mcp.protectedAccessWarning")}
+          </div>
+        )}
 
         <h2 className="text-sm font-semibold text-gray-800 mt-2">{t("settings.mcp.status")}</h2>
         <p className="text-xs text-gray-600 break-all font-mono">{url}</p>

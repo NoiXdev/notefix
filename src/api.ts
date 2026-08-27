@@ -47,6 +47,8 @@ export const api = {
     restore: (id: string): Promise<void> => invoke("notes_restore", { id }),
     purge: (id: string): Promise<void> => invoke("notes_purge", { id }),
     loadAll: (): Promise<CombinedNote[]> => invoke("notes_load_all"),
+    setMcpHidden: (id: string, hidden: boolean): Promise<void> =>
+      invoke("note_set_mcp_hidden", { id, hidden }),
   },
 
   trash: {
@@ -66,6 +68,8 @@ export const api = {
     setIcon: (id: string, icon: string): Promise<void> => invoke("folder_set_icon", { id, icon }),
     setColor: (id: string, color: string): Promise<void> => invoke("folder_set_color", { id, color }),
     setSort: (id: string, sort: string): Promise<void> => invoke("folder_set_sort", { id, sort }),
+    setMcpHidden: (id: string, hidden: boolean): Promise<void> =>
+      invoke("folder_set_mcp_hidden", { id, hidden }),
   },
 
   settings: {

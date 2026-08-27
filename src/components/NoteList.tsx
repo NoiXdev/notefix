@@ -8,7 +8,7 @@ import type { PinnedScope, FolderColorStyle } from '../hooks/useSettings';
 import ContextMenu, { type ContextMenuItem } from './ContextMenu';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import type { IconDefinition } from '@fortawesome/fontawesome-svg-core';
-import { faThumbtack, faBoxArchive, faRightLong, faTrash, faTrashCan, faFileExport, faPalette, faArrowDownAZ, faCheck, faFolderPlus, faPen, faTableColumns, faNoteSticky, faGear, faFolder, faMagnifyingGlass, faLock, faLockOpen } from '@fortawesome/free-solid-svg-icons';
+import { faThumbtack, faBoxArchive, faRightLong, faTrash, faTrashCan, faFileExport, faPalette, faArrowDownAZ, faCheck, faFolderPlus, faPen, faTableColumns, faNoteSticky, faGear, faFolder, faMagnifyingGlass, faLock, faLockOpen, faEyeSlash, faEye } from '@fortawesome/free-solid-svg-icons';
 import ConfirmDialog from './ConfirmDialog';
 import FolderCustomizer from './FolderCustomizer';
 import Logo from './Logo';
@@ -58,6 +58,8 @@ interface Props {
   onOpenContexts?: () => void;
   onProtectNote?: (id: string, next: boolean) => void;
   onLockFolder?: (id: string, next: boolean) => void;
+  onSetNoteMcpHidden?: (id: string, next: boolean) => void;
+  onSetFolderMcpHidden?: (id: string, next: boolean) => void;
   vaultExists?: boolean;
   vaultUnlocked?: boolean;
   onLockVault?: () => void;
@@ -85,7 +87,7 @@ export default function NoteList(props: Props) {
     dateFormat = 'auto', pinnedScope = 'perFolder', folderColorStyle = 'icon',
     compactTree = false, treeProgress = true,
     trashed = [], trashEnabled = true, onRestore, onPurge, onEmptyTrash, onExportNote,
-    onOpenContexts, onProtectNote, onLockFolder,
+    onOpenContexts, onProtectNote, onLockFolder, onSetNoteMcpHidden, onSetFolderMcpHidden,
     vaultExists, vaultUnlocked, onLockVault,
   } = props;
 
@@ -372,6 +374,7 @@ export default function NoteList(props: Props) {
             { label: t('noteList.menu.delete'), icon: fa(faTrash), onClick: () => setPendingDelete(menu.note.id) },
             { label: t('noteList.menu.export'), icon: fa(faFileExport), onClick: () => onExportNote(menu.note) },
             ...(onProtectNote ? [{ label: menu.note.protected ? t('vault.unlockNote') : t('vault.lockNote'), icon: fa(menu.note.protected ? faLockOpen : faLock), onClick: () => onProtectNote(menu.note.id, !menu.note.protected) }] : []),
+            ...(onSetNoteMcpHidden ? [{ label: menu.note.mcpHidden ? t('vault.showToMcp') : t('vault.hideFromMcp'), icon: fa(menu.note.mcpHidden ? faEye : faEyeSlash), onClick: () => onSetNoteMcpHidden(menu.note.id, !menu.note.mcpHidden) }] : []),
           ]}
           onClose={() => setMenu(null)}
         />
@@ -387,6 +390,7 @@ export default function NoteList(props: Props) {
             { label: t('noteList.menu.rename'), icon: fa(faPen), onClick: () => setEditingFolder(folderMenu.folder.id) },
             { label: t('noteList.menu.delete'), icon: fa(faTrash), onClick: () => onDeleteFolder?.(folderMenu.folder) },
             ...(onLockFolder ? [{ label: folderMenu.folder.locked ? t('vault.unlockFolder') : t('vault.lockFolder'), icon: fa(folderMenu.folder.locked ? faLockOpen : faLock), onClick: () => onLockFolder(folderMenu.folder.id, !folderMenu.folder.locked) }] : []),
+            ...(onSetFolderMcpHidden ? [{ label: folderMenu.folder.mcpHidden ? t('vault.showToMcp') : t('vault.hideFromMcp'), icon: fa(folderMenu.folder.mcpHidden ? faEye : faEyeSlash), onClick: () => onSetFolderMcpHidden(folderMenu.folder.id, !folderMenu.folder.mcpHidden) }] : []),
           ]}
           onClose={() => setFolderMenu(null)}
         />
