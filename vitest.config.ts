@@ -8,6 +8,8 @@ export default defineConfig({
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
     // e2e/ holds Playwright specs (run via `npm run test:e2e`); keep them out of vitest.
-    exclude: [...configDefaults.exclude, "e2e/**"],
+    // .claude/ can hold agent worktrees (full repo checkouts) whose duplicate
+    // test files would otherwise be collected and run against a stale state.
+    exclude: [...configDefaults.exclude, "e2e/**", ".claude/**"],
   },
 });
