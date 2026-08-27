@@ -90,9 +90,8 @@ fn open_content(dek: &Dek, note_id: &str, stored: &str) -> Result<String, String
 /// `Store::is_effectively_protected`.
 fn has_locked_ancestor_folder(store: &Store, note_id: &str) -> Result<bool, String> {
     use rusqlite::OptionalExtension;
-    use std::collections::HashSet;
 
-    let mut folder_id: Option<String> = store
+    let folder_id: Option<String> = store
         .conn
         .query_row(
             "SELECT folder_id FROM notes WHERE id = ?1",
@@ -102,7 +101,19 @@ fn has_locked_ancestor_folder(store: &Store, note_id: &str) -> Result<bool, Stri
         .optional()
         .map_err(|e| e.to_string())?
         .flatten();
+    folder_chain_has_lock(store, folder_id.as_deref())
+}
 
+/// True if `starting_folder_id` or any of its ancestors is `locked`.
+/// Cycle-safe via a visited set. Shared by `has_locked_ancestor_folder`
+/// (starts from a note's *current* `folder_id`) and `notes_set_folder`
+/// (starts from a move's *destination* `folder_id`, checked before the move
+/// is performed).
+fn folder_chain_has_lock(store: &Store, starting_folder_id: Option<&str>) -> Result<bool, String> {
+    use rusqlite::OptionalExtension;
+    use std::collections::HashSet;
+
+    let mut folder_id: Option<String> = starting_folder_id.map(str::to_string);
     let mut visited: HashSet<String> = HashSet::new();
     while let Some(fid) = folder_id {
         if !visited.insert(fid.clone()) {
@@ -190,7 +201,10 @@ pub fn notes_save(
                 .set_note_protected(&note.id, true)
                 .map_err(|e| e.to_string())?;
             // Never persist a protected note's plaintext into the (unencrypted)
-            // note_revisions table — skip revision history for this save.
+            // note_revisions table — skip revision history for this save, and
+            // purge any plaintext revisions recorded before this transition
+            // (no-op if already empty; safe to call on every protected save).
+            crate::revisions::delete_revisions(&store.conn, &note.id).map_err(|e| e.to_string())?;
         } else {
             store.save_note(&note).map_err(|e| e.to_string())?;
             let limit = crate::settings::get_int(&store.conn, "revisionLimit", 50);
@@ -517,19 +531,69 @@ pub fn folder_delete(
     Ok(())
 }
 
+/// Core reconciliation logic behind `notes_set_folder`, factored out so it's
+/// unit-testable without a Tauri `State` harness: `dek` is `None` to
+/// represent a locked vault, `Some(&dek)` unlocked.
+///
+/// Moves only ever ADD protection, never remove it:
+/// - Already-encrypted notes stay encrypted regardless of destination — the
+///   safe direction; moving an encrypted note out of a locked folder does
+///   NOT auto-decrypt it (the user can explicitly unprotect it).
+/// - A currently-plaintext note moving into a location with a locked
+///   ancestor folder must become encrypted. That check — and the
+///   `dek.is_some()` requirement it implies — happens BEFORE the move is
+///   performed, so a locked vault never leaves the note relocated into a
+///   locked folder while still plaintext: this returns `Err("vault
+///   locked")` and the note stays where (and as) it was.
+/// - A plaintext note moving into a non-locked location is an unchanged
+///   plain move.
+/// - The freshly-encrypted note's revision history is purged (it was
+///   plaintext, so no plaintext survives a transition to encrypted).
+fn reconcile_folder_move(
+    store: &Store,
+    id: &str,
+    folder_id: Option<&str>,
+    dek: Option<&Dek>,
+) -> Result<(), String> {
+    let already_protected = store.note_protected(id).map_err(|e| e.to_string())?;
+    let needs_encryption = !already_protected && folder_chain_has_lock(store, folder_id)?;
+
+    if needs_encryption {
+        let dek = dek.ok_or_else(|| "vault locked".to_string())?;
+        let plaintext = store
+            .load_note_content(id)
+            .map_err(|e| e.to_string())?
+            .unwrap_or_default();
+        let sealed = seal_content(dek, id, &plaintext);
+        store.set_folder(id, folder_id).map_err(|e| e.to_string())?;
+        store
+            .set_content_silent(id, &sealed)
+            .map_err(|e| e.to_string())?;
+        store
+            .set_note_protected(id, true)
+            .map_err(|e| e.to_string())?;
+        crate::revisions::delete_revisions(&store.conn, id).map_err(|e| e.to_string())?;
+    } else {
+        store.set_folder(id, folder_id).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Moves a note to a (possibly different) folder — see
+/// `reconcile_folder_move` for the encrypt-on-move-in policy.
 #[tauri::command]
 pub fn notes_set_folder(
     app: AppHandle,
     webview: WebviewWindow,
     store: State<'_, Mutex<Store>>,
+    vault: VaultStateHandle<'_>,
     id: String,
     folder_id: Option<String>,
 ) -> Result<(), String> {
     {
         let store = store.lock().map_err(|e| e.to_string())?;
-        store
-            .set_folder(&id, folder_id.as_deref())
-            .map_err(|e| e.to_string())?;
+        let vault = vault.lock().map_err(|e| e.to_string())?;
+        reconcile_folder_move(&store, &id, folder_id.as_deref(), vault.dek())?;
     }
     notify(&app, &webview);
     Ok(())
@@ -1918,6 +1982,90 @@ mod protected_content_tests {
         // "b" was never protected, so its history is untouched.
         assert_eq!(
             crate::revisions::list_revisions(&s.conn, "b")
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    /// (a) A plaintext note with an existing revision, moved into a locked
+    /// folder while the vault is unlocked: `reconcile_folder_move` encrypts
+    /// it in place (stored content != plaintext, `note_protected` flips to
+    /// true) and purges its revision history.
+    #[test]
+    fn reconcile_folder_move_encrypts_plaintext_note_into_locked_folder() {
+        let s = Store::open_in_memory().unwrap();
+        crate::migrate::run_migrations(&s.conn).unwrap();
+        crate::folders::create_folder(&s.conn, "locked-folder", "Locked", None).unwrap();
+        s.set_folder_locked("locked-folder", true).unwrap();
+        let dek = Dek::random();
+        let plaintext = "<p>very secret</p>";
+
+        s.save_note(&Note {
+            id: "n1".into(),
+            content: plaintext.into(),
+            updated_at: 1,
+            ..Default::default()
+        })
+        .unwrap();
+        crate::revisions::add_revision(&s.conn, "n1", plaintext, 50).unwrap();
+        assert_eq!(
+            crate::revisions::list_revisions(&s.conn, "n1")
+                .unwrap()
+                .len(),
+            1
+        );
+
+        reconcile_folder_move(&s, "n1", Some("locked-folder"), Some(&dek)).unwrap();
+
+        assert_eq!(
+            s.load_notes().unwrap()[0].folder_id.as_deref(),
+            Some("locked-folder")
+        );
+        assert!(s.note_protected("n1").unwrap());
+        let stored = s.load_note_content("n1").unwrap().unwrap();
+        assert_ne!(stored, plaintext);
+        assert!(!stored.contains("very secret"));
+        assert_eq!(open_content(&dek, "n1", &stored).unwrap(), plaintext);
+        assert!(crate::revisions::list_revisions(&s.conn, "n1")
+            .unwrap()
+            .is_empty());
+    }
+
+    /// (b) Same setup, but the vault is locked (`dek: None`):
+    /// `reconcile_folder_move` refuses with `Err("vault locked")` and
+    /// performs no partial move — the note stays in its original folder,
+    /// stays plaintext, and keeps its revision — no leak, no half-applied
+    /// state.
+    #[test]
+    fn reconcile_folder_move_refuses_when_vault_locked_for_locked_destination() {
+        let s = Store::open_in_memory().unwrap();
+        crate::migrate::run_migrations(&s.conn).unwrap();
+        crate::folders::create_folder(&s.conn, "locked-folder", "Locked", None).unwrap();
+        s.set_folder_locked("locked-folder", true).unwrap();
+        let plaintext = "<p>very secret</p>";
+
+        s.save_note(&Note {
+            id: "n1".into(),
+            content: plaintext.into(),
+            updated_at: 1,
+            ..Default::default()
+        })
+        .unwrap();
+        crate::revisions::add_revision(&s.conn, "n1", plaintext, 50).unwrap();
+
+        let err = reconcile_folder_move(&s, "n1", Some("locked-folder"), None).unwrap_err();
+        assert_eq!(err, "vault locked");
+
+        // Unmoved, still plaintext, revision untouched.
+        assert_eq!(s.load_notes().unwrap()[0].folder_id, None);
+        assert!(!s.note_protected("n1").unwrap());
+        assert_eq!(
+            s.load_note_content("n1").unwrap().as_deref(),
+            Some(plaintext)
+        );
+        assert_eq!(
+            crate::revisions::list_revisions(&s.conn, "n1")
                 .unwrap()
                 .len(),
             1
