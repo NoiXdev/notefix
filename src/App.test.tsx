@@ -37,7 +37,7 @@ vi.mock("./api", () => ({
     folders: { load: () => Promise.resolve([]), create: vi.fn(), rename: vi.fn(), move: vi.fn(), delete: vi.fn(), reorder: vi.fn() },
     exportNotes: vi.fn(),
     stats: vi.fn(() => Promise.resolve({ notes: 0, archived: 0, characters: 0, words: 0 })),
-    settings: { load: () => Promise.resolve({}), set: vi.fn() },
+    settings: { load: vi.fn(() => Promise.resolve({})), set: vi.fn() },
     autostart: { isEnabled: () => Promise.resolve(false), enable: vi.fn(), disable: vi.fn() },
     checkPaths: vi.fn(() => Promise.resolve({ dbWritable: true, imagesWritable: true, dbPath: '', imagesPath: '' })),
     windowProbe: vi.fn(() => Promise.resolve(true)),
@@ -82,6 +82,7 @@ vi.mock("./api", () => ({
 }));
 
 import App from "./App";
+import { api } from "./api";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -155,5 +156,48 @@ describe("App — shortcuts", () => {
     await waitFor(() => screen.getByTitle("Neue Notiz"));
     fireEvent.keyDown(document.body, { key: "n", metaKey: true });
     await waitFor(() => expect(screen.getByTitle("Fett")).toBeInTheDocument());
+  });
+});
+
+const protectedNoteMeta = {
+  id: "n1",
+  updatedAt: Date.now(),
+  pinned: false,
+  archived: false,
+  color: "",
+  dueAt: null,
+  folderId: null,
+  position: 0,
+  deletedAt: null,
+  preview: "",
+  tasksDone: 0,
+  tasksTotal: 0,
+  protected: true,
+};
+
+describe("App — editor unlock gate for protected notes", () => {
+  it("shows the locked placeholder instead of loading content, and Unlock opens the unlock dialog", async () => {
+    vi.mocked(api.vault.status).mockResolvedValueOnce({ exists: true, unlocked: false, biometric: false });
+    mockLoad.mockResolvedValueOnce([protectedNoteMeta]);
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Diese Notiz ist geschützt")).toBeInTheDocument());
+    expect(api.notes.loadOne).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByText("Entsperren"));
+    await waitFor(() => expect(screen.getByText("Tresor entsperren")).toBeInTheDocument());
+  });
+});
+
+describe("App — auto-lock idle timer", () => {
+  it("locks the vault after autoLockMinutes of inactivity", async () => {
+    vi.mocked(api.vault.status).mockResolvedValueOnce({ exists: true, unlocked: true, biometric: false });
+    vi.mocked(api.settings.load).mockResolvedValueOnce({ autoLockMode: "after", autoLockMinutes: "0.01" });
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByTitle("Neue Notiz")).toBeInTheDocument());
+    await waitFor(() => expect(api.vault.lock).toHaveBeenCalled(), { timeout: 3000 });
   });
 });

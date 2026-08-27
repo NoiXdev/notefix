@@ -485,6 +485,7 @@ export const en = {
     biometricFailed: 'Touch ID failed — enter your passphrase',
     cancel: 'Cancel',
     protected: 'Protected',
+    noteLocked: 'This note is protected',
     lockNote: 'Lock note',
     unlockNote: 'Unlock note',
     lockFolder: 'Lock folder',

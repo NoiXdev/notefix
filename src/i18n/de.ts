@@ -485,6 +485,7 @@ export const de = {
     biometricFailed: 'Touch ID fehlgeschlagen — bitte Passwort eingeben',
     cancel: 'Abbrechen',
     protected: 'Geschützt',
+    noteLocked: 'Diese Notiz ist geschützt',
     lockNote: 'Notiz sperren',
     unlockNote: 'Notiz entsperren',
     lockFolder: 'Ordner sperren',

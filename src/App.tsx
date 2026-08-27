@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faLock } from '@fortawesome/free-solid-svg-icons';
 import { api } from './api';
 import { useNotes } from './hooks/useNotes';
 import { useFolders } from './hooks/useFolders';
@@ -247,6 +249,45 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [notes, selectedId, selectedNote, showSettings, createFolder, handleCreate, setArchived, settings.shortcuts, contexts]);
 
+  // Auto-lock: idle timer. Only while the vault is actually unlocked and the
+  // user opted into 'after N minutes'; any user activity resets the clock.
+  // Skipped in the detached note window (windowNoteId), which has no vault UI.
+  useEffect(() => {
+    if (windowNoteId) return;
+    if (!vault.status.unlocked || settings.autoLockMode !== 'after') return;
+    const timeoutMs = settings.autoLockMinutes * 60000;
+    let timer: ReturnType<typeof setTimeout>;
+    const scheduleLock = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => { void vault.lock(); }, timeoutMs);
+    };
+    window.addEventListener('mousemove', scheduleLock);
+    window.addEventListener('keydown', scheduleLock);
+    window.addEventListener('mousedown', scheduleLock);
+    window.addEventListener('touchstart', scheduleLock);
+    scheduleLock();
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('mousemove', scheduleLock);
+      window.removeEventListener('keydown', scheduleLock);
+      window.removeEventListener('mousedown', scheduleLock);
+      window.removeEventListener('touchstart', scheduleLock);
+    };
+  }, [vault.status.unlocked, settings.autoLockMode, settings.autoLockMinutes, vault.lock]);
+
+  // Auto-lock: hide/sleep. 'onHide' locks whenever the app is backgrounded;
+  // autoLockOnSleep additionally covers system sleep/lock, for which there is
+  // no dedicated Tauri event — document visibility is the practical proxy for
+  // both cases (the OS hides/suspends the webview in either scenario).
+  useEffect(() => {
+    if (windowNoteId) return;
+    if (!vault.status.unlocked) return;
+    if (settings.autoLockMode !== 'onHide' && !settings.autoLockOnSleep) return;
+    const onVisibility = () => { if (document.hidden) void vault.lock(); };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [vault.status.unlocked, settings.autoLockMode, settings.autoLockOnSleep, vault.lock]);
+
   if (windowNoteId) {
     if (loading) {
       return (
@@ -254,6 +295,16 @@ export default function App() {
       );
     }
     const note = notes.find(n => n.id === windowNoteId);
+    if (note && note.protected && !vault.status.unlocked) {
+      return (
+        <div className="flex h-screen items-center justify-center" style={{ background: 'var(--paper)' }}>
+          <div className="text-center" style={{ color: 'var(--ink-muted)' }}>
+            <FontAwesomeIcon icon={faLock} className="text-3xl mb-3 opacity-40" />
+            <p className="text-sm">{t('vault.noteLocked')}</p>
+          </div>
+        </div>
+      );
+    }
     return note
       ? <div className="h-screen"><NoteEditor note={note} onChange={updateNote} isWindow onSetDue={setDue} autosaveDelay={settings.autosaveDelay} linkPreviewEnabled={settings.linkPreviewEnabled} linkPreviewMode={settings.linkPreviewMode} copyFormat={settings.copyFormat} countShow={settings.editorCountShow} countPos={settings.editorCountPos} invisibles={settings.editorInvisibles} toolbarPos={settings.editorToolbarPos} /></div>
       : <div className="flex h-screen items-center justify-center text-gray-400 text-sm">{t('common.noteNotFound')}</div>;
@@ -423,7 +474,23 @@ export default function App() {
             onToggleEdit={() => setDashEdit(v => !v)}
           />
         ) : selectedNote ? (
-          <NoteEditor note={selectedNote} onChange={updateNote} onSetDue={setDue} autosaveDelay={settings.autosaveDelay} linkPreviewEnabled={settings.linkPreviewEnabled} linkPreviewMode={settings.linkPreviewMode} copyFormat={settings.copyFormat} findShortcut={resolveBindings(settings.shortcuts).findInNote} countShow={settings.editorCountShow} countPos={settings.editorCountPos} invisibles={settings.editorInvisibles} toolbarPos={settings.editorToolbarPos} />
+          selectedNote.protected && !vault.status.unlocked ? (
+            <div className="flex h-full items-center justify-center" style={{ background: 'var(--paper)' }}>
+              <div className="text-center" style={{ color: 'var(--ink-muted)' }}>
+                <FontAwesomeIcon icon={faLock} className="text-4xl mb-3 opacity-40" />
+                <p className="text-sm mb-4">{t('vault.noteLocked')}</p>
+                <button
+                  onClick={() => setVaultDialog('unlock')}
+                  className="px-3 py-1.5 rounded text-sm font-medium"
+                  style={{ background: 'var(--line)', color: '#1c1917' }}
+                >
+                  {t('vault.unlock')}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <NoteEditor note={selectedNote} onChange={updateNote} onSetDue={setDue} autosaveDelay={settings.autosaveDelay} linkPreviewEnabled={settings.linkPreviewEnabled} linkPreviewMode={settings.linkPreviewMode} copyFormat={settings.copyFormat} findShortcut={resolveBindings(settings.shortcuts).findInNote} countShow={settings.editorCountShow} countPos={settings.editorCountPos} invisibles={settings.editorInvisibles} toolbarPos={settings.editorToolbarPos} />
+          )
         ) : (
           <div className="flex h-full items-center justify-center" style={{ background: 'var(--paper)' }}>
             <div className="text-center" style={{ color: 'var(--ink-muted)' }}>
