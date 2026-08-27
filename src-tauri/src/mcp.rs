@@ -649,19 +649,25 @@ pub fn handle_rpc(
             })
         }
         "resources/list" => {
-            let res: Vec<Value> = store
-                .all_notes()
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|n| n.deleted_at.is_none())
-                .map(|n| {
-                    json!({
-                        "uri": format!("note://{}", n.id),
-                        "name": crate::mdconv::title_from_html(&n.content),
-                        "mimeType": "text/markdown"
-                    })
-                })
-                .collect();
+            let mut res: Vec<Value> = Vec::new();
+            for n in store.all_notes().unwrap_or_default() {
+                if n.deleted_at.is_some() {
+                    continue;
+                }
+                // Same visibility policy as the tools: omit hidden notes and
+                // protected notes the current mcpProtectedAccess/vault state
+                // doesn't permit. A permitted protected note comes back
+                // decrypted. Fail closed — any error omits the note.
+                let vn = match visible_for_read(store, &n) {
+                    Ok(Some(vn)) => vn,
+                    _ => continue,
+                };
+                res.push(json!({
+                    "uri": format!("note://{}", vn.id),
+                    "name": crate::mdconv::title_from_html(&vn.content),
+                    "mimeType": "text/markdown"
+                }));
+            }
             Some(ok(&id, json!({ "resources": res })))
         }
         "resources/read" => {
@@ -669,15 +675,23 @@ pub fn handle_rpc(
                 .pointer("/params/uri")
                 .and_then(|u| u.as_str())
                 .unwrap_or("");
-            match store.get_note(uri.strip_prefix("note://").unwrap_or("")) {
-                // Match resources/list, which filters out trashed notes:
-                // a trashed note isn't readable via the resources surface
-                // even though it's still fetchable via the get_note tool.
-                Ok(Some(note)) if note.deleted_at.is_none() => Some(ok(
+            // Match resources/list: filter out trashed notes, and apply the
+            // same visibility policy — a hidden note, or a protected note the
+            // current mcpProtectedAccess/vault state doesn't permit, reads as
+            // "not found". A permitted protected note is served decrypted.
+            // Fail closed — any error reads as not found.
+            let visible = match store.get_note(uri.strip_prefix("note://").unwrap_or("")) {
+                Ok(Some(note)) if note.deleted_at.is_none() => {
+                    visible_for_read(store, &note).ok().flatten()
+                }
+                _ => None,
+            };
+            match visible {
+                Some(vn) => Some(ok(
                     &id,
-                    json!({ "contents": [{ "uri": uri, "mimeType": "text/markdown", "text": crate::mdconv::html_to_md(&note.content) }] }),
+                    json!({ "contents": [{ "uri": uri, "mimeType": "text/markdown", "text": crate::mdconv::html_to_md(&vn.content) }] }),
                 )),
-                _ => Some(rpc_err(&id, -32602, "note not found")),
+                None => Some(rpc_err(&id, -32602, "note not found")),
             }
         }
         _ => Some(rpc_err(&id, -32601, "method not found")),
@@ -1194,6 +1208,88 @@ mod tests {
         .unwrap();
         assert_eq!(r["error"]["message"], "note not found");
     }
+
+    // The resources/* surface must apply the same visibility policy as the
+    // tools — otherwise a client could enumerate/read hidden or protected
+    // notes by URI, bypassing the tool-level checks.
+    #[test]
+    fn resources_omit_hidden_note() {
+        let s = fake();
+        s.notes.lock().unwrap()[0].mcp_hidden = true;
+
+        let list = handle_rpc(&call("resources/list", json!({})), &s, false, "v").unwrap();
+        assert!(
+            list["result"]["resources"].as_array().unwrap().is_empty(),
+            "got: {list}"
+        );
+        let read = handle_rpc(
+            &call("resources/read", json!({"uri":"note://a"})),
+            &s,
+            false,
+            "v",
+        )
+        .unwrap();
+        assert_eq!(read["error"]["message"], "note not found");
+    }
+
+    #[test]
+    fn resources_omit_protected_note_when_access_off() {
+        let s = fake();
+        {
+            let mut notes = s.notes.lock().unwrap();
+            notes[0].protected = true;
+            notes[0].content = "CIPHER:<p>Hello world</p>".into();
+        }
+        // mcpProtectedAccess defaults to "off".
+
+        let list = handle_rpc(&call("resources/list", json!({})), &s, false, "v").unwrap();
+        assert!(
+            list["result"]["resources"].as_array().unwrap().is_empty(),
+            "got: {list}"
+        );
+        let read = handle_rpc(
+            &call("resources/read", json!({"uri":"note://a"})),
+            &s,
+            false,
+            "v",
+        )
+        .unwrap();
+        assert_eq!(read["error"]["message"], "note not found");
+    }
+
+    #[test]
+    fn resources_serve_protected_note_decrypted_when_access_read_unlocked() {
+        let s = fake();
+        {
+            let mut notes = s.notes.lock().unwrap();
+            notes[0].protected = true;
+            notes[0].content = "CIPHER:<p>Hello world</p>".into();
+        }
+        *s.mcp_protected_access.lock().unwrap() = "read".to_string();
+        *s.vault_unlocked.lock().unwrap() = true;
+
+        let list = handle_rpc(&call("resources/list", json!({})), &s, false, "v").unwrap();
+        assert_eq!(
+            list["result"]["resources"].as_array().unwrap().len(),
+            1,
+            "got: {list}"
+        );
+        let read = handle_rpc(
+            &call("resources/read", json!({"uri":"note://a"})),
+            &s,
+            false,
+            "v",
+        )
+        .unwrap();
+        assert!(
+            read["result"]["contents"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("Hello world"),
+            "got: {read}"
+        );
+    }
+
     #[test]
     fn notification_has_no_response() {
         assert!(handle_rpc(
