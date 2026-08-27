@@ -6,7 +6,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { isEnabled as autostartIsEnabled, enable as autostartEnable, disable as autostartDisable } from "@tauri-apps/plugin-autostart";
 import { relaunch as processRelaunch } from "@tauri-apps/plugin-process";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import type { Note, NoteMeta } from "./types";
+import type { Note, NoteMeta, VaultStatus } from "./types";
 import type { CombinedNote, SearchHit, CombinedHit } from "./combined";
 
 export interface AppInfo {
@@ -94,6 +94,23 @@ export const api = {
       invoke("context_bind_workspace", { id, workspaceId, label }),
     syncNow: (): Promise<void> => invoke("sync_now"),
     syncStatus: (): Promise<import("./syncStatus").SyncStatus> => invoke("sync_status"),
+  },
+
+  vault: {
+    status: (): Promise<VaultStatus> => invoke("vault_status"),
+    setup: (passphrase: string): Promise<string[]> => invoke("vault_setup", { passphrase }),
+    unlock: (passphrase: string): Promise<void> => invoke("vault_unlock", { passphrase }),
+    unlockRecovery: (recovery: string): Promise<void> => invoke("vault_unlock_recovery", { recovery }),
+    unlockBiometric: (): Promise<void> => invoke("vault_unlock_biometric"),
+    lock: (): Promise<void> => invoke("vault_lock"),
+    changePassphrase: (current: string, next: string): Promise<void> =>
+      invoke("vault_change_passphrase", { current, next }),
+    biometricAvailable: (): Promise<boolean> => invoke("vault_biometric_available"),
+    biometricEnable: (): Promise<void> => invoke("vault_biometric_enable"),
+    biometricDisable: (): Promise<void> => invoke("vault_biometric_disable"),
+    protectNote: (id: string, isProtected: boolean): Promise<void> =>
+      invoke("note_set_protected", { id, protected: isProtected }),
+    lockFolder: (id: string, locked: boolean): Promise<void> => invoke("folder_set_locked", { id, locked }),
   },
 
   saveImage: (noteId: string, name: string, bytes: number[]): Promise<string> => invoke("save_image", { noteId, name, bytes }),

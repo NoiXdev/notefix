@@ -50,3 +50,9 @@ export interface Revision {
   noteId: string;
   createdAt: number;
 }
+
+export interface VaultStatus {
+  exists: boolean;
+  unlocked: boolean;
+  biometric: boolean;
+}
