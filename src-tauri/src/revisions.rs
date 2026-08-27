@@ -71,6 +71,17 @@ pub fn revision_content(conn: &Connection, id: i64) -> rusqlite::Result<Option<S
     .optional()
 }
 
+/// Delete every revision for `note_id`. Called when a note transitions into
+/// the protected/encrypted state: revisions are plaintext, so leaving old
+/// ones in place would defeat encryption-at-rest for that content. v1
+/// behavior is intentional — locking a note discards its prior plaintext
+/// revision history; decrypting it later simply resumes normal history
+/// going forward.
+pub fn delete_revisions(conn: &Connection, note_id: &str) -> rusqlite::Result<()> {
+    conn.execute("DELETE FROM note_revisions WHERE note_id = ?1", [note_id])?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

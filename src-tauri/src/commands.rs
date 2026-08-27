@@ -1629,6 +1629,10 @@ pub fn vault_change_passphrase(
 /// `protected = false` is refused with an error while the note is inside a
 /// `locked` folder — the folder is the source of truth for that note's
 /// protection until the folder itself is unlocked.
+///
+/// Transitioning to `protected = true` discards the note's existing revision
+/// history (see `crate::revisions::delete_revisions`) — v1 behavior, since
+/// `note_revisions` is unencrypted.
 #[tauri::command]
 pub fn note_set_protected(
     app: AppHandle,
@@ -1656,6 +1660,10 @@ pub fn note_set_protected(
                 store
                     .set_note_protected(&id, true)
                     .map_err(|e| e.to_string())?;
+                // v1: locking a note discards its prior plaintext revision
+                // history — keeping it would defeat encryption-at-rest for
+                // that content, since note_revisions is unencrypted.
+                crate::revisions::delete_revisions(&store.conn, &id).map_err(|e| e.to_string())?;
             }
         } else {
             if has_locked_ancestor_folder(&store, &id)? {
@@ -1688,6 +1696,9 @@ pub fn note_set_protected(
 /// decrypts every subtree note that has no *other* locked ancestor —
 /// including a note that was individually protected while it happened to
 /// live inside this now-unlocking folder. Acceptable for v1.
+///
+/// Locking (not unlocking) also discards each newly-encrypted note's
+/// existing revision history, same rationale as `note_set_protected`.
 #[tauri::command]
 pub fn folder_set_locked(
     app: AppHandle,
@@ -1719,6 +1730,11 @@ pub fn folder_set_locked(
                         .map_err(|e| e.to_string())?;
                     store
                         .set_note_protected(note_id, true)
+                        .map_err(|e| e.to_string())?;
+                    // v1: same rationale as note_set_protected(id, true) —
+                    // discard this note's plaintext revision history now
+                    // that its content is encrypted.
+                    crate::revisions::delete_revisions(&store.conn, note_id)
                         .map_err(|e| e.to_string())?;
                 }
             }
@@ -1846,5 +1862,65 @@ mod protected_content_tests {
         assert!(!stored.contains("very secret"));
 
         assert_eq!(open_content(&dek, "n1", &stored).unwrap(), plaintext);
+    }
+
+    /// Mirrors the encrypt branch `note_set_protected(id, true)` takes: seal,
+    /// persist, flip `protected`, then purge revision history. Proves the
+    /// purge actually empties `note_revisions` for the protected note while
+    /// leaving an untouched, unprotected note's history intact.
+    #[test]
+    fn protecting_a_note_purges_its_revision_history() {
+        let s = Store::open_in_memory().unwrap();
+        crate::migrate::run_migrations(&s.conn).unwrap();
+        let dek = Dek::random();
+
+        s.save_note(&Note {
+            id: "a".into(),
+            content: "<p>v1</p>".into(),
+            updated_at: 1,
+            ..Default::default()
+        })
+        .unwrap();
+        crate::revisions::add_revision(&s.conn, "a", "<p>v1</p>", 50).unwrap();
+
+        s.save_note(&Note {
+            id: "b".into(),
+            content: "<p>v1</p>".into(),
+            updated_at: 1,
+            ..Default::default()
+        })
+        .unwrap();
+        crate::revisions::add_revision(&s.conn, "b", "<p>v1</p>", 50).unwrap();
+
+        assert_eq!(
+            crate::revisions::list_revisions(&s.conn, "a")
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            crate::revisions::list_revisions(&s.conn, "b")
+                .unwrap()
+                .len(),
+            1
+        );
+
+        // What note_set_protected(id, true) does for note "a".
+        let plaintext = s.load_note_content("a").unwrap().unwrap();
+        let sealed = seal_content(&dek, "a", &plaintext);
+        s.set_content_silent("a", &sealed).unwrap();
+        s.set_note_protected("a", true).unwrap();
+        crate::revisions::delete_revisions(&s.conn, "a").unwrap();
+
+        assert!(crate::revisions::list_revisions(&s.conn, "a")
+            .unwrap()
+            .is_empty());
+        // "b" was never protected, so its history is untouched.
+        assert_eq!(
+            crate::revisions::list_revisions(&s.conn, "b")
+                .unwrap()
+                .len(),
+            1
+        );
     }
 }
