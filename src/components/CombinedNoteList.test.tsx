@@ -51,3 +51,21 @@ describe('CombinedNoteList', () => {
     expect(await screen.findByText('Secret Title')).toBeInTheDocument();
   });
 });
+
+describe('CombinedNoteList — vault lock button', () => {
+  it('is hidden when the vault does not exist or is locked', async () => {
+    const { rerender } = render(<CombinedNoteList selectedId={null} activeContextId="c1" onSelectNote={() => {}} onCreate={() => {}} onOpenSettings={() => {}} onOpenContexts={() => {}} dateFormat="auto" vaultExists={false} vaultUnlocked={false} />);
+    await waitFor(() => expect(loadAll).toHaveBeenCalled());
+    expect(screen.queryByTitle('Jetzt sperren')).not.toBeInTheDocument();
+
+    rerender(<CombinedNoteList selectedId={null} activeContextId="c1" onSelectNote={() => {}} onCreate={() => {}} onOpenSettings={() => {}} onOpenContexts={() => {}} dateFormat="auto" vaultExists={true} vaultUnlocked={false} />);
+    expect(screen.queryByTitle('Jetzt sperren')).not.toBeInTheDocument();
+  });
+
+  it('renders and calls onLockVault when the vault exists and is unlocked', async () => {
+    const onLockVault = vi.fn();
+    render(<CombinedNoteList selectedId={null} activeContextId="c1" onSelectNote={() => {}} onCreate={() => {}} onOpenSettings={() => {}} onOpenContexts={() => {}} dateFormat="auto" vaultExists={true} vaultUnlocked={true} onLockVault={onLockVault} />);
+    fireEvent.click(await screen.findByTitle('Jetzt sperren'));
+    expect(onLockVault).toHaveBeenCalledOnce();
+  });
+});

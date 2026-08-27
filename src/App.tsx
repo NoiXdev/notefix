@@ -429,6 +429,9 @@ export default function App() {
           onOpenContexts={() => { setSettingsPage('contexts'); setShowSettings(true); }}
           dateFormat={settings.dateFormat}
           mobile={isMobile}
+          vaultExists={vault.status.exists}
+          vaultUnlocked={vault.status.unlocked}
+          onLockVault={() => void vault.lock()}
         />
       ) : (
       <NoteList
@@ -468,6 +471,9 @@ export default function App() {
         onExportNote={(n) => setExportNoteState(n)}
         onProtectNote={(id, next) => requestProtect('note', id, next)}
         onLockFolder={(id, next) => requestProtect('folder', id, next)}
+        vaultExists={vault.status.exists}
+        vaultUnlocked={vault.status.unlocked}
+        onLockVault={() => void vault.lock()}
       />
       ))}
       {(!isMobile || mobileEditor) && (

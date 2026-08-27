@@ -319,6 +319,25 @@ describe("NoteList — protected notes", () => {
   });
 });
 
+describe('NoteList — vault lock button', () => {
+  it('is hidden when the vault does not exist', () => {
+    render(<NoteList {...defaultProps} vaultExists={false} vaultUnlocked={false} />);
+    expect(screen.queryByTitle('Jetzt sperren')).not.toBeInTheDocument();
+  });
+
+  it('is hidden when the vault exists but is locked', () => {
+    render(<NoteList {...defaultProps} vaultExists={true} vaultUnlocked={false} />);
+    expect(screen.queryByTitle('Jetzt sperren')).not.toBeInTheDocument();
+  });
+
+  it('renders and calls onLockVault when the vault exists and is unlocked', () => {
+    const onLockVault = vi.fn();
+    render(<NoteList {...defaultProps} vaultExists={true} vaultUnlocked={true} onLockVault={onLockVault} />);
+    fireEvent.click(screen.getByTitle('Jetzt sperren'));
+    expect(onLockVault).toHaveBeenCalledOnce();
+  });
+});
+
 describe("NoteList — easter egg", () => {
   it("four quick logo clicks open tic-tac-toe", () => {
     render(<NoteList {...defaultProps} />);

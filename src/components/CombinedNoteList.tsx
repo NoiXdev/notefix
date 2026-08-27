@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faGlobe, faPlus, faMagnifyingGlass, faLock } from '@fortawesome/free-solid-svg-icons';
+import { faGlobe, faPlus, faMagnifyingGlass, faLock, faLockOpen } from '@fortawesome/free-solid-svg-icons';
 import { api } from '../api';
 import { formatDate, type DateFormat } from '../dates';
 import type { CombinedNote } from '../combined';
@@ -18,9 +18,12 @@ interface Props {
   onOpenContexts: () => void;
   dateFormat: DateFormat;
   mobile?: boolean;
+  vaultExists?: boolean;
+  vaultUnlocked?: boolean;
+  onLockVault?: () => void;
 }
 
-export default function CombinedNoteList({ selectedId, onSelectNote, onCreate, onOpenSearch, onOpenContexts, dateFormat, mobile }: Props) {
+export default function CombinedNoteList({ selectedId, onSelectNote, onCreate, onOpenSearch, onOpenContexts, dateFormat, mobile, vaultExists, vaultUnlocked, onLockVault }: Props) {
   const { t } = useTranslation();
   const [items, setItems] = useState<CombinedNote[]>([]);
 
@@ -48,6 +51,11 @@ export default function CombinedNoteList({ selectedId, onSelectNote, onCreate, o
           {onOpenSearch && (
             <button onClick={onOpenSearch} title={t('search.open')} className={`flex items-center justify-center text-gray-400 hover:text-white ${mobile ? 'w-10 h-10 text-lg' : ''}`}>
               <FontAwesomeIcon icon={faMagnifyingGlass} />
+            </button>
+          )}
+          {vaultExists && vaultUnlocked && (
+            <button onClick={onLockVault} title={t('security.lockNow')} className={`flex items-center justify-center text-gray-400 hover:text-white ${mobile ? 'w-10 h-10 text-lg' : ''}`}>
+              <FontAwesomeIcon icon={faLockOpen} />
             </button>
           )}
           <button onClick={onCreate} title={t('noteList.newNote')} className={`flex items-center justify-center text-gray-400 hover:text-white ${mobile ? 'w-10 h-10 text-lg' : ''}`}>

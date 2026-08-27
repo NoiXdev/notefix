@@ -58,6 +58,9 @@ interface Props {
   onOpenContexts?: () => void;
   onProtectNote?: (id: string, next: boolean) => void;
   onLockFolder?: (id: string, next: boolean) => void;
+  vaultExists?: boolean;
+  vaultUnlocked?: boolean;
+  onLockVault?: () => void;
 }
 
 const sortNotes = (a: NoteMeta, b: NoteMeta) => Number(b.pinned) - Number(a.pinned) || a.position - b.position;
@@ -83,6 +86,7 @@ export default function NoteList(props: Props) {
     compactTree = false, treeProgress = true,
     trashed = [], trashEnabled = true, onRestore, onPurge, onEmptyTrash, onExportNote,
     onOpenContexts, onProtectNote, onLockFolder,
+    vaultExists, vaultUnlocked, onLockVault,
   } = props;
 
   const [showGame, setShowGame] = useState(false);
@@ -265,6 +269,11 @@ export default function NoteList(props: Props) {
                 <FontAwesomeIcon icon={faMagnifyingGlass} className={props.mobile ? 'text-lg' : 'text-[13px]'} />
               </button>
             )}
+            {vaultExists && vaultUnlocked && (
+              <button onClick={onLockVault} className={`flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 rounded ${props.mobile ? 'w-10 h-10' : 'w-6 h-6'}`} title={t('security.lockNow')}>
+                <FontAwesomeIcon icon={faLockOpen} className={props.mobile ? 'text-lg' : 'text-[13px]'} />
+              </button>
+            )}
             {view === 'active' && (
               <button onClick={onCreate} className={`flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 rounded ${props.mobile ? 'w-10 h-10' : 'w-6 h-6'}`} title={t('noteList.newNote')}>
                 <svg width={props.mobile ? 22 : 14} height={props.mobile ? 22 : 14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
@@ -306,7 +315,12 @@ export default function NoteList(props: Props) {
               {activeDrag.kind === 'note'
                 ? (() => {
                     const dragged = notes.find(n => n.id === activeDrag.id);
-                    return dragged?.protected ? t('vault.protected') : dragged?.preview || t('noteList.untitled');
+                    return dragged?.protected ? (
+                      <span className="inline-flex items-center gap-1.5">
+                        <FontAwesomeIcon icon={faLock} className="text-[11px]" />
+                        {dragged.title || t('noteList.untitled')}
+                      </span>
+                    ) : (dragged?.preview || t('noteList.untitled'));
                   })()
                 : (folders.find(f => f.id === activeDrag.id)?.name ?? '')}
             </div>
@@ -328,7 +342,7 @@ export default function NoteList(props: Props) {
                 {n.protected ? (
                   <span className="inline-flex items-center gap-1.5 text-gray-400">
                     <FontAwesomeIcon icon={faLock} className="text-[11px]" />
-                    {t('vault.protected')}
+                    {n.title || t('noteList.untitled')}
                   </span>
                 ) : (
                   n.preview || t('noteList.untitled')
