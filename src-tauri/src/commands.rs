@@ -198,7 +198,13 @@ fn backfill_protected_titles(store: &Store, dek: &Dek) {
             Err(_) => continue, // can't decrypt (corrupt/foreign) — skip, never abort the unlock
         };
         let title = crate::storage::note_preview(&plaintext);
-        let _ = store.set_title(&id, &title);
+        if store.set_title(&id, &title).is_ok() {
+            // Propagate the freshly-derived title to other devices — otherwise
+            // the server keeps the empty title until the note is next edited.
+            // Only touches notes with an empty title (a one-time set), so this
+            // can't cause a recurring sync churn.
+            let _ = store.mark_note_dirty_if_syncing(&id);
+        }
     }
 }
 
@@ -2252,6 +2258,40 @@ mod protected_content_tests {
             stored_content, sealed,
             "content is read but never rewritten"
         );
+    }
+
+    /// When syncing, a backfilled title must leave the note dirty (and its
+    /// content unchanged) so the freshly-derived plaintext title propagates to
+    /// other devices instead of the server keeping the empty one.
+    #[test]
+    fn backfill_protected_titles_marks_dirty_for_push_when_syncing() {
+        let mut s = Store::open_in_memory().unwrap();
+        crate::migrate::run_migrations(&s.conn).unwrap();
+        s.sync_enabled = true;
+        let dek = Dek::random();
+        let sealed = seal_content(&dek, "n1", "<p>Old Secret</p>");
+
+        s.save_note(&Note {
+            id: "n1".into(),
+            content: sealed.clone(),
+            updated_at: 1,
+            ..Default::default()
+        })
+        .unwrap();
+        s.set_note_protected("n1", true).unwrap();
+        // A sync-enabled save is already dirty; clear it so the test proves the
+        // backfill itself re-dirties the row.
+        let ts = s.load_dirty_notes().unwrap()[0].updated_at;
+        s.clear_note_dirty(&[("n1".into(), ts)]).unwrap();
+        assert!(s.load_dirty_notes().unwrap().is_empty());
+
+        backfill_protected_titles(&s, &dek);
+
+        let dirty = s.load_dirty_notes().unwrap();
+        assert_eq!(dirty.len(), 1);
+        assert_eq!(dirty[0].id, "n1");
+        assert!(dirty[0].protected, "still protected");
+        assert_eq!(dirty[0].content, sealed, "content is never rewritten");
     }
 
     /// A note whose content can't be decrypted under the given DEK (wrong
