@@ -204,6 +204,9 @@ pub fn run() {
 
             app.manage(Mutex::new(store));
             app.manage(Mutex::new(reg));
+            // Protected-notes vault: unlocked DEK lives only here, in memory,
+            // for the lifetime of the process — never persisted.
+            app.manage(Mutex::new(vault::state::VaultState::default()));
             // In-memory store of in-flight browser auth flows (A1).
             app.manage(commands::PendingAuthMap::default());
             // Notify the background sync loop (Task 7) when an edit or manual
@@ -341,6 +344,12 @@ pub fn run() {
             commands::context_bind_workspace,
             commands::sync_now,
             commands::sync_status,
+            commands::vault_status,
+            commands::vault_setup,
+            commands::vault_unlock,
+            commands::vault_unlock_recovery,
+            commands::vault_lock,
+            commands::vault_change_passphrase,
             linkmeta::fetch_link_meta,
             update::check_for_update,
         ])

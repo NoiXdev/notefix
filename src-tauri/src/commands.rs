@@ -1380,6 +1380,124 @@ pub async fn run_image_phase(
     Ok(())
 }
 
+// Protected-notes vault commands (Task 5): status/setup/unlock/lock and
+// passphrase change. The unlocked DEK lives only in the managed
+// `VaultState` — it is never logged, persisted, or returned to the
+// frontend. Only `vault_setup` returns secret material, and only the
+// recovery key (shown once, by design).
+
+type VaultStateHandle<'r> = State<'r, Mutex<crate::vault::state::VaultState>>;
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultStatus {
+    pub exists: bool,
+    pub unlocked: bool,
+    pub biometric: bool,
+}
+
+/// Loads and parses the persisted vault record, or a "not set up" error if
+/// none exists yet.
+fn load_vault_record(store: &State<'_, Mutex<Store>>) -> Result<crate::vault::VaultRecord, String> {
+    let json = {
+        let store = store.lock().map_err(|e| e.to_string())?;
+        store.vault_record().map_err(|e| e.to_string())?
+    };
+    let json = json.ok_or_else(|| "vault: not set up".to_string())?;
+    crate::vault::VaultRecord::from_json(&json).map_err(String::from)
+}
+
+#[tauri::command]
+pub fn vault_status(
+    store: State<'_, Mutex<Store>>,
+    vault: VaultStateHandle<'_>,
+) -> Result<VaultStatus, String> {
+    let exists = {
+        let store = store.lock().map_err(|e| e.to_string())?;
+        store.vault_record().map_err(|e| e.to_string())?.is_some()
+    };
+    let unlocked = vault.lock().map_err(|e| e.to_string())?.is_unlocked();
+    Ok(VaultStatus {
+        exists,
+        unlocked,
+        // Real biometric-availability detection lands in a later task.
+        biometric: false,
+    })
+}
+
+/// Creates a new vault: wraps a fresh DEK under `passphrase`, persists the
+/// record, and unlocks it immediately. Returns the one-time recovery key
+/// split into its dash-separated groups — the only place it is ever exposed.
+#[tauri::command]
+pub fn vault_setup(
+    store: State<'_, Mutex<Store>>,
+    vault: VaultStateHandle<'_>,
+    passphrase: String,
+) -> Result<Vec<String>, String> {
+    let (record, recovery_key, dek) = crate::vault::setup(&passphrase).map_err(String::from)?;
+    {
+        let store = store.lock().map_err(|e| e.to_string())?;
+        store
+            .set_vault_record(&record.to_json())
+            .map_err(|e| e.to_string())?;
+    }
+    vault.lock().map_err(|e| e.to_string())?.unlock(dek);
+    Ok(recovery_key.as_str().split('-').map(String::from).collect())
+}
+
+#[tauri::command]
+pub fn vault_unlock(
+    store: State<'_, Mutex<Store>>,
+    vault: VaultStateHandle<'_>,
+    passphrase: String,
+) -> Result<(), String> {
+    let record = load_vault_record(&store)?;
+    let dek = crate::vault::unlock_passphrase(&record, &passphrase).map_err(String::from)?;
+    vault.lock().map_err(|e| e.to_string())?.unlock(dek);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn vault_unlock_recovery(
+    store: State<'_, Mutex<Store>>,
+    vault: VaultStateHandle<'_>,
+    recovery: String,
+) -> Result<(), String> {
+    let record = load_vault_record(&store)?;
+    let dek = crate::vault::unlock_recovery(&record, &recovery).map_err(String::from)?;
+    vault.lock().map_err(|e| e.to_string())?.unlock(dek);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn vault_lock(vault: VaultStateHandle<'_>) -> Result<(), String> {
+    vault.lock().map_err(|e| e.to_string())?.lock();
+    Ok(())
+}
+
+/// Unlocks with `current`, re-wraps the same DEK under `next`, persists the
+/// updated record, and leaves the vault unlocked (existing recovery key
+/// keeps working — `rewrap_passphrase` never touches it).
+#[tauri::command]
+pub fn vault_change_passphrase(
+    store: State<'_, Mutex<Store>>,
+    vault: VaultStateHandle<'_>,
+    current: String,
+    next: String,
+) -> Result<(), String> {
+    let record = load_vault_record(&store)?;
+    let dek = crate::vault::unlock_passphrase(&record, &current).map_err(String::from)?;
+    let new_record = crate::vault::rewrap_passphrase(&record, &dek, &next);
+    {
+        let store = store.lock().map_err(|e| e.to_string())?;
+        store
+            .set_vault_record(&new_record.to_json())
+            .map_err(|e| e.to_string())?;
+    }
+    vault.lock().map_err(|e| e.to_string())?.unlock(dek);
+    Ok(())
+}
+
 #[cfg(test)]
 mod widget_url_tests {
     use super::{parse_widget_url, WidgetAction};

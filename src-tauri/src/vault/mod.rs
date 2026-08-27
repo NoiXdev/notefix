@@ -1,6 +1,7 @@
 pub mod aead;
 pub mod kdf;
 pub mod recovery;
+pub mod state;
 
 use aead::Dek;
 use base64::engine::general_purpose::STANDARD;
