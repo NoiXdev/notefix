@@ -44,6 +44,8 @@ vi.mock("../api", () => ({
     getAppInfo: vi.fn(() => Promise.resolve({ name: "Notefix", version: "0.1.0", description: "x" })),
     autostart: { isEnabled: mockIsEnabled, enable: mockEnable, disable: mockDisable },
     stats: vi.fn(() => Promise.resolve({ notes: 3, archived: 1, characters: 42, words: 8 })),
+    githubReleases: vi.fn(() => Promise.resolve([])),
+    openExternal: vi.fn(),
     getDbPath: mockGetDbPath,
     setDbLocation: mockSetDbLocation,
     relaunch: mockRelaunch,
@@ -71,6 +73,7 @@ vi.mock('react-select', () => ({
 }));
 
 import Settings from "./Settings";
+import { api } from "../api";
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -249,5 +252,41 @@ describe("Settings — Security", () => {
     render(<Settings onClose={vi.fn()} settings={full} onSetSetting={vi.fn()} onExport={vi.fn()} />);
     fireEvent.click(screen.getByText("Sicherheit"));
     await waitFor(() => expect(screen.getByText("Mit Touch ID entsperren")).toBeInTheDocument());
+  });
+});
+
+describe("Settings — What's New (About page)", () => {
+  const full = { startMinimized: false, dateFormat: "auto" as const, pinnedScope: "perFolder" as const, folderColorStyle: "icon" as const, revisionLimit: 50, autosaveDelay: 400, startView: "lastNote" as const, dashboardLayout: [{ key: "recent", x: 0, y: 0, w: 6, h: 4 }], compactTree: false, treeProgress: true, trashEnabled: true, trashRetentionDays: 30, closeAction: "ask" as const, shortcuts: {}, language: "system" as const, linkPreviewEnabled: true, linkPreviewMode: "card" as const, copyFormat: "md" as const, mcpEnabled: false, mcpBind: "internal" as const, mcpPort: 4357, mcpAuthRequired: true, mcpToken: "", mcpAllowWrite: false, whatsNewOnUpdate: true };
+
+  it("fetches releases and opens the dialog when the link is clicked", async () => {
+    vi.mocked(api.githubReleases).mockResolvedValueOnce([
+      { tagName: "v0.6.0", name: "v0.6.0 — Apps page", body: "Cool stuff", publishedAt: "2026-08-20T00:00:00Z", prerelease: false },
+    ]);
+    render(<Settings onClose={vi.fn()} settings={full} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    await waitFor(() => expect(screen.getByText("Notefix")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText("Neuigkeiten"));
+
+    await waitFor(() => expect(screen.getByText("Neu in dieser Version")).toBeInTheDocument());
+    expect(screen.getByText("v0.6.0 — Apps page")).toBeInTheDocument();
+  });
+
+  it("shows an inline error when the fetch fails", async () => {
+    vi.mocked(api.githubReleases).mockRejectedValueOnce(new Error("network down"));
+    render(<Settings onClose={vi.fn()} settings={full} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    await waitFor(() => expect(screen.getByText("Notefix")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText("Neuigkeiten"));
+
+    await waitFor(() => expect(screen.getByText("Änderungsprotokoll konnte nicht geladen werden")).toBeInTheDocument());
+    expect(screen.queryByText("Neu in dieser Version")).not.toBeInTheDocument();
+  });
+
+  it("toggling 'What's New after update' calls onSetSetting", async () => {
+    const onSetSetting = vi.fn();
+    render(<Settings onClose={vi.fn()} settings={full} onSetSetting={onSetSetting} onExport={vi.fn()} />);
+    await waitFor(() => expect(screen.getByText("Notefix")).toBeInTheDocument());
+    fireEvent.click(screen.getByLabelText(/nach einem Update anzeigen/));
+    expect(onSetSetting).toHaveBeenCalledWith("whatsNewOnUpdate", false);
   });
 });

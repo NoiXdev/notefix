@@ -25,8 +25,10 @@ import SearchModal from './components/SearchModal';
 import ConfettiEasterEgg from './components/ConfettiEasterEgg';
 import VaultSetup from './components/VaultSetup';
 import VaultUnlock from './components/VaultUnlock';
+import WhatsNew from './components/WhatsNew';
 import { shouldShowUpdateBanner } from './updateCheck';
-import type { UpdateInfo } from './api';
+import type { UpdateInfo, ReleaseInfo } from './api';
+import { releasesSince, isNewer } from './version';
 import { runSystemChecks, type SystemCheck } from './systemChecks';
 import { exportBase64, exportBundle } from './export';
 import { exportNote, type ExportFormat } from './export/exporters';
@@ -66,6 +68,7 @@ export default function App() {
   const [activeContextId, setActiveContextId] = useState<string>('');
   const [contexts, setContexts] = useState<ContextInfo[]>([]);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [whatsNewAuto, setWhatsNewAuto] = useState<{ releases: ReleaseInfo[]; current: string } | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   // Mobile: single-column. `mobileEditor` = showing the editor (vs. the list).
   const isMobile = useIsMobile();
@@ -178,6 +181,34 @@ export default function App() {
       void api.checkForUpdate().then(setUpdateInfo).catch(() => {});
     } catch { /* ignore */ }
   }, [loaded, settings.checkUpdatesOnStart]);
+
+  // On launch: cumulative "What's New" changelog since the version the user
+  // last saw. Unlike checkForUpdate above, this is a plain network fetch +
+  // dialog — no desktop-only Tauri APIs — so it runs on mobile too.
+  const whatsNewCheckedRef = useRef(false);
+  useEffect(() => {
+    if (!loaded || whatsNewCheckedRef.current) return;
+    whatsNewCheckedRef.current = true;
+    void (async () => {
+      const { version: current } = await api.getAppInfo();
+      if (settings.lastSeenVersion === '') {
+        // Fresh install (or first run after this feature shipped): nothing
+        // was actually "missed" — just start tracking from here, silently.
+        void setSetting('lastSeenVersion', current);
+        return;
+      }
+      if (!settings.whatsNewOnUpdate || !isNewer(current, settings.lastSeenVersion)) return;
+      try {
+        const releases = await api.githubReleases();
+        const since = releasesSince(releases, settings.lastSeenVersion, current);
+        if (since.length > 0) setWhatsNewAuto({ releases: since, current });
+        else void setSetting('lastSeenVersion', current);
+      } catch {
+        // Don't nag on a failed fetch — just record the version and move on.
+        void setSetting('lastSeenVersion', current);
+      }
+    })();
+  }, [loaded, settings.lastSeenVersion, settings.whatsNewOnUpdate, setSetting]);
 
   const mcpAppliedRef = useRef(false);
   useEffect(() => {
@@ -591,6 +622,12 @@ export default function App() {
         />
       )}
       {bindCtx && <WorkspacePicker contextId={bindCtx} onClose={() => setBindCtx(null)} />}
+      {whatsNewAuto && (
+        <WhatsNew
+          releases={whatsNewAuto.releases}
+          onClose={() => { void setSetting('lastSeenVersion', whatsNewAuto.current); setWhatsNewAuto(null); }}
+        />
+      )}
       {vaultDialog === 'setup' && <VaultSetup setup={vault.setup} onSuccess={afterUnlockOrSetup} onCancel={cancelVaultDialog} />}
       {vaultDialog === 'unlock' && (
         <VaultUnlock

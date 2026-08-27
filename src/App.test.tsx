@@ -61,8 +61,9 @@ vi.mock("./api", () => ({
     setWindowTitle: vi.fn(),
     toggleAlwaysOnTop: vi.fn(),
     closeWindow: vi.fn(),
-    getAppInfo: vi.fn(),
+    getAppInfo: vi.fn(() => Promise.resolve({ name: 'Notefix', version: '0.6.0', description: 'x' })),
     openExternal: vi.fn(),
+    githubReleases: vi.fn(() => Promise.resolve([])),
     mcpApplyConfig: vi.fn(() => Promise.resolve()),
     vault: {
       status: vi.fn(() => Promise.resolve({ exists: false, unlocked: false, biometric: false })),
@@ -248,5 +249,50 @@ describe("App — auto-lock idle timer", () => {
 
     await waitFor(() => expect(screen.getByTitle("Neue Notiz")).toBeInTheDocument());
     await waitFor(() => expect(api.vault.lock).toHaveBeenCalled(), { timeout: 3000 });
+  });
+});
+
+describe("App — What's New on update", () => {
+  it("shows the changelog dialog when the app updated and there are releases since lastSeenVersion", async () => {
+    vi.mocked(api.settings.load).mockResolvedValueOnce({ lastSeenVersion: "0.5.0" });
+    vi.mocked(api.getAppInfo).mockResolvedValueOnce({ name: "Notefix", version: "0.6.0", description: "x" });
+    vi.mocked(api.githubReleases).mockResolvedValueOnce([
+      { tagName: "v0.6.0", name: "v0.6.0 — Apps page", body: "Cool new stuff", publishedAt: "2026-08-20T00:00:00Z", prerelease: false },
+      { tagName: "v0.5.1", name: "", body: "Minor fixes", publishedAt: "2026-07-01T00:00:00Z", prerelease: false },
+    ]);
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Neu in dieser Version")).toBeInTheDocument());
+    expect(screen.getByText("v0.6.0 — Apps page")).toBeInTheDocument();
+    expect(screen.getByText("Cool new stuff")).toBeInTheDocument();
+    expect(screen.getByText("v0.5.1")).toBeInTheDocument(); // falls back to tagName when name is empty
+
+    fireEvent.click(screen.getAllByText("Schließen")[0]);
+    await waitFor(() => expect(api.settings.set).toHaveBeenCalledWith("lastSeenVersion", "0.6.0"));
+    expect(screen.queryByText("Neu in dieser Version")).not.toBeInTheDocument();
+  });
+
+  it("does not show the dialog on a fresh install (lastSeenVersion ''), only persists the current version", async () => {
+    vi.mocked(api.settings.load).mockResolvedValueOnce({});
+    vi.mocked(api.getAppInfo).mockResolvedValueOnce({ name: "Notefix", version: "0.6.0", description: "x" });
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByTitle("Neue Notiz")).toBeInTheDocument());
+    await waitFor(() => expect(api.settings.set).toHaveBeenCalledWith("lastSeenVersion", "0.6.0"));
+    expect(api.githubReleases).not.toHaveBeenCalled();
+    expect(screen.queryByText("Neu in dieser Version")).not.toBeInTheDocument();
+  });
+
+  it("does not show the dialog when whatsNewOnUpdate is disabled, even with a newer version", async () => {
+    vi.mocked(api.settings.load).mockResolvedValueOnce({ lastSeenVersion: "0.5.0", whatsNewOnUpdate: "false" });
+    vi.mocked(api.getAppInfo).mockResolvedValueOnce({ name: "Notefix", version: "0.6.0", description: "x" });
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByTitle("Neue Notiz")).toBeInTheDocument());
+    expect(api.githubReleases).not.toHaveBeenCalled();
+    expect(screen.queryByText("Neu in dieser Version")).not.toBeInTheDocument();
   });
 });

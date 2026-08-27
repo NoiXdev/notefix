@@ -4,7 +4,7 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import type { IconDefinition } from "@fortawesome/fontawesome-svg-core";
 import { faGlobe, faCircleInfo, faPalette, faGear, faPlug, faChartColumn, faKeyboard, faStethoscope, faChevronRight, faDownload, faServer, faLock } from "@fortawesome/free-solid-svg-icons";
 import { faAndroid, faApple, faGooglePlay } from "@fortawesome/free-brands-svg-icons";
-import { api, type AppInfo, type UpdateInfo } from "../api";
+import { api, type AppInfo, type UpdateInfo, type ReleaseInfo } from "../api";
 import type { ContextInfo } from "../contexts";
 import { startServerAuth } from "../serverAuth";
 import type { Stats } from "../types";
@@ -18,6 +18,7 @@ import ShortcutsSettings from "./ShortcutsSettings";
 import PromptDialog from "./PromptDialog";
 import VaultSetup from "./VaultSetup";
 import VaultUnlock from "./VaultUnlock";
+import WhatsNew from "./WhatsNew";
 import { runSystemChecks } from "../systemChecks";
 import { OSS_LIBS } from "../licenses";
 import { useIsMobile } from "../hooks/useIsMobile";
@@ -503,6 +504,15 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
     api.getAppInfo().then(setInfo);
   }, []);
 
+  // Manual "What's New" link on the About page: fetches on demand and shows
+  // the newest releases (not gated to "since a version" like the startup
+  // popup in App.tsx — this is just "show me the changelog").
+  const [whatsNewState, setWhatsNewState] = useState<"idle" | "loading" | "error" | ReleaseInfo[]>("idle");
+  const openWhatsNew = () => {
+    setWhatsNewState("loading");
+    api.githubReleases().then(rs => setWhatsNewState(rs.slice(0, 10))).catch(() => setWhatsNewState("error"));
+  };
+
   const [bootEnabled, setBootEnabled] = useState(false);
   useEffect(() => {
     api.autostart.isEnabled().then(setBootEnabled);
@@ -584,8 +594,19 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
           <div>
             <Logo size={56} className="mb-4" />
             <h1 className="text-2xl font-bold text-gray-900 mb-1">{info.name}</h1>
-            <p className="text-sm text-gray-500 mb-8">{t("settings.about.version", { version: info.version })}</p>
-            <p className="text-sm text-gray-600">{info.description}</p>
+            <p className="text-sm text-gray-500 mb-1">
+              {t("settings.about.version", { version: info.version })}
+              {" · "}
+              <button
+                onClick={openWhatsNew}
+                disabled={whatsNewState === "loading"}
+                className="text-blue-700 underline disabled:opacity-50"
+              >
+                {t("settings.about.whatsNew")}
+              </button>
+            </p>
+            {whatsNewState === "error" && <p className="text-xs text-red-600 mb-2">{t("whatsNew.error")}</p>}
+            <p className="text-sm text-gray-600 mt-6">{info.description}</p>
             <p className="text-sm text-gray-600 mt-4 max-w-md">{t("settings.about.story")}</p>
             <div className="mt-6 flex flex-col gap-1 text-sm">
               <a href="https://noix.dev" className="text-blue-700 underline">{t("settings.about.project")}</a>
@@ -594,6 +615,21 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
             </div>
 
             {!isMobilePlatform && <UpdateChecker settings={settings} onSetSetting={onSetSetting} />}
+
+            <div className="mt-6 max-w-md">
+              <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
+                <span>{t("settings.whatsNewOnUpdate")}</span>
+                <Toggle
+                  checked={settings.whatsNewOnUpdate}
+                  onChange={() => onSetSetting("whatsNewOnUpdate", !settings.whatsNewOnUpdate)}
+                  label={t("settings.whatsNewOnUpdate")}
+                />
+              </label>
+            </div>
+
+            {Array.isArray(whatsNewState) && (
+              <WhatsNew releases={whatsNewState} onClose={() => setWhatsNewState("idle")} />
+            )}
 
             <div className="mt-10 max-w-md">
               <h2 className="text-sm font-semibold text-gray-800 mb-1">{t("settings.about.openSource")}</h2>
