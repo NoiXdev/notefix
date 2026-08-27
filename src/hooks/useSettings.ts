@@ -25,6 +25,8 @@ export type EditorFontFamily = 'sans' | 'serif' | 'mono' | 'rounded';
 export const EDITOR_FONT_FAMILIES: EditorFontFamily[] = ['sans', 'serif', 'mono', 'rounded'];
 export type EditorWidth = 'full' | 'medium' | 'narrow';
 export const EDITOR_WIDTHS: EditorWidth[] = ['full', 'medium', 'narrow'];
+export type AutoLockMode = 'off' | 'onHide' | 'after';
+export const AUTO_LOCK_MODES: AutoLockMode[] = ['off', 'onHide', 'after'];
 
 export interface DashboardWidget { key: string; x: number; y: number; w: number; h: number; }
 
@@ -66,6 +68,10 @@ export interface AppSettings {
   editorFontSize: EditorFontSize;
   editorFontFamily: EditorFontFamily;
   editorWidth: EditorWidth;
+  autoLockMode: AutoLockMode;
+  autoLockMinutes: number;
+  autoLockOnSleep: boolean;
+  vaultBiometric: boolean;
 }
 
 const DEFAULT_LAYOUT: DashboardWidget[] = [
@@ -113,6 +119,10 @@ const DEFAULTS: AppSettings = {
   editorFontSize: 'medium',
   editorFontFamily: 'sans',
   editorWidth: 'full',
+  autoLockMode: 'after',
+  autoLockMinutes: 5,
+  autoLockOnSleep: true,
+  vaultBiometric: false,
 };
 
 function isGridWidget(x: unknown): x is DashboardWidget {
@@ -189,6 +199,10 @@ export function useSettings() {
       editorFontSize: (EDITOR_FONT_SIZES as string[]).includes(raw.editorFontSize) ? (raw.editorFontSize as EditorFontSize) : 'medium',
       editorFontFamily: (EDITOR_FONT_FAMILIES as string[]).includes(raw.editorFontFamily) ? (raw.editorFontFamily as EditorFontFamily) : 'sans',
       editorWidth: (EDITOR_WIDTHS as string[]).includes(raw.editorWidth) ? (raw.editorWidth as EditorWidth) : 'full',
+      autoLockMode: (AUTO_LOCK_MODES as string[]).includes(raw.autoLockMode) ? (raw.autoLockMode as AutoLockMode) : 'after',
+      autoLockMinutes: Number(raw.autoLockMinutes) > 0 ? Number(raw.autoLockMinutes) : 5,
+      autoLockOnSleep: raw.autoLockOnSleep !== 'false',
+      vaultBiometric: raw.vaultBiometric === 'true',
     });
     setLoaded(true);
   }, []);
