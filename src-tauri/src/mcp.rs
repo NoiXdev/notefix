@@ -1291,6 +1291,35 @@ mod tests {
     }
 
     #[test]
+    fn resources_omit_protected_note_when_access_read_but_vault_locked() {
+        // "read" access alone isn't enough: a locked vault has no key, so the
+        // protected note must still read as absent across resources/list and
+        // resources/read (mirrors the get_note tool's locked-vault behavior).
+        let s = fake();
+        {
+            let mut notes = s.notes.lock().unwrap();
+            notes[0].protected = true;
+            notes[0].content = "CIPHER:<p>Hello world</p>".into();
+        }
+        *s.mcp_protected_access.lock().unwrap() = "read".to_string();
+        // Vault stays locked.
+
+        let list = handle_rpc(&call("resources/list", json!({})), &s, false, "v").unwrap();
+        assert!(
+            list["result"]["resources"].as_array().unwrap().is_empty(),
+            "got: {list}"
+        );
+        let read = handle_rpc(
+            &call("resources/read", json!({"uri":"note://a"})),
+            &s,
+            false,
+            "v",
+        )
+        .unwrap();
+        assert_eq!(read["error"]["message"], "note not found");
+    }
+
+    #[test]
     fn notification_has_no_response() {
         assert!(handle_rpc(
             &call("notifications/initialized", json!({})),
