@@ -169,13 +169,19 @@ pub fn notes_load_one(
 }
 
 /// Full-text search within the active context (title-first), with snippets.
+/// Protected notes are excluded while the vault is locked — their `content`
+/// is ciphertext, so a plaintext scan can't match it correctly anyway.
 #[tauri::command]
 pub fn notes_search(
     store: State<'_, Mutex<Store>>,
+    vault: VaultStateHandle<'_>,
     query: String,
 ) -> Result<Vec<SearchHit>, String> {
+    let exclude_protected = !vault.lock().map_err(|e| e.to_string())?.is_unlocked();
     let store = store.lock().map_err(|e| e.to_string())?;
-    store.search_notes(&query, 50).map_err(|e| e.to_string())
+    store
+        .search_notes(&query, 50, exclude_protected)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1450,13 +1456,22 @@ pub fn notes_load_all(
 }
 
 /// Combined-view search: full-text across every context, tagged with context.
+/// The vault is a single local vault shared by every context, so the same
+/// lock state gates protected rows everywhere.
 #[tauri::command]
 pub fn notes_search_all(
     reg: State<'_, Mutex<crate::profiles::Registry>>,
+    vault: VaultStateHandle<'_>,
     query: String,
 ) -> Result<Vec<crate::aggregate::TaggedHit>, String> {
+    let exclude_protected = !vault.lock().map_err(|e| e.to_string())?.is_unlocked();
     let contexts = registry_contexts(&reg)?;
-    Ok(crate::aggregate::search_all(&contexts, &query, 50))
+    Ok(crate::aggregate::search_all(
+        &contexts,
+        &query,
+        50,
+        exclude_protected,
+    ))
 }
 
 /// Snapshot the registry's contexts as aggregator `Ctx` descriptors.

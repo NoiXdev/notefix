@@ -67,8 +67,15 @@ pub fn aggregate_meta(contexts: &[Ctx]) -> Vec<TaggedMeta> {
     out
 }
 
-/// Search every context and tag each hit with its context.
-pub fn search_all(contexts: &[Ctx], query: &str, limit: usize) -> Vec<TaggedHit> {
+/// Search every context and tag each hit with its context. `exclude_protected`
+/// is forwarded to each context's `search_notes` — the vault is a single local
+/// vault, so the same lock state applies across every context.
+pub fn search_all(
+    contexts: &[Ctx],
+    query: &str,
+    limit: usize,
+    exclude_protected: bool,
+) -> Vec<TaggedHit> {
     let mut out = Vec::new();
     for c in contexts {
         let Ok(store) = Store::open(std::path::Path::new(&c.path)) else {
@@ -77,7 +84,7 @@ pub fn search_all(contexts: &[Ctx], query: &str, limit: usize) -> Vec<TaggedHit>
         if crate::migrate::run_migrations(&store.conn).is_err() {
             continue;
         }
-        let Ok(hits) = store.search_notes(query, limit) else {
+        let Ok(hits) = store.search_notes(query, limit, exclude_protected) else {
             continue;
         };
         for h in hits {
@@ -231,7 +238,7 @@ mod tests {
             kind: "local".into(),
             path: p1.to_string_lossy().into(),
         }];
-        let hits = search_all(&ctxs, "apple", 50);
+        let hits = search_all(&ctxs, "apple", 50, false);
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].note.id, "a1");
         assert_eq!(hits[0].context_id, "c1");

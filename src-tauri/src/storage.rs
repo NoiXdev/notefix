@@ -268,13 +268,28 @@ impl Store {
 
     /// Case-insensitive full-text search over active notes (title/preview first,
     /// then body). Returns list metadata + a snippet for each hit.
-    pub fn search_notes(&self, query: &str, limit: usize) -> rusqlite::Result<Vec<SearchHit>> {
+    ///
+    /// `exclude_protected` drops protected (ciphertext) rows from the candidate
+    /// set entirely — while the vault is locked, `content` is ciphertext, so a
+    /// plaintext `LIKE`-style scan would both miss real matches and could match
+    /// on base64 noise. Callers pass `!vault.is_unlocked()`.
+    pub fn search_notes(
+        &self,
+        query: &str,
+        limit: usize,
+        exclude_protected: bool,
+    ) -> rusqlite::Result<Vec<SearchHit>> {
         let q = query.trim().to_lowercase();
         if q.is_empty() {
             return Ok(vec![]);
         }
+        let protected_clause = if exclude_protected {
+            " AND protected = 0"
+        } else {
+            ""
+        };
         let sql = format!(
-            "SELECT {COLS} FROM notes WHERE deleted_at IS NULL AND archived = 0 ORDER BY pinned DESC, position ASC"
+            "SELECT {COLS} FROM notes WHERE deleted_at IS NULL AND archived = 0{protected_clause} ORDER BY pinned DESC, position ASC"
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map([], |r| {
@@ -725,12 +740,34 @@ mod tests {
         // title match (higher rank)
         s.save_note(&note("title", "<p>apple crumble</p>", 20))
             .unwrap();
-        let hits = s.search_notes("apple", 50).unwrap();
+        let hits = s.search_notes("apple", 50, false).unwrap();
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[0].note.id, "title"); // title/preview hit ranks first
         assert!(hits[1].snippet.to_lowercase().contains("apple"));
-        assert!(s.search_notes("", 50).unwrap().is_empty());
-        assert!(s.search_notes("nomatch", 50).unwrap().is_empty());
+        assert!(s.search_notes("", 50, false).unwrap().is_empty());
+        assert!(s.search_notes("nomatch", 50, false).unwrap().is_empty());
+    }
+
+    #[test]
+    fn search_notes_can_exclude_protected() {
+        let s = store();
+        s.save_note(&note("plain", "<p>needle plain</p>", 10))
+            .unwrap();
+        s.save_note(&note("secret", "<p>needle secret</p>", 20))
+            .unwrap();
+        s.set_note_protected("secret", true).unwrap();
+
+        // Locked (exclude_protected = true): only the plaintext note matches.
+        let hits = s.search_notes("needle", 50, true).unwrap();
+        let ids: Vec<_> = hits.iter().map(|h| h.note.id.clone()).collect();
+        assert!(ids.contains(&"plain".to_string()));
+        assert!(!ids.contains(&"secret".to_string()));
+
+        // Unlocked (exclude_protected = false): both notes match.
+        let hits = s.search_notes("needle", 50, false).unwrap();
+        let ids: Vec<_> = hits.iter().map(|h| h.note.id.clone()).collect();
+        assert!(ids.contains(&"plain".to_string()));
+        assert!(ids.contains(&"secret".to_string()));
     }
 
     #[test]
