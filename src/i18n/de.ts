@@ -45,6 +45,9 @@ export const de = {
       diagnostics: 'Diagnose',
     },
     about: {
+      sections: {
+        info: 'Info',
+      },
       version: 'Version {{version}}',
       story: 'Aus dginx notes wurde Notefix — komplett neu aufgebaut, mit vielen neuen Funktionen.',
       project: 'Projekt: noix.dev',
@@ -56,6 +59,19 @@ export const de = {
     },
     whatsNewOnUpdate: '„Neu in dieser Version“ nach einem Update anzeigen',
     appearance: {
+      tabs: {
+        general: 'Allgemein',
+        list: 'Liste & Ordner',
+        editor: 'Editor',
+      },
+      sections: {
+        look: 'Erscheinungsbild',
+        content: 'Inhalte',
+        sidebar: 'Seitenleiste',
+        noteList: 'Notizliste',
+        text: 'Text',
+        tools: 'Werkzeuge',
+      },
       language: 'Sprache',
       langAuto: 'Automatisch (System)',
       title: 'Darstellung',
@@ -134,6 +150,10 @@ export const de = {
       },
     },
     system: {
+      sections: {
+        start: 'Start',
+        storage: 'Speicher',
+      },
       title: 'System',
       subtitle: 'Start- und Hintergrund-Verhalten.',
       startOnBoot: 'Bei Anmeldung starten',
@@ -163,6 +183,14 @@ export const de = {
       },
     },
     mcp: {
+      tabs: {
+        server: 'Server',
+        access: 'Zugriff',
+      },
+      sections: {
+        config: 'Konfiguration',
+        connection: 'Verbindung',
+      },
       title: 'MCP',
       subtitle: 'Mache deine Notizen für lokale KI-Clients über einen MCP-Server zugänglich.',
       enabled: 'Server aktiv',
@@ -191,6 +219,9 @@ export const de = {
       copied: 'Kopiert',
     },
     stats: {
+      sections: {
+        overview: 'Übersicht',
+      },
       title: 'Statistik',
       notes: 'Notizen',
       archived: 'Archiviert',
@@ -198,6 +229,9 @@ export const de = {
       words: 'Wörter',
     },
     apps: {
+      sections: {
+        platforms: 'Plattformen',
+      },
       title: 'Notefix überall',
       subtitle: 'Hol dir Notefix auf all deine Geräte.',
       comingSoon: 'Bald verfügbar',
@@ -211,6 +245,9 @@ export const de = {
     },
   },
   shortcuts: {
+    sections: {
+      bindings: 'Zuordnungen',
+    },
     title: 'Tastatur',
     help: 'Mod = ⌘ (Mac) bzw. Strg. „Ändern“ → gewünschte Taste(n) drücken.',
     conflict: 'Konflikt',
@@ -233,6 +270,9 @@ export const de = {
     },
   },
   diagnostics: {
+    sections: {
+      checks: 'Prüfungen',
+    },
     title: 'Diagnose',
     subtitle: 'Prüft die Rechte und Ordner, die Notefix zum Arbeiten braucht.',
     changeLocation: 'Speicherort ändern…',
@@ -450,6 +490,9 @@ export const de = {
     notesBack: 'Notizen',
   },
   contexts: {
+    sections: {
+      manage: 'Verwaltung',
+    },
     nav: 'Kontexte',
     title: 'Kontexte',
     subtitle: 'Lokale Datenbanken auf diesem Gerät.',
@@ -515,6 +558,14 @@ export const de = {
     showToMcp: 'KI zeigen',
   },
   security: {
+    tabs: {
+      vault: 'Tresor',
+      autoLock: 'Auto-Lock',
+    },
+    sections: {
+      status: 'Status',
+      options: 'Optionen',
+    },
     title: 'Sicherheit',
     subtitle: 'Notizen mit einem Passwort-Tresor schützen.',
     notSetUp: 'Kein Tresor eingerichtet',

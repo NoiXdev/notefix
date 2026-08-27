@@ -45,6 +45,9 @@ export const fr = {
       diagnostics: 'Diagnostic',
     },
     about: {
+      sections: {
+        info: 'Infos',
+      },
       version: 'Version {{version}}',
       story: 'dginx notes est devenu Notefix — entièrement reconstruit, avec de nombreuses nouveautés.',
       project: 'Projet : noix.dev',
@@ -56,6 +59,19 @@ export const fr = {
     },
     whatsNewOnUpdate: 'Afficher les nouveautés après une mise à jour',
     appearance: {
+      tabs: {
+        general: 'Général',
+        list: 'Liste et dossiers',
+        editor: 'Éditeur',
+      },
+      sections: {
+        look: 'Aspect',
+        content: 'Contenu',
+        sidebar: 'Barre latérale',
+        noteList: 'Liste des notes',
+        text: 'Texte',
+        tools: 'Outils',
+      },
       language: 'Langue',
       langAuto: 'Automatique (système)',
       title: 'Apparence',
@@ -134,6 +150,10 @@ export const fr = {
       },
     },
     system: {
+      sections: {
+        start: 'Démarrage',
+        storage: 'Stockage',
+      },
       title: 'Système',
       subtitle: 'Comportement au démarrage et en arrière-plan.',
       startOnBoot: 'Lancer à la connexion',
@@ -163,6 +183,14 @@ export const fr = {
       },
     },
     mcp: {
+      tabs: {
+        server: 'Serveur',
+        access: 'Accès',
+      },
+      sections: {
+        config: 'Configuration',
+        connection: 'Connexion',
+      },
       title: 'MCP',
       subtitle: 'Exposez vos notes aux clients IA locaux via un serveur MCP.',
       enabled: 'Serveur actif',
@@ -191,6 +219,9 @@ export const fr = {
       copied: 'Copié',
     },
     stats: {
+      sections: {
+        overview: 'Aperçu',
+      },
       title: 'Statistiques',
       notes: 'Notes',
       archived: 'Archivées',
@@ -198,6 +229,9 @@ export const fr = {
       words: 'Mots',
     },
     apps: {
+      sections: {
+        platforms: 'Plateformes',
+      },
       title: 'Notefix partout',
       subtitle: 'Retrouvez Notefix sur tous vos appareils.',
       comingSoon: 'Bientôt disponible',
@@ -211,6 +245,9 @@ export const fr = {
     },
   },
   shortcuts: {
+    sections: {
+      bindings: 'Associations',
+    },
     title: 'Clavier',
     help: 'Mod = ⌘ (Mac) ou Ctrl. « Modifier » → appuyez sur la ou les touches souhaitées.',
     conflict: 'Conflit',
@@ -233,6 +270,9 @@ export const fr = {
     },
   },
   diagnostics: {
+    sections: {
+      checks: 'Vérifications',
+    },
     title: 'Diagnostic',
     subtitle: 'Vérifie les autorisations et les dossiers dont Notefix a besoin pour fonctionner.',
     changeLocation: 'Modifier l’emplacement…',
@@ -450,6 +490,9 @@ export const fr = {
     notesBack: 'Notes',
   },
   contexts: {
+    sections: {
+      manage: 'Gestion',
+    },
     nav: 'Contextes',
     title: 'Contextes',
     subtitle: 'Bases de données locales sur cet appareil.',
@@ -515,6 +558,14 @@ export const fr = {
     showToMcp: 'Afficher à l’IA',
   },
   security: {
+    tabs: {
+      vault: 'Coffre',
+      autoLock: 'Verrouillage auto',
+    },
+    sections: {
+      status: 'État',
+      options: 'Options',
+    },
     title: 'Sécurité',
     subtitle: 'Protégez vos notes avec un coffre à mot de passe.',
     notSetUp: 'Aucun coffre configuré',

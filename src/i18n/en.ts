@@ -45,6 +45,9 @@ export const en = {
       diagnostics: 'Diagnostics',
     },
     about: {
+      sections: {
+        info: 'Info',
+      },
       version: 'Version {{version}}',
       story: 'dginx notes became Notefix — rebuilt from scratch with many new features.',
       project: 'Project: noix.dev',
@@ -56,6 +59,19 @@ export const en = {
     },
     whatsNewOnUpdate: 'Show "What\'s New" after an update',
     appearance: {
+      tabs: {
+        general: 'General',
+        list: 'List & folders',
+        editor: 'Editor',
+      },
+      sections: {
+        look: 'Look',
+        content: 'Content',
+        sidebar: 'Sidebar',
+        noteList: 'Note list',
+        text: 'Text',
+        tools: 'Tools',
+      },
       language: 'Language',
       langAuto: 'Automatic (system)',
       title: 'Appearance',
@@ -134,6 +150,10 @@ export const en = {
       },
     },
     system: {
+      sections: {
+        start: 'Startup',
+        storage: 'Storage',
+      },
       title: 'System',
       subtitle: 'Startup and background behavior.',
       startOnBoot: 'Start at login',
@@ -163,6 +183,14 @@ export const en = {
       },
     },
     mcp: {
+      tabs: {
+        server: 'Server',
+        access: 'Access',
+      },
+      sections: {
+        config: 'Configuration',
+        connection: 'Connection',
+      },
       title: 'MCP',
       subtitle: 'Expose your notes to local AI clients over an MCP server.',
       enabled: 'Server active',
@@ -191,6 +219,9 @@ export const en = {
       copied: 'Copied',
     },
     stats: {
+      sections: {
+        overview: 'Overview',
+      },
       title: 'Statistics',
       notes: 'Notes',
       archived: 'Archived',
@@ -198,6 +229,9 @@ export const en = {
       words: 'Words',
     },
     apps: {
+      sections: {
+        platforms: 'Platforms',
+      },
       title: 'Notefix everywhere',
       subtitle: 'Get Notefix on all your devices.',
       comingSoon: 'Coming soon',
@@ -211,6 +245,9 @@ export const en = {
     },
   },
   shortcuts: {
+    sections: {
+      bindings: 'Bindings',
+    },
     title: 'Keyboard',
     help: 'Mod = ⌘ (Mac) or Ctrl. “Change” → press the desired key(s).',
     conflict: 'Conflict',
@@ -233,6 +270,9 @@ export const en = {
     },
   },
   diagnostics: {
+    sections: {
+      checks: 'Checks',
+    },
     title: 'Diagnostics',
     subtitle: 'Checks the permissions and folders Notefix needs to work.',
     changeLocation: 'Change location…',
@@ -450,6 +490,9 @@ export const en = {
     notesBack: 'Notes',
   },
   contexts: {
+    sections: {
+      manage: 'Management',
+    },
     nav: 'Contexts',
     title: 'Contexts',
     subtitle: 'Local databases on this device.',
@@ -515,6 +558,14 @@ export const en = {
     showToMcp: 'Show to AI',
   },
   security: {
+    tabs: {
+      vault: 'Vault',
+      autoLock: 'Auto-lock',
+    },
+    sections: {
+      status: 'Status',
+      options: 'Options',
+    },
     title: 'Security',
     subtitle: 'Protect notes behind a passphrase vault.',
     notSetUp: 'No vault set up',
