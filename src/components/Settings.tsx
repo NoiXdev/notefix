@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import type { IconDefinition } from "@fortawesome/fontawesome-svg-core";
-import { faGlobe, faCircleInfo, faPalette, faGear, faPlug, faChartColumn, faKeyboard, faStethoscope, faChevronRight, faDownload, faServer } from "@fortawesome/free-solid-svg-icons";
+import { faGlobe, faCircleInfo, faPalette, faGear, faPlug, faChartColumn, faKeyboard, faStethoscope, faChevronRight, faDownload, faServer, faLock } from "@fortawesome/free-solid-svg-icons";
 import { faAndroid, faApple, faGooglePlay } from "@fortawesome/free-brands-svg-icons";
 import { api, type AppInfo, type UpdateInfo } from "../api";
 import type { ContextInfo } from "../contexts";
@@ -10,17 +10,20 @@ import { startServerAuth } from "../serverAuth";
 import type { Stats } from "../types";
 import type { DateFormat } from "../dates";
 import type { AppSettings } from "../hooks/useSettings";
+import { useVault } from "../hooks/useVault";
 import Logo from "./Logo";
 import Select from "./Select";
 import Toggle from "./Toggle";
 import ShortcutsSettings from "./ShortcutsSettings";
 import PromptDialog from "./PromptDialog";
+import VaultSetup from "./VaultSetup";
+import VaultUnlock from "./VaultUnlock";
 import { runSystemChecks } from "../systemChecks";
 import { OSS_LIBS } from "../licenses";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { isMobilePlatform } from "../platform";
 
-export type Page = "about" | "apps" | "appearance" | "system" | "contexts" | "mcp" | "stats" | "shortcuts" | "diagnostics";
+export type Page = "about" | "apps" | "security" | "appearance" | "system" | "contexts" | "mcp" | "stats" | "shortcuts" | "diagnostics";
 
 interface NavItemProps {
   label: string;
@@ -149,6 +152,205 @@ function AppsPage() {
   );
 }
 
+/** In-app "change the vault passphrase" dialog: current + new + confirm-new. */
+function ChangePassphraseDialog({ vault, onClose }: { vault: ReturnType<typeof useVault>; onClose: () => void }) {
+  const { t } = useTranslation();
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async () => {
+    if (!next || next !== confirm) {
+      setError(t("vault.mismatch"));
+      return;
+    }
+    setError(null);
+    try {
+      await vault.changePassphrase(current, next);
+      onClose();
+    } catch {
+      setError(t("security.wrongCurrent"));
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.45)" }} onClick={onClose}>
+      <div className="w-96 rounded-lg bg-gray-900 border border-gray-700 p-5" onClick={e => e.stopPropagation()}>
+        <h2 className="text-gray-100 text-base font-semibold mb-3">{t("security.changePassphrase")}</h2>
+        <input
+          type="password"
+          autoFocus
+          value={current}
+          placeholder={t("security.currentPassphrase")}
+          onChange={e => setCurrent(e.target.value)}
+          className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 outline-none focus:border-[var(--accent)] mb-2"
+        />
+        <input
+          type="password"
+          value={next}
+          placeholder={t("security.newPassphrase")}
+          onChange={e => setNext(e.target.value)}
+          className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 outline-none focus:border-[var(--accent)] mb-2"
+        />
+        <input
+          type="password"
+          value={confirm}
+          placeholder={t("security.confirmNewPassphrase")}
+          onChange={e => setConfirm(e.target.value)}
+          className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 outline-none focus:border-[var(--accent)] mb-2"
+        />
+        {error && (
+          <div className="text-sm text-red-400 mb-2" role="alert">
+            {error}
+          </div>
+        )}
+        <div className="flex justify-end gap-2 mt-2">
+          <button onClick={onClose} className="px-3 py-1.5 rounded text-sm text-gray-300 hover:bg-gray-800">
+            {t("vault.cancel")}
+          </button>
+          <button
+            onClick={() => void submit()}
+            disabled={!current || !next || !confirm}
+            className="px-3 py-1.5 rounded text-sm font-medium disabled:opacity-40"
+            style={{ background: "var(--line)", color: "#1c1917" }}
+          >
+            {t("security.save")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Vault status, actions (setup / lock / change passphrase), biometric toggle + auto-lock config. */
+function SecurityPage({ settings, onSetSetting }: {
+  settings: AppSettings;
+  onSetSetting: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void;
+}) {
+  const { t } = useTranslation();
+  const vault = useVault();
+  const [biometricAvailable, setBiometricAvailable] = useState(false);
+  const [showSetup, setShowSetup] = useState(false);
+  const [showUnlockForBiometric, setShowUnlockForBiometric] = useState(false);
+  const [showChangePass, setShowChangePass] = useState(false);
+
+  useEffect(() => {
+    api.vault.biometricAvailable().then(setBiometricAvailable);
+  }, []);
+
+  const enableBiometric = async () => {
+    await api.vault.biometricEnable();
+    await vault.refresh();
+    onSetSetting("vaultBiometric", true);
+  };
+
+  const toggleBiometric = async () => {
+    if (vault.status.biometric) {
+      await api.vault.biometricDisable();
+      await vault.refresh();
+      onSetSetting("vaultBiometric", false);
+      return;
+    }
+    if (!vault.status.unlocked) {
+      setShowUnlockForBiometric(true);
+      return;
+    }
+    await enableBiometric();
+  };
+
+  return (
+    <div>
+      <h1 className="text-2xl font-bold text-gray-900 mb-1">{t("security.title")}</h1>
+      <p className="text-sm text-gray-500 mb-6">{t("security.subtitle")}</p>
+
+      <div className="flex flex-col gap-3 max-w-md">
+        {!vault.status.exists ? (
+          <>
+            <p className="text-sm text-gray-600">{t("security.notSetUp")}</p>
+            <button
+              onClick={() => setShowSetup(true)}
+              className="self-start px-4 py-1.5 rounded text-sm font-medium"
+              style={{ background: "var(--line)", color: "#1c1917" }}
+            >
+              {t("security.setUp")}
+            </button>
+          </>
+        ) : (
+          <>
+            <p className="text-sm text-gray-600">{vault.status.unlocked ? t("security.unlocked") : t("security.locked")}</p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => void vault.lock()}
+                disabled={!vault.status.unlocked}
+                className="px-4 py-1.5 rounded text-sm font-medium border disabled:opacity-40"
+                style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}
+              >
+                {t("security.lockNow")}
+              </button>
+              <button
+                onClick={() => setShowChangePass(true)}
+                className="px-4 py-1.5 rounded text-sm font-medium border"
+                style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}
+              >
+                {t("security.changePassphrase")}
+              </button>
+            </div>
+
+            {biometricAvailable && (
+              <label className="flex items-center justify-between gap-4 text-sm text-gray-800 mt-2 max-w-sm">
+                <span>{t("security.biometric")}</span>
+                <Toggle checked={vault.status.biometric} onChange={() => void toggleBiometric()} label={t("security.biometric")} />
+              </label>
+            )}
+          </>
+        )}
+      </div>
+
+      <h2 className="text-sm font-semibold text-gray-800 mt-8 mb-2">{t("security.autoLock")}</h2>
+      <div className="flex flex-col gap-3 max-w-sm">
+        <Select
+          value={settings.autoLockMode}
+          options={AUTO_LOCK_MODES.map(o => ({ value: o.value, label: t(o.labelKey) }))}
+          onChange={v => onSetSetting("autoLockMode", v as import("../hooks/useSettings").AutoLockMode)}
+        />
+        {settings.autoLockMode === "after" && (
+          <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
+            <span>{t("security.autoLockMinutes")}</span>
+            <input
+              type="number"
+              min={1}
+              value={settings.autoLockMinutes}
+              onChange={e => onSetSetting("autoLockMinutes", Math.max(1, Number(e.target.value) || 1))}
+              className="w-24 bg-white border rounded px-2 py-1"
+              style={{ borderColor: "var(--line-muted)" }}
+            />
+          </label>
+        )}
+        <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
+          <span>{t("security.lockOnSleep")}</span>
+          <Toggle checked={settings.autoLockOnSleep} onChange={() => onSetSetting("autoLockOnSleep", !settings.autoLockOnSleep)} label={t("security.lockOnSleep")} />
+        </label>
+      </div>
+
+      {showSetup && (
+        <VaultSetup setup={vault.setup} onSuccess={() => setShowSetup(false)} onCancel={() => setShowSetup(false)} />
+      )}
+      {showUnlockForBiometric && (
+        <VaultUnlock
+          biometricAvailable={false}
+          unlock={vault.unlock}
+          unlockRecovery={vault.unlockRecovery}
+          unlockBiometric={vault.unlockBiometric}
+          onSuccess={() => { setShowUnlockForBiometric(false); void enableBiometric(); }}
+          onCancel={() => setShowUnlockForBiometric(false)}
+        />
+      )}
+      {showChangePass && <ChangePassphraseDialog vault={vault} onClose={() => setShowChangePass(false)} />}
+    </div>
+  );
+}
+
 interface Props {
   onClose: () => void;
   settings: AppSettings;
@@ -257,6 +459,12 @@ const MCP_BINDS: { value: "internal" | "external"; labelKey: string }[] = [
   { value: "external", labelKey: "settings.mcp.binds.external" },
 ];
 
+const AUTO_LOCK_MODES: { value: import("../hooks/useSettings").AutoLockMode; labelKey: string }[] = [
+  { value: "off", labelKey: "security.autoLockModes.off" },
+  { value: "onHide", labelKey: "security.autoLockModes.onHide" },
+  { value: "after", labelKey: "security.autoLockModes.after" },
+];
+
 const LANGUAGES = [
   { value: "system", label: "" }, // Label kommt aus t() zur Laufzeit
   { value: "de", label: "Deutsch" },
@@ -330,6 +538,7 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
         <nav className="flex-1 py-2">
           <NavItem icon={faCircleInfo} mobile={isMobile} label={t("settings.nav.about")} active={page === "about"} onClick={() => openPage("about")} />
           <NavItem icon={faDownload} mobile={isMobile} label={t("settings.nav.apps")} active={page === "apps"} onClick={() => openPage("apps")} />
+          <NavItem icon={faLock} mobile={isMobile} label={t("settings.nav.security")} active={page === "security"} onClick={() => openPage("security")} />
           <NavItem icon={faPalette} mobile={isMobile} label={t("settings.nav.appearance")} active={page === "appearance"} onClick={() => openPage("appearance")} />
           <NavItem icon={faGear} mobile={isMobile} label={t("settings.nav.system")} active={page === "system"} onClick={() => openPage("system")} />
           <NavItem icon={faGlobe} mobile={isMobile} label={t("contexts.nav")} active={page === "contexts"} onClick={() => openPage("contexts")} />
@@ -385,6 +594,8 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
         )}
 
         {page === "apps" && <AppsPage />}
+
+        {page === "security" && <SecurityPage settings={settings} onSetSetting={onSetSetting} />}
 
         {page === "appearance" && (
           <div>

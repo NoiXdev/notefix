@@ -9,6 +9,16 @@ const {
   mockSetDbLocation,
   mockRelaunch,
   mockPickFolder,
+  mockVaultStatus,
+  mockVaultSetup,
+  mockVaultUnlock,
+  mockVaultUnlockRecovery,
+  mockVaultUnlockBiometric,
+  mockVaultLock,
+  mockVaultChangePassphrase,
+  mockBiometricAvailable,
+  mockBiometricEnable,
+  mockBiometricDisable,
 } = vi.hoisted(() => ({
   mockIsEnabled: vi.fn(() => Promise.resolve(false)),
   mockEnable: vi.fn(() => Promise.resolve()),
@@ -17,6 +27,16 @@ const {
   mockSetDbLocation: vi.fn(() => Promise.resolve({ mode: "moved", path: "/new/notefix.db" })),
   mockRelaunch: vi.fn(),
   mockPickFolder: vi.fn(() => Promise.resolve("/new")),
+  mockVaultStatus: vi.fn(() => Promise.resolve({ exists: false, unlocked: false, biometric: false })),
+  mockVaultSetup: vi.fn(() => Promise.resolve(["code-1", "code-2"])),
+  mockVaultUnlock: vi.fn(() => Promise.resolve()),
+  mockVaultUnlockRecovery: vi.fn(() => Promise.resolve()),
+  mockVaultUnlockBiometric: vi.fn(() => Promise.resolve()),
+  mockVaultLock: vi.fn(() => Promise.resolve()),
+  mockVaultChangePassphrase: vi.fn(() => Promise.resolve()),
+  mockBiometricAvailable: vi.fn(() => Promise.resolve(false)),
+  mockBiometricEnable: vi.fn(() => Promise.resolve()),
+  mockBiometricDisable: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock("../api", () => ({
@@ -28,6 +48,18 @@ vi.mock("../api", () => ({
     setDbLocation: mockSetDbLocation,
     relaunch: mockRelaunch,
     pickFolder: mockPickFolder,
+    vault: {
+      status: mockVaultStatus,
+      setup: mockVaultSetup,
+      unlock: mockVaultUnlock,
+      unlockRecovery: mockVaultUnlockRecovery,
+      unlockBiometric: mockVaultUnlockBiometric,
+      lock: mockVaultLock,
+      changePassphrase: mockVaultChangePassphrase,
+      biometricAvailable: mockBiometricAvailable,
+      biometricEnable: mockBiometricEnable,
+      biometricDisable: mockBiometricDisable,
+    },
   },
 }));
 vi.mock('react-select', () => ({
@@ -178,5 +210,35 @@ describe("Settings — close behavior", () => {
     fireEvent.click(screen.getByText("System"));
     fireEvent.change(screen.getByDisplayValue("Fragen"), { target: { value: "quit" } });
     expect(onSetSetting).toHaveBeenCalledWith("closeAction", "quit");
+  });
+});
+
+describe("Settings — Security", () => {
+  const full = { startMinimized: false, dateFormat: "auto" as const, pinnedScope: "perFolder" as const, folderColorStyle: "icon" as const, revisionLimit: 50, autosaveDelay: 400, startView: "lastNote" as const, dashboardLayout: [{ key: "recent", x: 0, y: 0, w: 6, h: 4 }], compactTree: false, treeProgress: true, trashEnabled: true, trashRetentionDays: 30, closeAction: "ask" as const, shortcuts: {}, language: "system" as const, linkPreviewEnabled: true, linkPreviewMode: "card" as const, copyFormat: "md" as const, mcpEnabled: false, mcpBind: "internal" as const, mcpPort: 4357, mcpAuthRequired: true, mcpToken: "", mcpAllowWrite: false, autoLockMode: "off" as const, autoLockMinutes: 5, autoLockOnSleep: true, vaultBiometric: false };
+
+  it("renders the auto-lock select and toggling the mode calls onSetSetting", async () => {
+    const onSetSetting = vi.fn();
+    render(<Settings onClose={vi.fn()} settings={full} onSetSetting={onSetSetting} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Sicherheit"));
+    await waitFor(() => expect(screen.getByDisplayValue("Nie")).toBeInTheDocument());
+    fireEvent.change(screen.getByDisplayValue("Nie"), { target: { value: "after" } });
+    expect(onSetSetting).toHaveBeenCalledWith("autoLockMode", "after");
+  });
+
+  it("hides the biometric row when biometricAvailable resolves false", async () => {
+    mockVaultStatus.mockResolvedValueOnce({ exists: true, unlocked: true, biometric: false });
+    mockBiometricAvailable.mockResolvedValueOnce(false);
+    render(<Settings onClose={vi.fn()} settings={full} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Sicherheit"));
+    await waitFor(() => expect(screen.getByText("Entsperrt")).toBeInTheDocument());
+    expect(screen.queryByText("Mit Touch ID entsperren")).not.toBeInTheDocument();
+  });
+
+  it("shows the biometric toggle when biometricAvailable resolves true and the vault exists", async () => {
+    mockVaultStatus.mockResolvedValueOnce({ exists: true, unlocked: true, biometric: false });
+    mockBiometricAvailable.mockResolvedValueOnce(true);
+    render(<Settings onClose={vi.fn()} settings={full} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Sicherheit"));
+    await waitFor(() => expect(screen.getByText("Mit Touch ID entsperren")).toBeInTheDocument());
   });
 });
