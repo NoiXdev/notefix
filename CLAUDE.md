@@ -3,6 +3,12 @@
 Notefix ships from one codebase as a **desktop app** (Tauri, macOS/Windows/Linux)
 and **mobile apps** (Tauri iOS/Android). Keep both working.
 
+Notefix also has a **protected notes vault**: individual notes and whole
+folders can be encrypted at rest (XChaCha20-Poly1305), with the DEK wrapped by
+an Argon2id passphrase, a recovery key, and optionally the OS keychain for
+Touch ID unlock. Protected content syncs as ciphertext; cross-device sync of
+the vault record itself is a documented follow-up.
+
 ## Desktop vs. mobile capabilities
 
 Some backend commands are desktop-only (`#[cfg(desktop)]` in `src-tauri`):
@@ -18,6 +24,12 @@ Already gated (keep this list current): update check (About), autostart /
 start-minimized / close-behavior / storage-location (System), the autostart +
 window diagnostics checks, and the MCP nav item (the MCP server targets local
 desktop AI clients, not phones).
+
+The vault's biometric unlock (`vault_biometric_available` / `_enable` /
+`_disable`, `vault_unlock_biometric`) is macOS-desktop-only: it's backed by
+Touch ID via `LocalAuthentication`. On mobile and Linux `is_available()`
+simply returns `false` (mobile biometric via a plugin is deferred), so gate
+the biometric UI on that check rather than on `isMobilePlatform` alone.
 
 ### Two different "mobile" signals — don't confuse them
 
