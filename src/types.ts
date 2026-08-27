@@ -26,6 +26,7 @@ export interface NoteMeta {
   preview: string;
   tasksDone: number;
   tasksTotal: number;
+  protected: boolean;
 }
 
 export interface Folder {
@@ -36,6 +37,7 @@ export interface Folder {
   icon: string;
   color: string;
   sort: string;
+  locked: boolean;
 }
 
 export interface Stats {

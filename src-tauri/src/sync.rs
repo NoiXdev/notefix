@@ -85,6 +85,10 @@ pub fn folder_from_wire(v: &Value) -> Folder {
         updated_at: v["updatedAt"].as_str().map(iso8601_to_ms).unwrap_or(0),
         deleted_at: v["deletedAt"].as_str().map(iso8601_to_ms),
         dirty: false,
+        // `locked` is local vault state, not carried over the wire — same
+        // treatment as `Note.protected`, which `note_to_wire`/`note_from_wire`
+        // don't touch either.
+        locked: false,
     }
 }
 
@@ -313,6 +317,7 @@ mod tests {
             updated_at: 1_700_000_000_000,
             deleted_at: Some(1_700_000_005_000),
             dirty: true,
+            locked: false,
         };
         let back = folder_from_wire(&folder_to_wire(&f));
         assert_eq!(back.name, "Work");

@@ -20,6 +20,8 @@ pub struct Folder {
     pub deleted_at: Option<i64>,
     #[serde(default)]
     pub dirty: bool,
+    #[serde(default)]
+    pub locked: bool,
 }
 
 pub enum DeleteMode {
@@ -46,7 +48,7 @@ fn now_ms() -> i64 {
 }
 
 pub fn load_folders(conn: &Connection) -> rusqlite::Result<Vec<Folder>> {
-    let mut stmt = conn.prepare("SELECT id, name, parent_id, position, icon, color, sort, updated_at, deleted_at, dirty FROM folders WHERE deleted_at IS NULL ORDER BY position, name")?;
+    let mut stmt = conn.prepare("SELECT id, name, parent_id, position, icon, color, sort, updated_at, deleted_at, dirty, locked FROM folders WHERE deleted_at IS NULL ORDER BY position, name")?;
     let rows = stmt.query_map([], |r| {
         Ok(Folder {
             id: r.get(0)?,
@@ -59,6 +61,7 @@ pub fn load_folders(conn: &Connection) -> rusqlite::Result<Vec<Folder>> {
             updated_at: r.get(7)?,
             deleted_at: r.get(8)?,
             dirty: r.get(9)?,
+            locked: r.get(10)?,
         })
     })?;
     rows.collect()
@@ -244,7 +247,7 @@ pub fn touch_folder(conn: &Connection, id: &str) -> rusqlite::Result<()> {
 }
 
 pub fn load_dirty_folders(conn: &Connection) -> rusqlite::Result<Vec<Folder>> {
-    let mut stmt = conn.prepare("SELECT id, name, parent_id, position, icon, color, sort, updated_at, deleted_at, dirty FROM folders WHERE dirty = 1")?;
+    let mut stmt = conn.prepare("SELECT id, name, parent_id, position, icon, color, sort, updated_at, deleted_at, dirty, locked FROM folders WHERE dirty = 1")?;
     let rows = stmt.query_map([], |r| {
         Ok(Folder {
             id: r.get(0)?,
@@ -257,6 +260,7 @@ pub fn load_dirty_folders(conn: &Connection) -> rusqlite::Result<Vec<Folder>> {
             updated_at: r.get(7)?,
             deleted_at: r.get(8)?,
             dirty: r.get(9)?,
+            locked: r.get(10)?,
         })
     })?;
     rows.collect()
@@ -343,6 +347,15 @@ mod tests {
         let f = load_folders(&s.conn).unwrap();
         assert_eq!(f[0].icon, "fa:star");
         assert_eq!(f[0].color, "#22c55e");
+    }
+
+    #[test]
+    fn load_folders_exposes_locked() {
+        let s = store();
+        create_folder(&s.conn, "a", "A", None).unwrap();
+        assert!(!load_folders(&s.conn).unwrap()[0].locked);
+        s.set_folder_locked("a", true).unwrap();
+        assert!(load_folders(&s.conn).unwrap()[0].locked);
     }
 
     #[test]

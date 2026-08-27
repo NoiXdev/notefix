@@ -42,4 +42,12 @@ describe('CombinedNoteList', () => {
     fireEvent.click(await screen.findByText('Welt'));
     await waitFor(() => expect(onSelectNote).toHaveBeenCalledWith('n2', 'c2'));
   });
+
+  it('renders the locked placeholder instead of the preview for a protected note', async () => {
+    loadAll.mockResolvedValueOnce([
+      { contextId: 'c1', contextLabel: 'Privat', kind: 'local', note: { id: 'n3', preview: '', tasksDone: 0, tasksTotal: 0, updatedAt: 5, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position: 0, deletedAt: null, protected: true } },
+    ]);
+    render(<CombinedNoteList selectedId={null} activeContextId="c1" onSelectNote={() => {}} onCreate={() => {}} onOpenSettings={() => {}} onOpenContexts={() => {}} dateFormat="auto" />);
+    expect(await screen.findByText('Geschützt')).toBeInTheDocument();
+  });
 });

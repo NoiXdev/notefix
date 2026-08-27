@@ -484,5 +484,10 @@ export const de = {
     wrongPassphrase: 'Falsches Passwort',
     biometricFailed: 'Touch ID fehlgeschlagen — bitte Passwort eingeben',
     cancel: 'Abbrechen',
+    protected: 'Geschützt',
+    lockNote: 'Notiz sperren',
+    unlockNote: 'Notiz entsperren',
+    lockFolder: 'Ordner sperren',
+    unlockFolder: 'Ordner entsperren',
   },
 };

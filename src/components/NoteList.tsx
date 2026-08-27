@@ -8,7 +8,7 @@ import type { PinnedScope, FolderColorStyle } from '../hooks/useSettings';
 import ContextMenu, { type ContextMenuItem } from './ContextMenu';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import type { IconDefinition } from '@fortawesome/fontawesome-svg-core';
-import { faThumbtack, faBoxArchive, faRightLong, faTrash, faTrashCan, faFileExport, faPalette, faArrowDownAZ, faCheck, faFolderPlus, faPen, faTableColumns, faNoteSticky, faGear, faFolder, faMagnifyingGlass } from '@fortawesome/free-solid-svg-icons';
+import { faThumbtack, faBoxArchive, faRightLong, faTrash, faTrashCan, faFileExport, faPalette, faArrowDownAZ, faCheck, faFolderPlus, faPen, faTableColumns, faNoteSticky, faGear, faFolder, faMagnifyingGlass, faLock, faLockOpen } from '@fortawesome/free-solid-svg-icons';
 import ConfirmDialog from './ConfirmDialog';
 import FolderCustomizer from './FolderCustomizer';
 import Logo from './Logo';
@@ -56,6 +56,8 @@ interface Props {
   onEmptyTrash?: () => void;
   onExportNote: (note: NoteMeta) => void;
   onOpenContexts?: () => void;
+  onProtectNote?: (id: string, next: boolean) => void;
+  onLockFolder?: (id: string, next: boolean) => void;
 }
 
 const sortNotes = (a: NoteMeta, b: NoteMeta) => Number(b.pinned) - Number(a.pinned) || a.position - b.position;
@@ -80,7 +82,7 @@ export default function NoteList(props: Props) {
     dateFormat = 'auto', pinnedScope = 'perFolder', folderColorStyle = 'icon',
     compactTree = false, treeProgress = true,
     trashed = [], trashEnabled = true, onRestore, onPurge, onEmptyTrash, onExportNote,
-    onOpenContexts,
+    onOpenContexts, onProtectNote, onLockFolder,
   } = props;
 
   const [showGame, setShowGame] = useState(false);
@@ -302,7 +304,10 @@ export default function NoteList(props: Props) {
           {activeDrag ? (
             <div className="px-3 py-2 rounded bg-gray-800 text-gray-100 text-sm shadow-lg max-w-56 truncate">
               {activeDrag.kind === 'note'
-                ? (notes.find(n => n.id === activeDrag.id)?.preview || t('noteList.untitled'))
+                ? (() => {
+                    const dragged = notes.find(n => n.id === activeDrag.id);
+                    return dragged?.protected ? t('vault.protected') : dragged?.preview || t('noteList.untitled');
+                  })()
                 : (folders.find(f => f.id === activeDrag.id)?.name ?? '')}
             </div>
           ) : null}
@@ -319,7 +324,16 @@ export default function NoteList(props: Props) {
           {trashed.length === 0 && <p className="text-gray-600 text-xs text-center mt-10 px-4">{t('noteList.trashIsEmpty')}</p>}
           {trashed.map(n => (
             <div key={n.id} className="px-4 py-2 border-b border-gray-900 flex items-center justify-between gap-2">
-              <span className="text-gray-300 text-sm truncate">{n.preview || t('noteList.untitled')}</span>
+              <span className="text-gray-300 text-sm truncate">
+                {n.protected ? (
+                  <span className="inline-flex items-center gap-1.5 text-gray-400">
+                    <FontAwesomeIcon icon={faLock} className="text-[11px]" />
+                    {t('vault.protected')}
+                  </span>
+                ) : (
+                  n.preview || t('noteList.untitled')
+                )}
+              </span>
               <div className="flex items-center gap-3 shrink-0">
                 <button onClick={() => onRestore?.(n.id)} className="text-xs text-gray-400 hover:text-white" title={t('noteList.restore')}>{t('noteList.restore')}</button>
                 <button onClick={() => setPendingPurge(n.id)} className="text-xs text-gray-500 hover:text-red-400" title={t('noteList.confirm.deletePermanent')}>{t('noteList.delete')}</button>
@@ -343,6 +357,7 @@ export default function NoteList(props: Props) {
             ...(onMoveNote ? [{ label: t('noteList.menu.moveTo'), icon: fa(faRightLong), submenu: moveSubmenu(menu.note) }] : []),
             { label: t('noteList.menu.delete'), icon: fa(faTrash), onClick: () => setPendingDelete(menu.note.id) },
             { label: t('noteList.menu.export'), icon: fa(faFileExport), onClick: () => onExportNote(menu.note) },
+            ...(onProtectNote ? [{ label: menu.note.protected ? t('vault.unlockNote') : t('vault.lockNote'), icon: fa(menu.note.protected ? faLockOpen : faLock), onClick: () => onProtectNote(menu.note.id, !menu.note.protected) }] : []),
           ]}
           onClose={() => setMenu(null)}
         />
@@ -357,6 +372,7 @@ export default function NoteList(props: Props) {
             { label: t('noteList.menu.newSubfolder'), icon: fa(faFolderPlus), onClick: () => createAndEdit(folderMenu.folder.id) },
             { label: t('noteList.menu.rename'), icon: fa(faPen), onClick: () => setEditingFolder(folderMenu.folder.id) },
             { label: t('noteList.menu.delete'), icon: fa(faTrash), onClick: () => onDeleteFolder?.(folderMenu.folder) },
+            ...(onLockFolder ? [{ label: folderMenu.folder.locked ? t('vault.unlockFolder') : t('vault.lockFolder'), icon: fa(folderMenu.folder.locked ? faLockOpen : faLock), onClick: () => onLockFolder(folderMenu.folder.id, !folderMenu.folder.locked) }] : []),
           ]}
           onClose={() => setFolderMenu(null)}
         />

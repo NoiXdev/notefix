@@ -21,8 +21,8 @@ vi.mock('../api', () => ({
   },
 }));
 
-const note = (id: string, content: string, updatedAt = Date.now(), pinned = false, archived = false, color = '', dueAt: number | null = null, folderId: string | null = null): NoteMeta =>
-  ({ id, updatedAt, pinned, archived, color, dueAt, folderId, position: 0, deletedAt: null, preview: getPreview(content), tasksDone: 0, tasksTotal: 0 });
+const note = (id: string, content: string, updatedAt = Date.now(), pinned = false, archived = false, color = '', dueAt: number | null = null, folderId: string | null = null, protectedNote = false): NoteMeta =>
+  ({ id, updatedAt, pinned, archived, color, dueAt, folderId, position: 0, deletedAt: null, preview: getPreview(content), tasksDone: 0, tasksTotal: 0, protected: protectedNote });
 
 const defaultProps = {
   notes: [],
@@ -263,6 +263,54 @@ describe("NoteList — delete & trash", () => {
     expect(screen.getByText('Weg')).toBeInTheDocument();
     fireEvent.click(screen.getByText('Wiederherstellen'));
     expect(onRestore).toHaveBeenCalledWith('t');
+  });
+});
+
+describe("NoteList — protected notes", () => {
+  it("renders the locked placeholder instead of the preview for a protected note", () => {
+    render(<NoteList {...defaultProps} notes={[note('a', '<p>Secret</p>', 1000, false, false, '', null, null, true)]} />);
+    expect(screen.getByText('Geschützt')).toBeInTheDocument();
+    expect(screen.queryByText('Secret')).not.toBeInTheDocument();
+  });
+
+  it("an unprotected note still renders its preview, not the locked label", () => {
+    render(<NoteList {...defaultProps} notes={[note('a', '<p>Visible</p>')]} />);
+    expect(screen.getByText('Visible')).toBeInTheDocument();
+    expect(screen.queryByText('Geschützt')).not.toBeInTheDocument();
+  });
+
+  it("note context menu offers 'Notiz sperren' and calls onProtectNote(id, true)", () => {
+    const onProtectNote = vi.fn();
+    render(<NoteList {...defaultProps} notes={[note('a', '<p>Note</p>')]} onProtectNote={onProtectNote} />);
+    fireEvent.contextMenu(screen.getByText('Note'));
+    fireEvent.click(screen.getByText('Notiz sperren'));
+    expect(onProtectNote).toHaveBeenCalledWith('a', true);
+  });
+
+  it("a protected note's context menu offers 'Notiz entsperren' and calls onProtectNote(id, false)", () => {
+    const onProtectNote = vi.fn();
+    render(<NoteList {...defaultProps} notes={[note('a', '<p>Note</p>', 1000, false, false, '', null, null, true)]} onProtectNote={onProtectNote} />);
+    fireEvent.contextMenu(screen.getByText('Geschützt'));
+    fireEvent.click(screen.getByText('Notiz entsperren'));
+    expect(onProtectNote).toHaveBeenCalledWith('a', false);
+  });
+
+  it("folder context menu offers 'Ordner sperren' and calls onLockFolder(id, true)", () => {
+    const onLockFolder = vi.fn();
+    const folders = [{ id: 'f1', name: 'Arbeit', parentId: null, position: 1, icon: '', color: '', sort: 'manual', locked: false }];
+    render(<NoteList {...defaultProps} folders={folders} onLockFolder={onLockFolder} />);
+    fireEvent.contextMenu(screen.getByText('Arbeit'));
+    fireEvent.click(screen.getByText('Ordner sperren'));
+    expect(onLockFolder).toHaveBeenCalledWith('f1', true);
+  });
+
+  it("a locked folder's context menu offers 'Ordner entsperren' and calls onLockFolder(id, false)", () => {
+    const onLockFolder = vi.fn();
+    const folders = [{ id: 'f1', name: 'Arbeit', parentId: null, position: 1, icon: '', color: '', sort: 'manual', locked: true }];
+    render(<NoteList {...defaultProps} folders={folders} onLockFolder={onLockFolder} />);
+    fireEvent.contextMenu(screen.getByText('Arbeit'));
+    fireEvent.click(screen.getByText('Ordner entsperren'));
+    expect(onLockFolder).toHaveBeenCalledWith('f1', false);
   });
 });
 

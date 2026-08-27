@@ -64,6 +64,20 @@ vi.mock("./api", () => ({
     getAppInfo: vi.fn(),
     openExternal: vi.fn(),
     mcpApplyConfig: vi.fn(() => Promise.resolve()),
+    vault: {
+      status: vi.fn(() => Promise.resolve({ exists: false, unlocked: false, biometric: false })),
+      setup: vi.fn(() => Promise.resolve([])),
+      unlock: vi.fn(() => Promise.resolve()),
+      unlockRecovery: vi.fn(() => Promise.resolve()),
+      unlockBiometric: vi.fn(() => Promise.resolve()),
+      lock: vi.fn(() => Promise.resolve()),
+      changePassphrase: vi.fn(() => Promise.resolve()),
+      biometricAvailable: vi.fn(() => Promise.resolve(false)),
+      biometricEnable: vi.fn(() => Promise.resolve()),
+      biometricDisable: vi.fn(() => Promise.resolve()),
+      protectNote: vi.fn(() => Promise.resolve()),
+      lockFolder: vi.fn(() => Promise.resolve()),
+    },
   },
 }));
 
@@ -105,6 +119,20 @@ describe("App — creating notes", () => {
     await waitFor(() => screen.getByTitle("Neue Notiz"));
     fireEvent.click(screen.getByTitle("Neue Notiz"));
     await waitFor(() => expect(screen.getByText("Ohne Titel")).toBeInTheDocument());
+  });
+});
+
+describe("App — protect action routes through the vault dialogs", () => {
+  it("routes 'Notiz sperren' through VaultSetup when no vault exists yet", async () => {
+    render(<App />);
+    await waitFor(() => screen.getByTitle("Neue Notiz"));
+    fireEvent.click(screen.getByTitle("Neue Notiz"));
+    await waitFor(() => expect(screen.getByText("Ohne Titel")).toBeInTheDocument());
+
+    fireEvent.contextMenu(screen.getByText("Ohne Titel"));
+    fireEvent.click(screen.getByText("Notiz sperren"));
+
+    expect(await screen.findByText("Tresor einrichten")).toBeInTheDocument();
   });
 });
 

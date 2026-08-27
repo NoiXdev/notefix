@@ -484,5 +484,10 @@ export const en = {
     wrongPassphrase: 'Wrong passphrase',
     biometricFailed: 'Touch ID failed — enter your passphrase',
     cancel: 'Cancel',
+    protected: 'Protected',
+    lockNote: 'Lock note',
+    unlockNote: 'Unlock note',
+    lockFolder: 'Lock folder',
+    unlockFolder: 'Unlock folder',
   },
 };

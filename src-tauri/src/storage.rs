@@ -82,6 +82,7 @@ pub struct NoteMeta {
     pub preview: String,
     pub tasks_done: i64,
     pub tasks_total: i64,
+    pub protected: bool,
 }
 
 /// A search match: the note's list metadata plus a snippet around the hit.
@@ -181,6 +182,7 @@ fn row_to_meta(r: &rusqlite::Row) -> rusqlite::Result<NoteMeta> {
         preview,
         tasks_done,
         tasks_total,
+        protected,
     })
 }
 
@@ -1219,11 +1221,13 @@ mod tests {
         let meta = s.load_notes_meta().unwrap();
         assert_eq!(meta[0].preview, "Title");
         assert_eq!((meta[0].tasks_done, meta[0].tasks_total), (1, 1));
+        assert!(!meta[0].protected);
 
         s.set_note_protected("a", true).unwrap();
         let meta = s.load_notes_meta().unwrap();
         assert_eq!(meta.len(), 1);
         assert_eq!(meta[0].preview, "");
         assert_eq!((meta[0].tasks_done, meta[0].tasks_total), (0, 0));
+        assert!(meta[0].protected); // NoteMeta.protected reflects the column
     }
 }

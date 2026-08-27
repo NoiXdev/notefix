@@ -5,6 +5,7 @@ import { useNotes } from './hooks/useNotes';
 import { useFolders } from './hooks/useFolders';
 import { useSettings } from './hooks/useSettings';
 import { useIsMobile } from './hooks/useIsMobile';
+import { useVault } from './hooks/useVault';
 import NoteList from './components/NoteList';
 import CombinedNoteList from './components/CombinedNoteList';
 import NoteEditor from './components/NoteEditor';
@@ -20,6 +21,8 @@ import WorkspacePicker from './components/WorkspacePicker';
 import UpdateBanner from './components/UpdateBanner';
 import SearchModal from './components/SearchModal';
 import ConfettiEasterEgg from './components/ConfettiEasterEgg';
+import VaultSetup from './components/VaultSetup';
+import VaultUnlock from './components/VaultUnlock';
 import { shouldShowUpdateBanner } from './updateCheck';
 import type { UpdateInfo } from './api';
 import { runSystemChecks, type SystemCheck } from './systemChecks';
@@ -38,6 +41,9 @@ export default function App() {
   const { notes, loading, createNote, updateNote, deleteNote, setPinned, setArchived, setColor, setDue, setFolder, reorderNotes, trashed, restoreNote, purgeNote, emptyTrash, reload: reloadNotes } = useNotes();
   const { folders, createFolder, renameFolder, deleteFolder, reorderFolders, setFolderIcon, setFolderColor, setFolderSort, reload: reloadFolders } = useFolders();
   const { settings, setSetting, loaded, reload: reloadSettings } = useSettings();
+  const vault = useVault();
+  const [pendingProtect, setPendingProtect] = useState<{ kind: 'note' | 'folder'; id: string; next: boolean } | null>(null);
+  const [vaultDialog, setVaultDialog] = useState<'setup' | 'unlock' | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [folderToDelete, setFolderToDelete] = useState<Folder | null>(null);
@@ -279,6 +285,39 @@ export default function App() {
     else setFolderToDelete(folder);
   };
 
+  // Apply a protect/lock toggle once the vault is confirmed unlocked, then
+  // refresh — the same explicit-reload pattern useFolders/useNotes use after
+  // a mutation, since the change-broadcast skips the sender window.
+  const applyProtect = async (kind: 'note' | 'folder', id: string, next: boolean) => {
+    if (kind === 'note') await api.vault.protectNote(id, next);
+    else await api.vault.lockFolder(id, next);
+    await reloadNotes();
+    await reloadFolders();
+  };
+
+  const requestProtect = (kind: 'note' | 'folder', id: string, next: boolean) => {
+    if (!vault.status.exists) {
+      setPendingProtect({ kind, id, next });
+      setVaultDialog('setup');
+    } else if (!vault.status.unlocked) {
+      setPendingProtect({ kind, id, next });
+      setVaultDialog('unlock');
+    } else {
+      void applyProtect(kind, id, next);
+    }
+  };
+
+  const cancelVaultDialog = () => { setVaultDialog(null); setPendingProtect(null); };
+
+  const afterUnlockOrSetup = () => {
+    setVaultDialog(null);
+    if (pendingProtect) {
+      const p = pendingProtect;
+      setPendingProtect(null);
+      void applyProtect(p.kind, p.id, p.next);
+    }
+  };
+
   return (
     <>
       <ConfettiEasterEgg />
@@ -354,6 +393,8 @@ export default function App() {
         onPurge={purgeNote}
         onEmptyTrash={emptyTrash}
         onExportNote={(n) => setExportNoteState(n)}
+        onProtectNote={(id, next) => requestProtect('note', id, next)}
+        onLockFolder={(id, next) => requestProtect('folder', id, next)}
       />
       ))}
       {(!isMobile || mobileEditor) && (
@@ -435,6 +476,17 @@ export default function App() {
         />
       )}
       {bindCtx && <WorkspacePicker contextId={bindCtx} onClose={() => setBindCtx(null)} />}
+      {vaultDialog === 'setup' && <VaultSetup setup={vault.setup} onSuccess={afterUnlockOrSetup} onCancel={cancelVaultDialog} />}
+      {vaultDialog === 'unlock' && (
+        <VaultUnlock
+          biometricAvailable={vault.status.biometric}
+          unlock={vault.unlock}
+          unlockRecovery={vault.unlockRecovery}
+          unlockBiometric={vault.unlockBiometric}
+          onSuccess={afterUnlockOrSetup}
+          onCancel={cancelVaultDialog}
+        />
+      )}
     </>
   );
 }

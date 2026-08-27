@@ -27,7 +27,7 @@ export function useNotes() {
     const updatedAt = Date.now();
     const position = -updatedAt;
     await api.notes.save({ id, content: '', updatedAt, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position, deletedAt: null });
-    const meta: NoteMeta = { id, updatedAt, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position, deletedAt: null, preview: '', tasksDone: 0, tasksTotal: 0 };
+    const meta: NoteMeta = { id, updatedAt, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position, deletedAt: null, preview: '', tasksDone: 0, tasksTotal: 0, protected: false };
     setNotes(prev => [meta, ...prev]);
     return id;
   }, []);
