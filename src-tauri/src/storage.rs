@@ -474,6 +474,121 @@ impl Store {
         }
         Ok(())
     }
+
+    // Protected-notes vault plumbing (schema v12). Not yet called from app
+    // code — wired in by a later task — so items carry `#[allow(dead_code)]`
+    // per the Task 1/2 precedent in `vault/`.
+
+    /// The stored vault record (opaque JSON blob managed by the crypto layer),
+    /// or `None` if no vault has been set up yet.
+    #[allow(dead_code)]
+    pub fn vault_record(&self) -> rusqlite::Result<Option<String>> {
+        use rusqlite::OptionalExtension;
+        self.conn
+            .query_row("SELECT record FROM vault WHERE id = 1", [], |r| r.get(0))
+            .optional()
+    }
+
+    /// Create or overwrite the single vault record row.
+    #[allow(dead_code)]
+    pub fn set_vault_record(&self, json: &str) -> rusqlite::Result<()> {
+        let now = now_ms();
+        self.conn.execute(
+            "INSERT INTO vault (id, record, created_at, updated_at) VALUES (1, ?1, ?2, ?2)
+             ON CONFLICT(id) DO UPDATE SET record = excluded.record, updated_at = excluded.updated_at",
+            (json, now),
+        )?;
+        Ok(())
+    }
+
+    /// Remove the vault record (e.g. when the protected vault is reset).
+    #[allow(dead_code)]
+    pub fn clear_vault_record(&self) -> rusqlite::Result<()> {
+        self.conn.execute("DELETE FROM vault WHERE id = 1", [])?;
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub fn note_protected(&self, id: &str) -> rusqlite::Result<bool> {
+        self.conn
+            .query_row("SELECT protected FROM notes WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+    }
+
+    #[allow(dead_code)]
+    pub fn set_note_protected(&self, id: &str, v: bool) -> rusqlite::Result<()> {
+        self.conn
+            .execute("UPDATE notes SET protected = ?2 WHERE id = ?1", (id, v))?;
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub fn folder_locked(&self, id: &str) -> rusqlite::Result<bool> {
+        self.conn
+            .query_row("SELECT locked FROM folders WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+    }
+
+    #[allow(dead_code)]
+    pub fn set_folder_locked(&self, id: &str, v: bool) -> rusqlite::Result<()> {
+        self.conn
+            .execute("UPDATE folders SET locked = ?2 WHERE id = ?1", (id, v))?;
+        Ok(())
+    }
+
+    /// Ids of notes directly in `folder_id`, plus notes in any of its descendant
+    /// folders (recursive).
+    #[allow(dead_code)]
+    pub fn note_ids_in_subtree(&self, folder_id: &str) -> rusqlite::Result<Vec<String>> {
+        let mut folder_ids = crate::folders::descendants(&self.conn, folder_id)?;
+        folder_ids.push(folder_id.to_string());
+        let placeholders = folder_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!("SELECT id FROM notes WHERE folder_id IN ({placeholders})");
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(folder_ids.iter()), |r| r.get(0))?;
+        rows.collect()
+    }
+
+    /// True if the note is individually `protected`, or lives (directly or
+    /// nested) inside a `locked` folder.
+    #[allow(dead_code)]
+    pub fn is_effectively_protected(&self, note_id: &str) -> rusqlite::Result<bool> {
+        use rusqlite::OptionalExtension;
+        let row: Option<(bool, Option<String>)> = self
+            .conn
+            .query_row(
+                "SELECT protected, folder_id FROM notes WHERE id = ?1",
+                [note_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        let Some((protected, mut folder_id)) = row else {
+            return Ok(false);
+        };
+        if protected {
+            return Ok(true);
+        }
+        while let Some(fid) = folder_id {
+            let folder: Option<(bool, Option<String>)> = self
+                .conn
+                .query_row(
+                    "SELECT locked, parent_id FROM folders WHERE id = ?1",
+                    [&fid],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?;
+            let Some((locked, parent_id)) = folder else {
+                break;
+            };
+            if locked {
+                return Ok(true);
+            }
+            folder_id = parent_id;
+        }
+        Ok(false)
+    }
 }
 
 /// Upsert a server note against an arbitrary connection (used inside a tx).
@@ -870,5 +985,112 @@ mod tests {
         let all = s.load_all_notes().unwrap();
         assert_eq!(all[0].content, "server");
         assert!(!all[0].dirty);
+    }
+
+    #[test]
+    fn note_protected_defaults_false_and_is_settable() {
+        let s = store();
+        s.save_note(&note("a", "<p>hi</p>", 1000)).unwrap();
+        assert!(!s.note_protected("a").unwrap());
+        s.set_note_protected("a", true).unwrap();
+        assert!(s.note_protected("a").unwrap());
+        s.set_note_protected("a", false).unwrap();
+        assert!(!s.note_protected("a").unwrap());
+    }
+
+    #[test]
+    fn folder_locked_defaults_false_and_is_settable() {
+        let s = store();
+        crate::folders::create_folder(&s.conn, "f", "Secret", None).unwrap();
+        assert!(!s.folder_locked("f").unwrap());
+        s.set_folder_locked("f", true).unwrap();
+        assert!(s.folder_locked("f").unwrap());
+    }
+
+    #[test]
+    fn effective_protection_via_own_flag() {
+        let s = store();
+        s.save_note(&note("a", "<p>hi</p>", 1000)).unwrap();
+        assert!(!s.is_effectively_protected("a").unwrap());
+        s.set_note_protected("a", true).unwrap();
+        assert!(s.is_effectively_protected("a").unwrap());
+    }
+
+    #[test]
+    fn effective_protection_via_locked_folder() {
+        let s = store();
+        crate::folders::create_folder(&s.conn, "f", "secret", None).unwrap();
+        s.save_note(&Note {
+            folder_id: Some("f".into()),
+            ..note("n", "<p>x</p>", 1000)
+        })
+        .unwrap();
+        assert!(!s.is_effectively_protected("n").unwrap());
+        s.set_folder_locked("f", true).unwrap();
+        assert!(s.is_effectively_protected("n").unwrap());
+    }
+
+    #[test]
+    fn effective_protection_via_grandparent_locked_folder() {
+        let s = store();
+        crate::folders::create_folder(&s.conn, "parent", "Parent", None).unwrap();
+        crate::folders::create_folder(&s.conn, "child", "Child", Some("parent")).unwrap();
+        s.save_note(&Note {
+            folder_id: Some("child".into()),
+            ..note("n", "<p>x</p>", 1000)
+        })
+        .unwrap();
+        assert!(!s.is_effectively_protected("n").unwrap());
+        s.set_folder_locked("parent", true).unwrap();
+        assert!(
+            s.is_effectively_protected("n").unwrap(),
+            "a locked ancestor two levels up still protects the note"
+        );
+    }
+
+    #[test]
+    fn note_ids_in_subtree_includes_folder_and_descendants_only() {
+        let s = store();
+        crate::folders::create_folder(&s.conn, "parent", "Parent", None).unwrap();
+        crate::folders::create_folder(&s.conn, "child", "Child", Some("parent")).unwrap();
+        crate::folders::create_folder(&s.conn, "other", "Other", None).unwrap();
+        s.save_note(&Note {
+            folder_id: Some("parent".into()),
+            ..note("in-parent", "<p>a</p>", 1)
+        })
+        .unwrap();
+        s.save_note(&Note {
+            folder_id: Some("child".into()),
+            ..note("in-child", "<p>b</p>", 2)
+        })
+        .unwrap();
+        s.save_note(&Note {
+            folder_id: Some("other".into()),
+            ..note("in-other", "<p>c</p>", 3)
+        })
+        .unwrap();
+        s.save_note(&note("in-root", "<p>d</p>", 4)).unwrap();
+
+        let mut ids = s.note_ids_in_subtree("parent").unwrap();
+        ids.sort();
+        assert_eq!(ids, vec!["in-child".to_string(), "in-parent".to_string()]);
+    }
+
+    #[test]
+    fn vault_record_roundtrips_and_clears() {
+        let s = store();
+        assert_eq!(s.vault_record().unwrap(), None);
+        s.set_vault_record(r#"{"salt":"abc"}"#).unwrap();
+        assert_eq!(
+            s.vault_record().unwrap().as_deref(),
+            Some(r#"{"salt":"abc"}"#)
+        );
+        s.set_vault_record(r#"{"salt":"def"}"#).unwrap();
+        assert_eq!(
+            s.vault_record().unwrap().as_deref(),
+            Some(r#"{"salt":"def"}"#)
+        );
+        s.clear_vault_record().unwrap();
+        assert_eq!(s.vault_record().unwrap(), None);
     }
 }

@@ -113,6 +113,20 @@ pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
         set_meta(conn, "schema_version", "11")?;
     }
 
+    if version < 12 {
+        conn.execute_batch(
+            "ALTER TABLE notes ADD COLUMN protected INTEGER NOT NULL DEFAULT 0;
+             ALTER TABLE folders ADD COLUMN locked INTEGER NOT NULL DEFAULT 0;
+             CREATE TABLE IF NOT EXISTS vault (
+                 id         INTEGER PRIMARY KEY CHECK (id = 1),
+                 record     TEXT NOT NULL,
+                 created_at INTEGER NOT NULL,
+                 updated_at INTEGER NOT NULL
+             );",
+        )?;
+        set_meta(conn, "schema_version", "12")?;
+    }
+
     Ok(())
 }
 
@@ -190,7 +204,7 @@ mod tests {
         let s = store();
         assert_eq!(
             get_meta(&s.conn, "schema_version").unwrap().as_deref(),
-            Some("11")
+            Some("12")
         );
     }
 
@@ -200,7 +214,7 @@ mod tests {
         run_migrations(&s.conn).unwrap();
         assert_eq!(
             get_meta(&s.conn, "schema_version").unwrap().as_deref(),
-            Some("11")
+            Some("12")
         );
     }
 
