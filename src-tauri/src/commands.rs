@@ -1434,6 +1434,18 @@ pub fn vault_setup(
     vault: VaultStateHandle<'_>,
     passphrase: String,
 ) -> Result<Vec<String>, String> {
+    // Guard against clobbering an existing vault: a second `vault_setup` call
+    // would generate a brand-new DEK and overwrite the stored record,
+    // orphaning the old DEK and permanently losing any notes already
+    // encrypted under it. This is a Tauri command (the trust boundary), so
+    // the check has to live here rather than relying on the frontend to gate
+    // it. Nothing is generated or persisted until we know no record exists.
+    {
+        let store = store.lock().map_err(|e| e.to_string())?;
+        if store.vault_record().map_err(|e| e.to_string())?.is_some() {
+            return Err("vault: a vault already exists".to_string());
+        }
+    }
     let (record, recovery_key, dek) = crate::vault::setup(&passphrase).map_err(String::from)?;
     {
         let store = store.lock().map_err(|e| e.to_string())?;
@@ -1478,6 +1490,11 @@ pub fn vault_lock(vault: VaultStateHandle<'_>) -> Result<(), String> {
 /// Unlocks with `current`, re-wraps the same DEK under `next`, persists the
 /// updated record, and leaves the vault unlocked (existing recovery key
 /// keeps working — `rewrap_passphrase` never touches it).
+///
+/// On success this re-unlocks `VaultState` by design: `current` was just
+/// cryptographically re-verified via `unlock_passphrase`, so re-arming the
+/// session with the (unchanged) DEK is safe rather than forcing a redundant
+/// unlock.
 #[tauri::command]
 pub fn vault_change_passphrase(
     store: State<'_, Mutex<Store>>,
