@@ -10,7 +10,7 @@ export default function SettingsSection({ title, children }: Props) {
   return (
     <section
       className="rounded-xl p-4 min-w-0"
-      style={{ background: "var(--panel)", border: "1px solid var(--line)" }}
+      style={{ background: "color-mix(in srgb, var(--paper), #fff 45%)", border: "1px solid var(--line)" }}
     >
       <h3 className="text-xs font-semibold mb-3" style={{ color: "var(--ink-muted)" }}>
         {title}
