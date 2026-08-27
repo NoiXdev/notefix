@@ -33,6 +33,7 @@ mod tray {
     }
 }
 mod update;
+mod vault;
 mod widgetshare;
 
 use std::sync::Mutex;
