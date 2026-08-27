@@ -19,6 +19,13 @@ pub trait NoteStore: Send + Sync {
     fn list_folders(&self) -> Result<Vec<Folder>, String>;
     /// Create a folder with a fresh id; returns the created `Folder`.
     fn create_folder(&self, name: &str, parent_id: Option<&str>) -> Result<Folder, String>;
+    /// True if the note is individually protected or lives inside a locked
+    /// folder. The vault is process-local, so the MCP surface must never
+    /// expose or mutate such a note: reads exclude it, writes refuse it.
+    fn is_effectively_protected(&self, id: &str) -> Result<bool, String>;
+    /// True if `folder_id` (or any ancestor) is locked — used to refuse
+    /// creating/placing a plaintext note inside a locked subtree.
+    fn folder_chain_has_lock(&self, folder_id: Option<&str>) -> Result<bool, String>;
     fn now_ms(&self) -> i64;
     fn new_id(&self) -> String;
     fn emit_changed(&self);
@@ -253,22 +260,34 @@ fn call_tool(
             let status = s("status").unwrap_or_else(|| "active".into());
             let group = s("groupId");
             let folders = store.list_folders()?;
-            let items: Vec<Value> = store
-                .all_notes()?
-                .into_iter()
-                .filter(|n| status == "all" || status_of(n) == status)
-                .filter(|n| {
-                    group
-                        .as_deref()
-                        .is_none_or(|g| n.folder_id.as_deref() == Some(g))
-                })
-                .map(|n| note_summary(&n, &folders))
-                .collect();
+            let mut items: Vec<Value> = Vec::new();
+            for n in store.all_notes()? {
+                if status != "all" && status_of(&n) != status {
+                    continue;
+                }
+                if group
+                    .as_deref()
+                    .is_some_and(|g| n.folder_id.as_deref() != Some(g))
+                {
+                    continue;
+                }
+                // Vault-protected notes never appear on the MCP surface — their
+                // content is ciphertext and their title ciphertext-derived.
+                if store.is_effectively_protected(&n.id)? {
+                    continue;
+                }
+                items.push(note_summary(&n, &folders));
+            }
             Ok(json!(items).to_string())
         }
         "get_note" => {
             let id = s("id").unwrap_or_default();
             let n = store.get_note(&id)?.ok_or("note not found")?;
+            // A protected note is invisible to MCP — report it as absent rather
+            // than returning ciphertext content or a ciphertext-derived title.
+            if store.is_effectively_protected(&id)? {
+                return Err("note not found".into());
+            }
             let folders = store.list_folders()?;
             let fmt = s("format").unwrap_or_else(|| "markdown".into());
             let content = match fmt.as_str() {
@@ -288,25 +307,29 @@ fn call_tool(
             let status = s("status").unwrap_or_else(|| "active".into());
             let group = s("groupId");
             let folders = store.list_folders()?;
-            let items: Vec<Value> = store
-                .all_notes()?
-                .into_iter()
-                .filter(|n| status == "all" || status_of(n) == status)
-                .filter(|n| {
-                    group
-                        .as_deref()
-                        .is_none_or(|g| n.folder_id.as_deref() == Some(g))
-                })
-                .filter_map(|n| {
-                    let plain = html_to_text(&n.content);
-                    if !plain.to_lowercase().contains(&q) || q.is_empty() {
-                        return None;
-                    }
-                    let mut v = note_summary(&n, &folders);
-                    v["snippet"] = json!(snippet(&plain, &q));
-                    Some(v)
-                })
-                .collect();
+            let mut items: Vec<Value> = Vec::new();
+            for n in store.all_notes()? {
+                if status != "all" && status_of(&n) != status {
+                    continue;
+                }
+                if group
+                    .as_deref()
+                    .is_some_and(|g| n.folder_id.as_deref() != Some(g))
+                {
+                    continue;
+                }
+                // Never scan (or match) a protected note's ciphertext content.
+                if store.is_effectively_protected(&n.id)? {
+                    continue;
+                }
+                let plain = html_to_text(&n.content);
+                if q.is_empty() || !plain.to_lowercase().contains(&q) {
+                    continue;
+                }
+                let mut v = note_summary(&n, &folders);
+                v["snippet"] = json!(snippet(&plain, &q));
+                items.push(v);
+            }
             Ok(json!(items).to_string())
         }
         "list_groups" => {
@@ -331,6 +354,11 @@ fn call_tool(
             let content = s("content").ok_or("content is required")?;
             let folder_id =
                 resolve_group(store, s("groupId").as_deref(), s("groupName").as_deref())?;
+            // Refuse to drop a plaintext note into a locked subtree — MCP has no
+            // vault key, so it can't encrypt-on-place the way the app does.
+            if store.folder_chain_has_lock(folder_id.as_deref())? {
+                return Err("folder is locked".into());
+            }
             let note = Note {
                 id: store.new_id(),
                 content: to_html(&content, s("format").as_deref()),
@@ -354,6 +382,12 @@ fn call_tool(
             }
             let id = s("id").ok_or("id is required")?;
             let text = s("text").ok_or("text is required")?;
+            // A protected note's stored content is ciphertext; appending
+            // plaintext would both leak it at rest and corrupt the blob so the
+            // app could no longer decrypt it. Refuse, touching nothing.
+            if store.is_effectively_protected(&id)? {
+                return Err("note is protected".into());
+            }
             let mut note = store.get_note(&id)?.ok_or("note not found")?;
             note.content
                 .push_str(&to_html(&text, s("format").as_deref()));
@@ -381,6 +415,17 @@ fn call_tool(
             } else {
                 None
             };
+            // Refuse — before any mutation — to modify a protected note (its
+            // content is ciphertext) or to move a note into a locked subtree
+            // (MCP has no vault key to encrypt-on-place).
+            if store.is_effectively_protected(&id)? {
+                return Err("note is protected".into());
+            }
+            if let Some(dest) = folder_id.as_ref() {
+                if store.folder_chain_has_lock(dest.as_deref())? {
+                    return Err("folder is locked".into());
+                }
+            }
             let mut note = store.get_note(&id)?.ok_or("note not found")?;
             if let Some(content) = s("content") {
                 note.content = to_html(&content, s("format").as_deref());
@@ -585,6 +630,20 @@ impl NoteStore for StoreAccess {
             .find(|f| f.id == id)
             .ok_or_else(|| "folder creation failed".to_string())
     }
+    fn is_effectively_protected(&self, id: &str) -> Result<bool, String> {
+        let st = self.app.state::<Mutex<crate::storage::Store>>();
+        let store = st.lock().unwrap();
+        store
+            .is_effectively_protected(id)
+            .map_err(|e| e.to_string())
+    }
+    fn folder_chain_has_lock(&self, folder_id: Option<&str>) -> Result<bool, String> {
+        let st = self.app.state::<Mutex<crate::storage::Store>>();
+        let store = st.lock().unwrap();
+        store
+            .folder_chain_has_lock(folder_id)
+            .map_err(|e| e.to_string())
+    }
     fn now_ms(&self) -> i64 {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -760,6 +819,37 @@ mod tests {
             };
             self.folders.lock().unwrap().push(f.clone());
             Ok(f)
+        }
+        fn is_effectively_protected(&self, id: &str) -> Result<bool, String> {
+            let folder_id = {
+                let notes = self.notes.lock().unwrap();
+                let Some(n) = notes.iter().find(|n| n.id == id) else {
+                    return Ok(false);
+                };
+                if n.protected {
+                    return Ok(true);
+                }
+                n.folder_id.clone()
+            };
+            self.folder_chain_has_lock(folder_id.as_deref())
+        }
+        fn folder_chain_has_lock(&self, folder_id: Option<&str>) -> Result<bool, String> {
+            let folders = self.folders.lock().unwrap();
+            let mut fid = folder_id.map(|s| s.to_string());
+            let mut visited = std::collections::HashSet::new();
+            while let Some(id) = fid {
+                if !visited.insert(id.clone()) {
+                    break;
+                }
+                let Some(f) = folders.iter().find(|f| f.id == id) else {
+                    break;
+                };
+                if f.locked {
+                    return Ok(true);
+                }
+                fid = f.parent_id.clone();
+            }
+            Ok(false)
         }
         fn now_ms(&self) -> i64 {
             1_000
@@ -1304,5 +1394,100 @@ mod tests {
                 "writing disabled"
             );
         }
+    }
+
+    // ---- I2: MCP must be vault-aware (protected notes are off-limits) ----
+
+    #[test]
+    fn mcp_read_tools_exclude_protected_note() {
+        // The seed note "a" is marked protected (ciphertext at rest in the real
+        // store). It must be invisible across every read surface.
+        let s = fake();
+        s.notes.lock().unwrap()[0].protected = true;
+
+        // get_note reports it as absent rather than leaking ciphertext/title.
+        assert!(call_tool("get_note", &json!({"id":"a"}), &s, false).is_err());
+        // list_notes (even status=all) omits it.
+        let list = call_json(&s, "list_notes", json!({"status":"all"}), false);
+        assert!(list.as_array().unwrap().is_empty(), "got: {list}");
+        // search_notes never scans/matches its content.
+        let search = call_json(&s, "search_notes", json!({"query":"hello"}), false);
+        assert!(search.as_array().unwrap().is_empty(), "got: {search}");
+    }
+
+    #[test]
+    fn mcp_write_tools_refuse_protected_note_and_leave_content() {
+        let s = fake();
+        s.notes.lock().unwrap()[0].protected = true;
+        let before = s.get_note("a").unwrap().unwrap().content;
+
+        let e = call_tool(
+            "update_note",
+            &json!({"id":"a","content":"## New"}),
+            &s,
+            true,
+        )
+        .unwrap_err();
+        assert!(e.contains("protected"), "got: {e}");
+        let e = call_tool("append_note", &json!({"id":"a","text":"x"}), &s, true).unwrap_err();
+        assert!(e.contains("protected"), "got: {e}");
+
+        // Neither write touched the stored (cipher)content.
+        assert_eq!(s.get_note("a").unwrap().unwrap().content, before);
+    }
+
+    #[test]
+    fn mcp_create_note_refuses_locked_folder() {
+        let s = fake();
+        s.folders.lock().unwrap().push(Folder {
+            id: "locked".into(),
+            name: "Locked".into(),
+            locked: true,
+            ..Default::default()
+        });
+        let e = call_tool(
+            "create_note",
+            &json!({"content":"secret","groupId":"locked"}),
+            &s,
+            true,
+        )
+        .unwrap_err();
+        assert!(e.contains("locked"), "got: {e}");
+        // Nothing was created — only the seed note remains.
+        assert_eq!(s.all_notes().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn mcp_note_inside_locked_folder_is_hidden_and_write_refused() {
+        // Physically plaintext (protected = false) but living in a locked
+        // folder -> effectively protected via the folder-lock ancestor walk.
+        let s = fake();
+        s.folders.lock().unwrap().push(Folder {
+            id: "locked".into(),
+            name: "Locked".into(),
+            locked: true,
+            ..Default::default()
+        });
+        s.save(&Note {
+            id: "inside".into(),
+            content: "<p>hidden text</p>".into(),
+            folder_id: Some("locked".into()),
+            updated_at: 2,
+            ..Default::default()
+        })
+        .unwrap();
+
+        assert!(call_tool("get_note", &json!({"id":"inside"}), &s, false).is_err());
+        let e = call_tool("append_note", &json!({"id":"inside","text":"x"}), &s, true).unwrap_err();
+        assert!(e.contains("protected"), "got: {e}");
+        // Also can't be moved INTO a locked folder from outside.
+        let e = call_tool(
+            "update_note",
+            &json!({"id":"a","groupId":"locked"}),
+            &s,
+            true,
+        )
+        .unwrap_err();
+        assert!(e.contains("locked"), "got: {e}");
     }
 }
