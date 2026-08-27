@@ -118,3 +118,45 @@ describe("useSettings — auto-lock toggles", () => {
     expect(result.current.settings.autoLockOnHide).toBe(false);
   });
 });
+
+describe("useSettings — lastSeenVersion", () => {
+  it("defaults to an empty string", async () => {
+    const { result } = renderHook(() => useSettings());
+    await waitFor(() => expect(result.current.settings.lastSeenVersion).toBe(""));
+  });
+
+  it("loads a stored value", async () => {
+    mockLoad.mockResolvedValue({ lastSeenVersion: "0.5.0" });
+    const { result } = renderHook(() => useSettings());
+    await waitFor(() => expect(result.current.settings.lastSeenVersion).toBe("0.5.0"));
+  });
+
+  it("setSetting persists lastSeenVersion", async () => {
+    const { result } = renderHook(() => useSettings());
+    await waitFor(() => expect(result.current.settings.lastSeenVersion).toBe(""));
+    await act(async () => { await result.current.setSetting("lastSeenVersion", "0.6.0"); });
+    expect(result.current.settings.lastSeenVersion).toBe("0.6.0");
+    expect(mockSet).toHaveBeenCalledWith("lastSeenVersion", "0.6.0");
+  });
+});
+
+describe("useSettings — whatsNewOnUpdate", () => {
+  it("defaults to true", async () => {
+    const { result } = renderHook(() => useSettings());
+    await waitFor(() => expect(result.current.settings.whatsNewOnUpdate).toBe(true));
+  });
+
+  it("loads a stored 'false' as false", async () => {
+    mockLoad.mockResolvedValue({ whatsNewOnUpdate: "false" });
+    const { result } = renderHook(() => useSettings());
+    await waitFor(() => expect(result.current.settings.whatsNewOnUpdate).toBe(false));
+  });
+
+  it("setSetting persists whatsNewOnUpdate", async () => {
+    const { result } = renderHook(() => useSettings());
+    await waitFor(() => expect(result.current.settings.whatsNewOnUpdate).toBe(true));
+    await act(async () => { await result.current.setSetting("whatsNewOnUpdate", false); });
+    expect(result.current.settings.whatsNewOnUpdate).toBe(false);
+    expect(mockSet).toHaveBeenCalledWith("whatsNewOnUpdate", "false");
+  });
+});

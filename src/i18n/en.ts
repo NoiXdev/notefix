@@ -11,6 +11,13 @@ export const en = {
     download: 'Download',
     dismiss: 'Dismiss',
   },
+  whatsNew: {
+    title: "What's New",
+    close: 'Close',
+    viewOnGitHub: 'View on GitHub',
+    error: "Couldn't load the changelog",
+    empty: 'No changelog entries yet.',
+  },
   search: {
     open: 'Search',
     placeholder: 'Search notes…',
@@ -45,7 +52,9 @@ export const en = {
       license: 'MIT License',
       openSource: 'Open Source',
       openSourceIntro: 'Notefix is built with these open-source projects:',
+      whatsNew: "What's New",
     },
+    whatsNewOnUpdate: 'Show "What\'s New" after an update',
     appearance: {
       language: 'Language',
       langAuto: 'Automatic (system)',

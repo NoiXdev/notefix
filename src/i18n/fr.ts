@@ -11,6 +11,13 @@ export const fr = {
     download: 'Télécharger',
     dismiss: 'Masquer',
   },
+  whatsNew: {
+    title: 'Nouveautés',
+    close: 'Fermer',
+    viewOnGitHub: 'Voir sur GitHub',
+    error: 'Impossible de charger le journal des modifications',
+    empty: 'Aucune nouveauté pour le moment.',
+  },
   search: {
     open: 'Rechercher',
     placeholder: 'Rechercher des notes…',
@@ -45,7 +52,9 @@ export const fr = {
       license: 'MIT License',
       openSource: 'Open Source',
       openSourceIntro: 'Notefix s’appuie sur ces projets open source :',
+      whatsNew: 'Nouveautés',
     },
+    whatsNewOnUpdate: 'Afficher les nouveautés après une mise à jour',
     appearance: {
       language: 'Langue',
       langAuto: 'Automatique (système)',

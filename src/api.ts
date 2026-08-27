@@ -22,6 +22,15 @@ export interface UpdateInfo {
   url: string;
 }
 
+/** One GitHub release, as returned by the `github_releases` backend command. */
+export interface ReleaseInfo {
+  tagName: string;
+  name: string;
+  body: string;
+  publishedAt: string;
+  prerelease: boolean;
+}
+
 export const api = {
   notes: {
     load: (): Promise<NoteMeta[]> => invoke("notes_load"),
@@ -236,6 +245,9 @@ export const api = {
 
   /** Check GitHub for a newer release (notify only; no download/install). */
   checkForUpdate: (): Promise<UpdateInfo> => invoke("check_for_update"),
+
+  /** Fetch the app's GitHub releases (newest first) for the "What's New" changelog. */
+  githubReleases: (): Promise<ReleaseInfo[]> => invoke("github_releases"),
 
   /** Start/stop/reconfigure the local MCP server. */
   mcpApplyConfig: (c: { enabled: boolean; bind: string; port: number; token: string; authRequired: boolean; allowWrite: boolean }): Promise<void> =>

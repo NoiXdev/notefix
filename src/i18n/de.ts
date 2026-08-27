@@ -11,6 +11,13 @@ export const de = {
     download: 'Herunterladen',
     dismiss: 'Ausblenden',
   },
+  whatsNew: {
+    title: 'Neu in dieser Version',
+    close: 'Schließen',
+    viewOnGitHub: 'Auf GitHub ansehen',
+    error: 'Änderungsprotokoll konnte nicht geladen werden',
+    empty: 'Noch keine Einträge im Änderungsprotokoll.',
+  },
   search: {
     open: 'Suchen',
     placeholder: 'Notizen durchsuchen…',
@@ -45,7 +52,9 @@ export const de = {
       license: 'MIT License',
       openSource: 'Open Source',
       openSourceIntro: 'Notefix baut auf diesen Open-Source-Projekten auf:',
+      whatsNew: 'Neuigkeiten',
     },
+    whatsNewOnUpdate: '„Neu in dieser Version“ nach einem Update anzeigen',
     appearance: {
       language: 'Sprache',
       langAuto: 'Automatisch (System)',

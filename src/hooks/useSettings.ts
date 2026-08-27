@@ -64,6 +64,8 @@ export interface AppSettings {
   mcpProtectedAccess: McpProtectedAccess;
   checkUpdatesOnStart: boolean;
   updateDismissedVersion: string;
+  lastSeenVersion: string;
+  whatsNewOnUpdate: boolean;
   searchScope: 'context' | 'global';
   theme: Theme;
   editorCountShow: boolean;
@@ -118,6 +120,8 @@ const DEFAULTS: AppSettings = {
   mcpProtectedAccess: 'off',
   checkUpdatesOnStart: true,
   updateDismissedVersion: '',
+  lastSeenVersion: '',
+  whatsNewOnUpdate: true,
   searchScope: 'context',
   theme: 'butter',
   editorCountShow: true,
@@ -203,6 +207,8 @@ export function useSettings() {
         : 'off',
       checkUpdatesOnStart: raw.checkUpdatesOnStart !== 'false',
       updateDismissedVersion: typeof raw.updateDismissedVersion === 'string' ? raw.updateDismissedVersion : '',
+      lastSeenVersion: typeof raw.lastSeenVersion === 'string' ? raw.lastSeenVersion : '',
+      whatsNewOnUpdate: raw.whatsNewOnUpdate !== 'false',
       searchScope: raw.searchScope === 'global' ? 'global' : 'context',
       theme: (THEMES as string[]).includes(raw.theme) ? (raw.theme as Theme) : 'butter',
       editorCountShow: raw.editorCountShow !== 'false',
