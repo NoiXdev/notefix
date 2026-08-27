@@ -11,6 +11,7 @@ mod mcp;
 mod mdconv;
 mod migrate;
 mod profiles;
+mod releases;
 mod revisions;
 mod settings;
 mod stats;
@@ -363,6 +364,7 @@ pub fn run() {
             commands::folder_set_mcp_hidden,
             linkmeta::fetch_link_meta,
             update::check_for_update,
+            releases::github_releases,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
