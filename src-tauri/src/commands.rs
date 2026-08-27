@@ -128,10 +128,16 @@ fn encrypt_note_in_place(store: &Store, id: &str, dek: &Dek) -> Result<(), Strin
         .load_note_content(id)
         .map_err(|e| e.to_string())?
         .unwrap_or_default();
+    // Capture the title from the PLAINTEXT before it's sealed — the title is
+    // deliberately left as visible metadata even once the body is ciphertext
+    // (see `Store::set_title` / `Note::title`), so it must never be derived
+    // from the ciphertext.
+    let title = crate::storage::note_preview(&plaintext);
     let sealed = seal_content(dek, id, &plaintext);
     store
         .set_content_silent(id, &sealed)
         .map_err(|e| e.to_string())?;
+    store.set_title(id, &title).map_err(|e| e.to_string())?;
     store
         .set_note_protected(id, true)
         .map_err(|e| e.to_string())?;
@@ -197,6 +203,12 @@ pub fn notes_save(
 ) -> Result<(), String> {
     {
         let store = store.lock().map_err(|e| e.to_string())?;
+        // Capture the title from the PLAINTEXT html the editor sends — before
+        // either branch below might seal `content` into ciphertext. The title
+        // is deliberately visible metadata even for a protected note (only
+        // the body is secret), so it must always come from plaintext, never
+        // from the sealed content.
+        let title = crate::storage::note_preview(&note.content);
         let protected = store
             .is_effectively_protected(&note.id)
             .map_err(|e| e.to_string())?;
@@ -207,6 +219,9 @@ pub fn notes_save(
             sealed.content = seal_content(dek, &note.id, &note.content);
             store.save_note(&sealed).map_err(|e| e.to_string())?;
             store
+                .set_title(&note.id, &title)
+                .map_err(|e| e.to_string())?;
+            store
                 .set_note_protected(&note.id, true)
                 .map_err(|e| e.to_string())?;
             // Never persist a protected note's plaintext into the (unencrypted)
@@ -216,6 +231,9 @@ pub fn notes_save(
             crate::revisions::delete_revisions(&store.conn, &note.id).map_err(|e| e.to_string())?;
         } else {
             store.save_note(&note).map_err(|e| e.to_string())?;
+            store
+                .set_title(&note.id, &title)
+                .map_err(|e| e.to_string())?;
             let limit = crate::settings::get_int(&store.conn, "revisionLimit", 50);
             crate::revisions::add_revision(&store.conn, &note.id, &note.content, limit)
                 .map_err(|e| e.to_string())?;
@@ -2022,6 +2040,68 @@ mod protected_content_tests {
         assert!(!stored.contains("very secret"));
 
         assert_eq!(open_content(&dek, "n1", &stored).unwrap(), plaintext);
+    }
+
+    /// Mirrors what `notes_save` does for an UNPROTECTED note: derive the
+    /// title from the plaintext content and persist it alongside the regular
+    /// save. Proves the note stays findable via `NoteMeta.title`.
+    #[test]
+    fn saving_unprotected_note_sets_title_from_content() {
+        let s = Store::open_in_memory().unwrap();
+        crate::migrate::run_migrations(&s.conn).unwrap();
+
+        let note = Note {
+            id: "n1".into(),
+            content: "<p>My Title</p><p>body text</p>".into(),
+            updated_at: 1,
+            ..Default::default()
+        };
+        // What notes_save does: title captured from note.content, saved
+        // alongside the (here: unprotected) content write.
+        let title = crate::storage::note_preview(&note.content);
+        s.save_note(&note).unwrap();
+        s.set_title("n1", &title).unwrap();
+
+        let meta = &s.load_notes_meta().unwrap()[0];
+        assert_eq!(meta.title, "My Title");
+        assert_eq!(meta.preview, "My Title");
+    }
+
+    /// Protecting a note (via `encrypt_note_in_place`, the primitive
+    /// `note_set_protected(true)` / `folder_set_locked(true)` / move / reorder
+    /// all share) must capture the plaintext title BEFORE sealing: the title
+    /// stays non-empty and findable while `preview` blanks out and `content`
+    /// becomes ciphertext.
+    #[test]
+    fn protecting_a_note_captures_plaintext_title_before_sealing() {
+        let s = Store::open_in_memory().unwrap();
+        crate::migrate::run_migrations(&s.conn).unwrap();
+        let dek = Dek::random();
+        let plaintext = "<p>Secret Title</p><p>body</p>";
+
+        s.save_note(&Note {
+            id: "n1".into(),
+            content: plaintext.into(),
+            updated_at: 1,
+            ..Default::default()
+        })
+        .unwrap();
+
+        encrypt_note_in_place(&s, "n1", &dek).unwrap();
+
+        let meta = &s.load_notes_meta().unwrap()[0];
+        assert_eq!(
+            meta.title, "Secret Title",
+            "title stays plaintext and findable even though the body is sealed"
+        );
+        assert_eq!(
+            meta.preview, "",
+            "preview stays blank for ciphertext content"
+        );
+        assert!(meta.protected);
+        let stored_content = s.load_note_content("n1").unwrap().unwrap();
+        assert_ne!(stored_content, plaintext);
+        assert!(!stored_content.contains("Secret"));
     }
 
     /// Mirrors the encrypt branch `note_set_protected(id, true)` takes: seal,

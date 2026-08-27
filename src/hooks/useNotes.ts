@@ -27,7 +27,7 @@ export function useNotes() {
     const updatedAt = Date.now();
     const position = -updatedAt;
     await api.notes.save({ id, content: '', updatedAt, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position, deletedAt: null });
-    const meta: NoteMeta = { id, updatedAt, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position, deletedAt: null, preview: '', tasksDone: 0, tasksTotal: 0, protected: false };
+    const meta: NoteMeta = { id, updatedAt, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position, deletedAt: null, preview: '', tasksDone: 0, tasksTotal: 0, protected: false, title: '' };
     setNotes(prev => [meta, ...prev]);
     return id;
   }, []);
@@ -39,7 +39,7 @@ export function useNotes() {
     const tasks = countTasks(content);
     setNotes(prev =>
       prev
-        .map(n => (n.id === id ? { ...n, updatedAt, preview: getPreview(content), tasksDone: tasks.done, tasksTotal: tasks.total } : n))
+        .map(n => (n.id === id ? { ...n, updatedAt, preview: getPreview(content), title: getPreview(content), tasksDone: tasks.done, tasksTotal: tasks.total } : n))
         .sort(sortNotes),
     );
     // backend's save_note preserves pinned/archived/color on conflict.

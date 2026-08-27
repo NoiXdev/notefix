@@ -70,6 +70,7 @@ mod tests {
             deleted_at: None,
             dirty: false,
             protected: false,
+            title: String::new(),
         }
     }
 

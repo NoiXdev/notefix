@@ -51,6 +51,9 @@ pub fn note_to_wire(n: &Note) -> Value {
         "updatedAt": ms_to_iso8601(n.updated_at),
         "deletedAt": n.deleted_at.map(ms_to_iso8601),
         "protected": n.protected,
+        // Plaintext metadata, synced like `folderId` — never encrypted, even
+        // for a protected note. See `Note::title`.
+        "title": n.title,
     })
 }
 
@@ -70,6 +73,7 @@ pub fn note_from_wire(v: &Value) -> Note {
         // Missing/unknown-to-server field defaults to unprotected — matches
         // today's behavior for a server that doesn't persist this field yet.
         protected: v["protected"].as_bool().unwrap_or(false),
+        title: v["title"].as_str().unwrap_or_default().to_string(),
     }
 }
 
@@ -313,6 +317,7 @@ mod tests {
             deleted_at: None,
             dirty: true,
             protected: false,
+            title: "My Title".into(),
         };
         let back = note_from_wire(&note_to_wire(&n));
         assert_eq!(back.id, "n1");
@@ -321,6 +326,14 @@ mod tests {
         assert_eq!(back.folder_id, n.folder_id);
         assert!(!back.dirty); // wire never carries dirty
         assert!(!back.protected);
+        assert_eq!(back.title, n.title);
+    }
+
+    #[test]
+    fn note_from_wire_defaults_title_empty_when_field_missing() {
+        // A server that doesn't (yet) persist `title` simply omits it.
+        let v = json!({ "id": "n1", "content": "<p>x</p>" });
+        assert_eq!(note_from_wire(&v).title, "");
     }
 
     #[test]

@@ -127,6 +127,27 @@ pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
         set_meta(conn, "schema_version", "12")?;
     }
 
+    if version < 13 {
+        // Plaintext note title (schema v13) — kept visible in the list even
+        // when `content` is sealed ciphertext for a protected note (only the
+        // BODY is secret in this feature's threat model).
+        conn.execute_batch("ALTER TABLE notes ADD COLUMN title TEXT NOT NULL DEFAULT '';")?;
+        // Backfill from existing plaintext content. Protected notes already
+        // hold ciphertext at this point — deriving a "title" from that would
+        // just be garbage, so they're left with title = '' and pick one up on
+        // their next save or re-protect.
+        let mut stmt = conn.prepare("SELECT id, content FROM notes WHERE protected = 0")?;
+        let rows: Vec<(String, String)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        drop(stmt);
+        for (id, content) in rows {
+            let title = crate::storage::note_preview(&content);
+            conn.execute("UPDATE notes SET title = ?2 WHERE id = ?1", (&id, &title))?;
+        }
+        set_meta(conn, "schema_version", "13")?;
+    }
+
     Ok(())
 }
 
@@ -204,7 +225,7 @@ mod tests {
         let s = store();
         assert_eq!(
             get_meta(&s.conn, "schema_version").unwrap().as_deref(),
-            Some("12")
+            Some("13")
         );
     }
 
@@ -214,7 +235,61 @@ mod tests {
         run_migrations(&s.conn).unwrap();
         assert_eq!(
             get_meta(&s.conn, "schema_version").unwrap().as_deref(),
-            Some("12")
+            Some("13")
+        );
+    }
+
+    #[test]
+    fn migration_v13_adds_and_backfills_title() {
+        // Simulate a pre-v13 database (schema_version = 12, no `title` column
+        // yet) with one plaintext and one already-protected note, then run
+        // the real migration path and check the backfill it performs.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE notes (
+                 id         TEXT PRIMARY KEY,
+                 content    TEXT NOT NULL,
+                 updated_at INTEGER NOT NULL,
+                 pinned     INTEGER NOT NULL DEFAULT 0,
+                 archived   INTEGER NOT NULL DEFAULT 0,
+                 color      TEXT NOT NULL DEFAULT '',
+                 due_at     INTEGER,
+                 folder_id  TEXT,
+                 position   INTEGER NOT NULL DEFAULT 0,
+                 deleted_at INTEGER,
+                 dirty      INTEGER NOT NULL DEFAULT 0,
+                 protected  INTEGER NOT NULL DEFAULT 0
+             );",
+        )
+        .unwrap();
+        set_meta(&conn, "schema_version", "12").unwrap();
+        conn.execute(
+            "INSERT INTO notes (id, content, updated_at) VALUES ('plain', '<p>Plain Title</p><p>body</p>', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO notes (id, content, updated_at, protected) VALUES ('secret', 'ciphertext-blob', 1, 1)",
+            [],
+        )
+        .unwrap();
+
+        run_migrations(&conn).unwrap();
+
+        assert_eq!(
+            get_meta(&conn, "schema_version").unwrap().as_deref(),
+            Some("13")
+        );
+        let title_of = |id: &str| -> String {
+            conn.query_row("SELECT title FROM notes WHERE id = ?1", [id], |r| r.get(0))
+                .unwrap()
+        };
+        assert_eq!(title_of("plain"), "Plain Title");
+        assert_eq!(
+            title_of("secret"),
+            "",
+            "a protected note's ciphertext can't be backfilled into a title"
         );
     }
 

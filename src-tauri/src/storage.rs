@@ -31,6 +31,15 @@ pub struct Note {
     /// the (always-verbatim) content.
     #[serde(default)]
     pub protected: bool,
+    /// Plaintext title (schema v13), derived from the first line of the
+    /// note's content via `note_preview`. Unlike `content`, this is NEVER
+    /// encrypted — even for a protected note — so the note stays findable in
+    /// the list while its body is sealed. Set via `Store::set_title`,
+    /// captured from plaintext before any encryption happens (see
+    /// `commands::notes_save` / `commands::encrypt_note_in_place`). Syncs as
+    /// plain metadata, like `folder_id`.
+    #[serde(default)]
+    pub title: String,
 }
 
 pub struct Store {
@@ -38,12 +47,14 @@ pub struct Store {
     pub sync_enabled: bool,
 }
 
-// `protected` is appended at the end (index 11). `row_to_note` reads it into
-// `Note.protected` (consumed by the sync wire mapping in `sync.rs`), and
-// `row_to_meta` reads the same index to blank the preview/task counts for
-// protected (ciphertext) rows. Every query built from `COLS` implicitly
-// carries it — including `search_notes`, which also calls `row_to_meta`.
-const COLS: &str = "id, content, updated_at, pinned, archived, color, due_at, folder_id, position, deleted_at, dirty, protected";
+// `protected` is appended at index 11, `title` at index 12. `row_to_note`
+// reads both into `Note` (consumed by the sync wire mapping in `sync.rs`),
+// and `row_to_meta` reads the same indices: `protected` to blank the
+// preview/task counts for ciphertext rows, `title` passed through unchanged
+// (it's plaintext metadata even for a protected note). Every query built
+// from `COLS` implicitly carries both — including `search_notes`, which also
+// calls `row_to_meta`.
+const COLS: &str = "id, content, updated_at, pinned, archived, color, due_at, folder_id, position, deleted_at, dirty, protected, title";
 
 fn now_ms() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -67,6 +78,7 @@ fn row_to_note(r: &rusqlite::Row) -> rusqlite::Result<Note> {
         deleted_at: r.get(9)?,
         dirty: r.get(10)?,
         protected: r.get(11)?,
+        title: r.get(12)?,
     })
 }
 
@@ -90,6 +102,10 @@ pub struct NoteMeta {
     pub tasks_done: i64,
     pub tasks_total: i64,
     pub protected: bool,
+    /// Plaintext title — see `Note::title`. NOT blanked for a protected note
+    /// (unlike `preview`), so the list stays findable while the body is
+    /// sealed.
+    pub title: String,
 }
 
 /// A search match: the note's list metadata plus a snippet around the hit.
@@ -168,7 +184,9 @@ fn row_to_meta(r: &rusqlite::Row) -> rusqlite::Result<NoteMeta> {
     // Ciphertext never gets run through the preview/task-count heuristics —
     // that would extract garbage (or, in principle, leak a plaintext-looking
     // fragment by coincidence). Protected rows report a blank preview and
-    // zero task counts instead.
+    // zero task counts instead. `title`, however, is plaintext metadata even
+    // for a protected note (see `Note::title`) — it's read below unchanged,
+    // regardless of `protected`.
     let (preview, tasks_done, tasks_total) = if protected {
         (String::new(), 0, 0)
     } else {
@@ -190,6 +208,7 @@ fn row_to_meta(r: &rusqlite::Row) -> rusqlite::Result<NoteMeta> {
         tasks_done,
         tasks_total,
         protected,
+        title: r.get(12)?,
     })
 }
 
@@ -584,6 +603,15 @@ impl Store {
         Ok(())
     }
 
+    /// Set the note's plaintext title (schema v13). Always plaintext — callers
+    /// must derive it from plaintext content BEFORE any encryption, never from
+    /// ciphertext. See `commands::notes_save` / `commands::encrypt_note_in_place`.
+    pub fn set_title(&self, id: &str, title: &str) -> rusqlite::Result<()> {
+        self.conn
+            .execute("UPDATE notes SET title = ?2 WHERE id = ?1", (id, title))?;
+        Ok(())
+    }
+
     #[allow(dead_code)]
     pub fn folder_locked(&self, id: &str) -> rusqlite::Result<bool> {
         self.conn
@@ -706,15 +734,15 @@ impl Store {
 /// pushed on the next cycle.
 pub fn upsert_note_from_server_conn(conn: &rusqlite::Connection, n: &Note) -> rusqlite::Result<()> {
     conn.execute(
-        "INSERT INTO notes (id, content, updated_at, pinned, archived, color, due_at, folder_id, position, deleted_at, dirty, protected)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, ?11)
+        "INSERT INTO notes (id, content, updated_at, pinned, archived, color, due_at, folder_id, position, deleted_at, dirty, protected, title)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, ?11, ?12)
          ON CONFLICT(id) DO UPDATE SET
             content=excluded.content, updated_at=excluded.updated_at, pinned=excluded.pinned,
             archived=excluded.archived, color=excluded.color, due_at=excluded.due_at,
             folder_id=excluded.folder_id, position=excluded.position, deleted_at=excluded.deleted_at, dirty=0,
-            protected=excluded.protected
+            protected=excluded.protected, title=excluded.title
          WHERE excluded.updated_at >= notes.updated_at",
-        (&n.id, &n.content, n.updated_at, n.pinned, n.archived, &n.color, n.due_at, &n.folder_id, n.position, n.deleted_at, n.protected),
+        (&n.id, &n.content, n.updated_at, n.pinned, n.archived, &n.color, n.due_at, &n.folder_id, n.position, n.deleted_at, n.protected, &n.title),
     )?;
     Ok(())
 }
@@ -750,6 +778,7 @@ mod tests {
             deleted_at: None,
             dirty: false,
             protected: false,
+            title: String::new(),
         }
     }
 
@@ -1343,5 +1372,37 @@ mod tests {
         assert_eq!(meta[0].preview, "");
         assert_eq!((meta[0].tasks_done, meta[0].tasks_total), (0, 0));
         assert!(meta[0].protected); // NoteMeta.protected reflects the column
+    }
+
+    #[test]
+    fn set_title_roundtrips_and_is_not_blanked_when_protected() {
+        let s = store();
+        s.save_note(&note("a", "<p>original</p>", 1000)).unwrap();
+        s.set_title("a", "My Title").unwrap();
+        assert_eq!(s.load_notes_meta().unwrap()[0].title, "My Title");
+
+        // Unlike `preview`, `title` stays visible for a protected note — it's
+        // metadata, not the secret body.
+        s.set_note_protected("a", true).unwrap();
+        let meta = &s.load_notes_meta().unwrap()[0];
+        assert_eq!(meta.title, "My Title");
+        assert_eq!(meta.preview, "");
+    }
+
+    #[test]
+    fn upsert_from_server_persists_title() {
+        let s = mem();
+        upsert_note_from_server_conn(
+            &s.conn,
+            &Note {
+                id: "n1".into(),
+                content: "<p>x</p>".into(),
+                updated_at: 1,
+                title: "Server Title".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(s.load_all_notes().unwrap()[0].title, "Server Title");
     }
 }

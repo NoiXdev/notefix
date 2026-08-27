@@ -27,6 +27,9 @@ export interface NoteMeta {
   tasksDone: number;
   tasksTotal: number;
   protected: boolean;
+  /** Plaintext title (first line of content) — stays visible even when
+   *  `content` is sealed for a protected note, so the note stays findable. */
+  title: string;
 }
 
 export interface Folder {

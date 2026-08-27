@@ -56,7 +56,7 @@ export default function NoteRow({ note, depth, selected, dropMode, dateFormat, o
               {note.protected ? (
                 <span className="inline-flex items-center gap-1.5 text-gray-400">
                   <FontAwesomeIcon icon={faLock} className="text-[11px]" />
-                  {t('vault.protected')}
+                  {note.title || t('noteList.untitled')}
                 </span>
               ) : (
                 note.preview || t('noteList.untitled')

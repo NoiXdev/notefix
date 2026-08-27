@@ -21,8 +21,8 @@ vi.mock('../api', () => ({
   },
 }));
 
-const note = (id: string, content: string, updatedAt = Date.now(), pinned = false, archived = false, color = '', dueAt: number | null = null, folderId: string | null = null, protectedNote = false): NoteMeta =>
-  ({ id, updatedAt, pinned, archived, color, dueAt, folderId, position: 0, deletedAt: null, preview: getPreview(content), tasksDone: 0, tasksTotal: 0, protected: protectedNote });
+const note = (id: string, content: string, updatedAt = Date.now(), pinned = false, archived = false, color = '', dueAt: number | null = null, folderId: string | null = null, protectedNote = false, title = ''): NoteMeta =>
+  ({ id, updatedAt, pinned, archived, color, dueAt, folderId, position: 0, deletedAt: null, preview: getPreview(content), tasksDone: 0, tasksTotal: 0, protected: protectedNote, title });
 
 const defaultProps = {
   notes: [],
@@ -267,16 +267,21 @@ describe("NoteList — delete & trash", () => {
 });
 
 describe("NoteList — protected notes", () => {
-  it("renders the locked placeholder instead of the preview for a protected note", () => {
-    render(<NoteList {...defaultProps} notes={[note('a', '<p>Secret</p>', 1000, false, false, '', null, null, true)]} />);
-    expect(screen.getByText('Geschützt')).toBeInTheDocument();
+  it("renders the note's plaintext title, not the raw preview, for a protected note", () => {
+    render(<NoteList {...defaultProps} notes={[note('a', '<p>Secret</p>', 1000, false, false, '', null, null, true, 'My Secret Note')]} />);
+    expect(screen.getByText('My Secret Note')).toBeInTheDocument();
     expect(screen.queryByText('Secret')).not.toBeInTheDocument();
   });
 
-  it("an unprotected note still renders its preview, not the locked label", () => {
+  it("falls back to the untitled label when a protected note has no title yet", () => {
+    render(<NoteList {...defaultProps} notes={[note('a', '<p>Secret</p>', 1000, false, false, '', null, null, true)]} />);
+    expect(screen.getByText('Ohne Titel')).toBeInTheDocument();
+    expect(screen.queryByText('Secret')).not.toBeInTheDocument();
+  });
+
+  it("an unprotected note still renders its preview, not the title", () => {
     render(<NoteList {...defaultProps} notes={[note('a', '<p>Visible</p>')]} />);
     expect(screen.getByText('Visible')).toBeInTheDocument();
-    expect(screen.queryByText('Geschützt')).not.toBeInTheDocument();
   });
 
   it("note context menu offers 'Notiz sperren' and calls onProtectNote(id, true)", () => {
@@ -289,8 +294,8 @@ describe("NoteList — protected notes", () => {
 
   it("a protected note's context menu offers 'Notiz entsperren' and calls onProtectNote(id, false)", () => {
     const onProtectNote = vi.fn();
-    render(<NoteList {...defaultProps} notes={[note('a', '<p>Note</p>', 1000, false, false, '', null, null, true)]} onProtectNote={onProtectNote} />);
-    fireEvent.contextMenu(screen.getByText('Geschützt'));
+    render(<NoteList {...defaultProps} notes={[note('a', '<p>Note</p>', 1000, false, false, '', null, null, true, 'Note')]} onProtectNote={onProtectNote} />);
+    fireEvent.contextMenu(screen.getByText('Note'));
     fireEvent.click(screen.getByText('Notiz entsperren'));
     expect(onProtectNote).toHaveBeenCalledWith('a', false);
   });

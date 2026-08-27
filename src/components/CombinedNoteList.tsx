@@ -75,7 +75,7 @@ export default function CombinedNoteList({ selectedId, onSelectNote, onCreate, o
               {c.note.protected ? (
                 <span className="inline-flex items-center gap-1.5 text-gray-400">
                   <FontAwesomeIcon icon={faLock} className="text-[11px]" />
-                  {t('vault.protected')}
+                  {c.note.title || t('noteList.untitled')}
                 </span>
               ) : (
                 c.note.preview || t('noteList.untitled')
