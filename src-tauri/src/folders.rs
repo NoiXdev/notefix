@@ -280,14 +280,15 @@ pub fn clear_folder_dirty(conn: &Connection, rows: &[(String, i64)]) -> rusqlite
 
 pub fn upsert_folder_from_server(conn: &Connection, f: &Folder) -> rusqlite::Result<()> {
     conn.execute(
-        "INSERT INTO folders (id, name, parent_id, position, icon, color, sort, created_at, updated_at, deleted_at, dirty)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9, 0)
+        "INSERT INTO folders (id, name, parent_id, position, icon, color, sort, created_at, updated_at, deleted_at, dirty, locked)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9, 0, ?10)
          ON CONFLICT(id) DO UPDATE SET
             name=excluded.name, parent_id=excluded.parent_id, position=excluded.position,
             icon=excluded.icon, color=excluded.color, sort=excluded.sort,
-            updated_at=excluded.updated_at, deleted_at=excluded.deleted_at, dirty=0
+            updated_at=excluded.updated_at, deleted_at=excluded.deleted_at, dirty=0,
+            locked=excluded.locked
          WHERE excluded.updated_at >= folders.updated_at",
-        (&f.id, &f.name, &f.parent_id, f.position, &f.icon, &f.color, &f.sort, f.updated_at, f.deleted_at),
+        (&f.id, &f.name, &f.parent_id, f.position, &f.icon, &f.color, &f.sort, f.updated_at, f.deleted_at, f.locked),
     )?;
     Ok(())
 }
@@ -319,6 +320,7 @@ mod tests {
             position: 0,
             deleted_at: None,
             dirty: false,
+            protected: false,
         }
     }
 

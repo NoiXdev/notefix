@@ -28,6 +28,16 @@ pub fn iso8601_to_ms(s: &str) -> i64 {
         .unwrap_or(0)
 }
 
+/// Maps a `Note` to the server wire JSON. `content` is pushed **verbatim** —
+/// for a protected note this is already ciphertext (sealed by the vault
+/// crypto layer before it ever reaches storage), and nothing in this module
+/// decrypts it. `protected` travels alongside it so a receiving device knows
+/// the bytes it just pulled are ciphertext and must not be rendered as
+/// plaintext. Syncing the flag is safe on its own: it carries no secret, and
+/// the content it describes stays unreadable without the vault DEK — which,
+/// like the wrapped vault record and the biometric keychain entry, never
+/// crosses the wire (a follow-up needs a dedicated vault-record sync entity
+/// plus server support before a second device can unlock).
 pub fn note_to_wire(n: &Note) -> Value {
     json!({
         "id": n.id,
@@ -40,6 +50,7 @@ pub fn note_to_wire(n: &Note) -> Value {
         "position": n.position,
         "updatedAt": ms_to_iso8601(n.updated_at),
         "deletedAt": n.deleted_at.map(ms_to_iso8601),
+        "protected": n.protected,
     })
 }
 
@@ -56,6 +67,9 @@ pub fn note_from_wire(v: &Value) -> Note {
         position: v["position"].as_i64().unwrap_or(0),
         deleted_at: v["deletedAt"].as_str().map(iso8601_to_ms),
         dirty: false,
+        // Missing/unknown-to-server field defaults to unprotected — matches
+        // today's behavior for a server that doesn't persist this field yet.
+        protected: v["protected"].as_bool().unwrap_or(false),
     }
 }
 
@@ -70,6 +84,7 @@ pub fn folder_to_wire(f: &Folder) -> Value {
         "position": f.position,
         "updatedAt": ms_to_iso8601(f.updated_at),
         "deletedAt": f.deleted_at.map(ms_to_iso8601),
+        "locked": f.locked,
     })
 }
 
@@ -85,10 +100,12 @@ pub fn folder_from_wire(v: &Value) -> Folder {
         updated_at: v["updatedAt"].as_str().map(iso8601_to_ms).unwrap_or(0),
         deleted_at: v["deletedAt"].as_str().map(iso8601_to_ms),
         dirty: false,
-        // `locked` is local vault state, not carried over the wire — same
-        // treatment as `Note.protected`, which `note_to_wire`/`note_from_wire`
-        // don't touch either.
-        locked: false,
+        // `locked` now syncs too — same reasoning as `Note.protected` in
+        // `note_to_wire` above: it only labels content that's already
+        // ciphertext, so the flag alone carries no secret. Missing/unknown
+        // field defaults to unlocked, matching today's behavior for a server
+        // that doesn't persist this field yet.
+        locked: v["locked"].as_bool().unwrap_or(false),
     }
 }
 
@@ -295,6 +312,7 @@ mod tests {
             position: 3,
             deleted_at: None,
             dirty: true,
+            protected: false,
         };
         let back = note_from_wire(&note_to_wire(&n));
         assert_eq!(back.id, "n1");
@@ -302,6 +320,39 @@ mod tests {
         assert_eq!(back.due_at, n.due_at);
         assert_eq!(back.folder_id, n.folder_id);
         assert!(!back.dirty); // wire never carries dirty
+        assert!(!back.protected);
+    }
+
+    #[test]
+    fn note_wire_roundtrip_preserves_protected_ciphertext() {
+        // Opaque, base64-like blob standing in for real vault ciphertext — the
+        // point of this test is that sync never inspects or decrypts it.
+        let ciphertext = "v1:Zm9vYmFyYmF6cXV1eA==:9f8a7b6c5d4e3f2a1b0c";
+        let n = Note {
+            id: "n1".into(),
+            content: ciphertext.into(),
+            updated_at: 1_700_000_000_000,
+            protected: true,
+            ..Default::default()
+        };
+
+        let wire = note_to_wire(&n);
+        // The wire payload carries the ciphertext byte-for-byte, plus the flag
+        // that tells the receiver it IS ciphertext — never plaintext.
+        assert_eq!(wire["content"], ciphertext);
+        assert_eq!(wire["protected"], true);
+
+        let back = note_from_wire(&wire);
+        assert!(back.protected);
+        assert_eq!(back.content, ciphertext);
+    }
+
+    #[test]
+    fn note_from_wire_defaults_protected_false_when_field_missing() {
+        // A server that doesn't (yet) persist `protected` simply omits it —
+        // must not be mistaken for an explicit `false` that unprotects a note.
+        let v = json!({ "id": "n1", "content": "<p>x</p>" });
+        assert!(!note_from_wire(&v).protected);
     }
 
     #[test]
@@ -322,6 +373,21 @@ mod tests {
         let back = folder_from_wire(&folder_to_wire(&f));
         assert_eq!(back.name, "Work");
         assert_eq!(back.deleted_at, f.deleted_at);
+        assert!(!back.locked);
+    }
+
+    #[test]
+    fn folder_wire_roundtrip_preserves_locked() {
+        let f = Folder {
+            id: "f1".into(),
+            name: "Secrets".into(),
+            locked: true,
+            ..Default::default()
+        };
+        let wire = folder_to_wire(&f);
+        assert_eq!(wire["locked"], true);
+        let back = folder_from_wire(&wire);
+        assert!(back.locked);
     }
 
     #[test]
@@ -343,6 +409,45 @@ mod tests {
         });
         apply_pulled(&s, &[], &[server_note]).unwrap();
         assert_eq!(s.load_all_notes().unwrap()[0].content, "server");
+    }
+
+    #[test]
+    fn apply_pulled_persists_protected_and_locked_to_db() {
+        // The wire-mapping tests above only check note_to_wire/note_from_wire
+        // in isolation. This exercises the real pull-apply path
+        // (apply_pulled -> upsert_note_from_server_conn /
+        // upsert_folder_from_server) to confirm the flags actually land in
+        // the SQLite columns, not just the in-memory struct.
+        let s = Store::open_in_memory().unwrap();
+        crate::migrate::run_migrations(&s.conn).unwrap();
+
+        let ciphertext = "v1:c2VhbGVkLWJ5dGVz:deadbeef";
+        let server_note = note_to_wire(&Note {
+            id: "n1".into(),
+            content: ciphertext.into(),
+            updated_at: 1_700_000_000_000,
+            protected: true,
+            ..Default::default()
+        });
+        let server_folder = folder_to_wire(&Folder {
+            id: "f1".into(),
+            name: "Secrets".into(),
+            updated_at: 1_700_000_000_000,
+            locked: true,
+            ..Default::default()
+        });
+
+        apply_pulled(&s, &[server_folder], &[server_note]).unwrap();
+
+        let notes = s.load_all_notes().unwrap();
+        assert_eq!(notes.len(), 1);
+        assert!(notes[0].protected, "protected flag must persist to the DB");
+        // Content stays exactly as received — never decrypted on the way in.
+        assert_eq!(notes[0].content, ciphertext);
+
+        let folders = folders::load_folders(&s.conn).unwrap();
+        assert_eq!(folders.len(), 1);
+        assert!(folders[0].locked, "locked flag must persist to the DB");
     }
 
     #[test]

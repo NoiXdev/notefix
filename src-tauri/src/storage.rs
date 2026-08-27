@@ -25,6 +25,12 @@ pub struct Note {
     pub deleted_at: Option<i64>,
     #[serde(default)]
     pub dirty: bool,
+    /// Ciphertext flag (schema v12). `true` means `content` is opaque
+    /// ciphertext, not HTML — see `note_protected`/`set_note_protected` and
+    /// `sync::note_to_wire`, which carries this flag over the wire alongside
+    /// the (always-verbatim) content.
+    #[serde(default)]
+    pub protected: bool,
 }
 
 pub struct Store {
@@ -32,11 +38,11 @@ pub struct Store {
     pub sync_enabled: bool,
 }
 
-// `protected` is appended at the end so `row_to_note` (which only reads
-// indices 0-10) is unaffected, while `row_to_meta` reads index 11 to blank
-// the preview/task counts for protected (ciphertext) rows. Every query built
-// from `COLS` implicitly carries it — including `search_notes`, which also
-// calls `row_to_meta`.
+// `protected` is appended at the end (index 11). `row_to_note` reads it into
+// `Note.protected` (consumed by the sync wire mapping in `sync.rs`), and
+// `row_to_meta` reads the same index to blank the preview/task counts for
+// protected (ciphertext) rows. Every query built from `COLS` implicitly
+// carries it — including `search_notes`, which also calls `row_to_meta`.
 const COLS: &str = "id, content, updated_at, pinned, archived, color, due_at, folder_id, position, deleted_at, dirty, protected";
 
 fn now_ms() -> i64 {
@@ -60,6 +66,7 @@ fn row_to_note(r: &rusqlite::Row) -> rusqlite::Result<Note> {
         position: r.get(8)?,
         deleted_at: r.get(9)?,
         dirty: r.get(10)?,
+        protected: r.get(11)?,
     })
 }
 
@@ -638,14 +645,15 @@ impl Store {
 /// pushed on the next cycle.
 pub fn upsert_note_from_server_conn(conn: &rusqlite::Connection, n: &Note) -> rusqlite::Result<()> {
     conn.execute(
-        "INSERT INTO notes (id, content, updated_at, pinned, archived, color, due_at, folder_id, position, deleted_at, dirty)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0)
+        "INSERT INTO notes (id, content, updated_at, pinned, archived, color, due_at, folder_id, position, deleted_at, dirty, protected)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, ?11)
          ON CONFLICT(id) DO UPDATE SET
             content=excluded.content, updated_at=excluded.updated_at, pinned=excluded.pinned,
             archived=excluded.archived, color=excluded.color, due_at=excluded.due_at,
-            folder_id=excluded.folder_id, position=excluded.position, deleted_at=excluded.deleted_at, dirty=0
+            folder_id=excluded.folder_id, position=excluded.position, deleted_at=excluded.deleted_at, dirty=0,
+            protected=excluded.protected
          WHERE excluded.updated_at >= notes.updated_at",
-        (&n.id, &n.content, n.updated_at, n.pinned, n.archived, &n.color, n.due_at, &n.folder_id, n.position, n.deleted_at),
+        (&n.id, &n.content, n.updated_at, n.pinned, n.archived, &n.color, n.due_at, &n.folder_id, n.position, n.deleted_at, n.protected),
     )?;
     Ok(())
 }
@@ -680,6 +688,7 @@ mod tests {
             position: 0,
             deleted_at: None,
             dirty: false,
+            protected: false,
         }
     }
 

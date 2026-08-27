@@ -69,6 +69,7 @@ mod tests {
             position: 0,
             deleted_at: None,
             dirty: false,
+            protected: false,
         }
     }
 
