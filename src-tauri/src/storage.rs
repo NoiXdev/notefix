@@ -553,6 +553,11 @@ impl Store {
 
     /// True if the note is individually `protected`, or lives (directly or
     /// nested) inside a `locked` folder.
+    ///
+    /// Tracks visited folder ids so a cyclic `parent_id` graph — which local
+    /// writes never produce, but an unchecked sync pull could via
+    /// `folders::upsert_folder_from_server` — terminates the walk instead of
+    /// looping forever: re-visiting an id ends the chain rather than erroring.
     #[allow(dead_code)]
     pub fn is_effectively_protected(&self, note_id: &str) -> rusqlite::Result<bool> {
         use rusqlite::OptionalExtension;
@@ -570,7 +575,11 @@ impl Store {
         if protected {
             return Ok(true);
         }
+        let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
         while let Some(fid) = folder_id {
+            if !visited.insert(fid.clone()) {
+                break; // cycle detected — stop instead of looping forever
+            }
             let folder: Option<(bool, Option<String>)> = self
                 .conn
                 .query_row(
@@ -1074,6 +1083,58 @@ mod tests {
         let mut ids = s.note_ids_in_subtree("parent").unwrap();
         ids.sort();
         assert_eq!(ids, vec!["in-child".to_string(), "in-parent".to_string()]);
+    }
+
+    /// Guarded write paths (`create_folder`/`move_folder`) can't produce a
+    /// folder cycle, but an unchecked sync pull (`upsert_folder_from_server`)
+    /// writes `parent_id` straight from wire data with no cycle check. These
+    /// two tests insert a cycle directly via raw SQL — bypassing the guarded
+    /// paths, the way a bad/malicious sync peer effectively could — and
+    /// assert the walks return promptly instead of hanging. Pre-fix, both
+    /// would loop forever on this graph; this is a termination check, not a
+    /// normal RED/GREEN pair.
+    #[test]
+    fn is_effectively_protected_terminates_on_cyclic_folder_graph() {
+        let s = store();
+        crate::folders::create_folder(&s.conn, "a", "A", None).unwrap();
+        crate::folders::create_folder(&s.conn, "b", "B", Some("a")).unwrap();
+        // Point "a" (b's parent) back at "b", closing the loop a -> b -> a.
+        s.conn
+            .execute("UPDATE folders SET parent_id = 'b' WHERE id = 'a'", [])
+            .unwrap();
+        s.save_note(&Note {
+            folder_id: Some("b".into()),
+            ..note("n", "<p>x</p>", 1000)
+        })
+        .unwrap();
+        assert!(!s.is_effectively_protected("n").unwrap());
+        // Also confirm a real lock is still found despite the cycle.
+        s.set_folder_locked("a", true).unwrap();
+        assert!(s.is_effectively_protected("n").unwrap());
+    }
+
+    #[test]
+    fn note_ids_in_subtree_terminates_on_cyclic_folder_graph() {
+        let s = store();
+        crate::folders::create_folder(&s.conn, "a", "A", None).unwrap();
+        crate::folders::create_folder(&s.conn, "b", "B", Some("a")).unwrap();
+        // Point "a" (b's parent) back at "b", closing the loop a -> b -> a.
+        s.conn
+            .execute("UPDATE folders SET parent_id = 'b' WHERE id = 'a'", [])
+            .unwrap();
+        s.save_note(&Note {
+            folder_id: Some("a".into()),
+            ..note("in-a", "<p>x</p>", 1)
+        })
+        .unwrap();
+        s.save_note(&Note {
+            folder_id: Some("b".into()),
+            ..note("in-b", "<p>y</p>", 2)
+        })
+        .unwrap();
+        let mut ids = s.note_ids_in_subtree("a").unwrap();
+        ids.sort();
+        assert_eq!(ids, vec!["in-a".to_string(), "in-b".to_string()]);
     }
 
     #[test]

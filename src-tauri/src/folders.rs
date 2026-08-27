@@ -103,8 +103,14 @@ pub fn set_folder_sort(conn: &Connection, id: &str, sort: &str) -> rusqlite::Res
 }
 
 /// All folder ids strictly below `id`.
+///
+/// Tracks visited ids so a cyclic `parent_id` graph (which local writes never
+/// produce, but an unchecked sync pull could) terminates instead of looping
+/// forever: a child already seen is skipped rather than re-queued.
 pub fn descendants(conn: &Connection, id: &str) -> rusqlite::Result<Vec<String>> {
     let mut out = Vec::new();
+    let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
+    visited.insert(id.to_string());
     let mut queue = vec![id.to_string()];
     while let Some(cur) = queue.pop() {
         let mut stmt = conn.prepare("SELECT id FROM folders WHERE parent_id = ?1")?;
@@ -112,8 +118,10 @@ pub fn descendants(conn: &Connection, id: &str) -> rusqlite::Result<Vec<String>>
             .query_map([&cur], |r| r.get(0))?
             .collect::<rusqlite::Result<_>>()?;
         for k in kids {
-            out.push(k.clone());
-            queue.push(k);
+            if visited.insert(k.clone()) {
+                out.push(k.clone());
+                queue.push(k);
+            }
         }
     }
     Ok(out)
