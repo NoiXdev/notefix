@@ -307,14 +307,22 @@ function SecurityPage({ settings, onSetSetting }: {
         )}
       </div>
 
+      <h2 className="text-sm font-semibold text-gray-800 mt-8 mb-2">{t("security.lockScope")}</h2>
+      <div className="max-w-sm">
+        <Select
+          value={settings.vaultLockScope}
+          options={VAULT_LOCK_SCOPES.map(o => ({ value: o.value, label: t(o.labelKey) }))}
+          onChange={v => onSetSetting("vaultLockScope", v as import("../hooks/useSettings").VaultLockScope)}
+        />
+      </div>
+
       <h2 className="text-sm font-semibold text-gray-800 mt-8 mb-2">{t("security.autoLock")}</h2>
       <div className="flex flex-col gap-3 max-w-sm">
-        <Select
-          value={settings.autoLockMode}
-          options={AUTO_LOCK_MODES.map(o => ({ value: o.value, label: t(o.labelKey) }))}
-          onChange={v => onSetSetting("autoLockMode", v as import("../hooks/useSettings").AutoLockMode)}
-        />
-        {settings.autoLockMode === "after" && (
+        <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
+          <span>{t("security.autoLockIdle")}</span>
+          <Toggle checked={settings.autoLockIdle} onChange={() => onSetSetting("autoLockIdle", !settings.autoLockIdle)} label={t("security.autoLockIdle")} />
+        </label>
+        {settings.autoLockIdle && (
           <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
             <span>{t("security.autoLockMinutes")}</span>
             <input
@@ -327,6 +335,10 @@ function SecurityPage({ settings, onSetSetting }: {
             />
           </label>
         )}
+        <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
+          <span>{t("security.autoLockOnHide")}</span>
+          <Toggle checked={settings.autoLockOnHide} onChange={() => onSetSetting("autoLockOnHide", !settings.autoLockOnHide)} label={t("security.autoLockOnHide")} />
+        </label>
         <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
           <span>{t("security.lockOnSleep")}</span>
           <Toggle checked={settings.autoLockOnSleep} onChange={() => onSetSetting("autoLockOnSleep", !settings.autoLockOnSleep)} label={t("security.lockOnSleep")} />
@@ -459,10 +471,9 @@ const MCP_BINDS: { value: "internal" | "external"; labelKey: string }[] = [
   { value: "external", labelKey: "settings.mcp.binds.external" },
 ];
 
-const AUTO_LOCK_MODES: { value: import("../hooks/useSettings").AutoLockMode; labelKey: string }[] = [
-  { value: "off", labelKey: "security.autoLockModes.off" },
-  { value: "onHide", labelKey: "security.autoLockModes.onHide" },
-  { value: "after", labelKey: "security.autoLockModes.after" },
+const VAULT_LOCK_SCOPES: { value: import("../hooks/useSettings").VaultLockScope; labelKey: string }[] = [
+  { value: "session", labelKey: "security.lockScopes.session" },
+  { value: "perNote", labelKey: "security.lockScopes.perNote" },
 ];
 
 const LANGUAGES = [

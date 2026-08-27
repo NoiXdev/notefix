@@ -49,3 +49,43 @@ describe("useSettings — pinnedScope", () => {
     await waitFor(() => expect(result.current.settings.pinnedScope).toBe("global"));
   });
 });
+
+describe("useSettings — vaultLockScope", () => {
+  it("defaults to session", async () => {
+    const { result } = renderHook(() => useSettings());
+    await waitFor(() => expect(result.current.settings.vaultLockScope).toBe("session"));
+  });
+
+  it("loads a stored perNote value and falls back to session for junk", async () => {
+    mockLoad.mockResolvedValue({ vaultLockScope: "perNote" });
+    const { result } = renderHook(() => useSettings());
+    await waitFor(() => expect(result.current.settings.vaultLockScope).toBe("perNote"));
+
+    mockLoad.mockResolvedValue({ vaultLockScope: "bogus" });
+    const { result: result2 } = renderHook(() => useSettings());
+    await waitFor(() => expect(result2.current.settings.vaultLockScope).toBe("session"));
+  });
+
+  it("setSetting persists vaultLockScope", async () => {
+    const { result } = renderHook(() => useSettings());
+    await waitFor(() => expect(result.current.settings.vaultLockScope).toBe("session"));
+    await act(async () => { await result.current.setSetting("vaultLockScope", "perNote"); });
+    expect(result.current.settings.vaultLockScope).toBe("perNote");
+    expect(mockSet).toHaveBeenCalledWith("vaultLockScope", "perNote");
+  });
+});
+
+describe("useSettings — auto-lock toggles", () => {
+  it("autoLockIdle and autoLockOnHide default to true", async () => {
+    const { result } = renderHook(() => useSettings());
+    await waitFor(() => expect(result.current.settings.autoLockIdle).toBe(true));
+    expect(result.current.settings.autoLockOnHide).toBe(true);
+  });
+
+  it("loads stored 'false' as false for both toggles", async () => {
+    mockLoad.mockResolvedValue({ autoLockIdle: "false", autoLockOnHide: "false" });
+    const { result } = renderHook(() => useSettings());
+    await waitFor(() => expect(result.current.settings.autoLockIdle).toBe(false));
+    expect(result.current.settings.autoLockOnHide).toBe(false);
+  });
+});

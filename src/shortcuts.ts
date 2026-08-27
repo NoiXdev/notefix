@@ -11,6 +11,7 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   { id: 'openContextPicker', labelKey: 'shortcuts.actions.openContextPicker', defaultCombo: 'Mod+K', context: 'main' },
   { id: 'openSearch', labelKey: 'shortcuts.actions.openSearch', defaultCombo: 'Mod+P', context: 'main' },
   { id: 'findInNote', labelKey: 'shortcuts.actions.findInNote', defaultCombo: 'Mod+F', context: 'main' },
+  { id: 'lockVault', labelKey: 'shortcuts.actions.lockVault', defaultCombo: 'Mod+Shift+L', context: 'main' },
   { id: 'closeWindow', labelKey: 'shortcuts.actions.closeWindow', defaultCombo: 'Escape', context: 'window' },
 ];
 

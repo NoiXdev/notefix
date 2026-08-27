@@ -30,6 +30,12 @@ describe('shortcuts helpers', () => {
     expect(parseShortcuts('nope')).toEqual({});
     expect(parseShortcuts(undefined)).toEqual({});
   });
+  it('registers the lock-vault shortcut with its default combo', () => {
+    const byId = Object.fromEntries(SHORTCUT_ACTIONS.map(a => [a.id, a]));
+    expect(byId.lockVault?.defaultCombo).toBe('Mod+Shift+L');
+    const b = resolveBindings({});
+    expect(b.lockVault).toBe('Mod+Shift+L');
+  });
   it('registers the context-switching shortcuts with defaults', () => {
     const byId = Object.fromEntries(SHORTCUT_ACTIONS.map(a => [a.id, a]));
     expect(byId.switchContextNext?.defaultCombo).toBe('Mod+Shift+K');

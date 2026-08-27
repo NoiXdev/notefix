@@ -46,6 +46,10 @@ export default function App() {
   const vault = useVault();
   const [pendingProtect, setPendingProtect] = useState<{ kind: 'note' | 'folder'; id: string; next: boolean } | null>(null);
   const [vaultDialog, setVaultDialog] = useState<'setup' | 'unlock' | null>(null);
+  // 'perNote' lock scope: notes unlocked this session, so re-locking the note
+  // list doesn't force re-entering the passphrase for a note already shown.
+  const [revealedNotes, setRevealedNotes] = useState<Set<string>>(new Set());
+  const [pendingReveal, setPendingReveal] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [folderToDelete, setFolderToDelete] = useState<Folder | null>(null);
@@ -219,6 +223,9 @@ export default function App() {
       if (showSettings) return;
       // Note finder works even while editing (before the input/editable guard).
       if (combo === bindings.openSearch) { e.preventDefault(); setSearchOpen(o => !o); return; }
+      // Locking the vault is a security action — it should work even while
+      // editing, same as search above.
+      if (combo === bindings.lockVault) { e.preventDefault(); if (vault.status.exists && vault.status.unlocked) void vault.lock(); return; }
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
       if (combo === bindings.newFolder) { e.preventDefault(); void createFolder(i18n.t('noteList.newFolderName'), null); return; }
@@ -247,14 +254,22 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [notes, selectedId, selectedNote, showSettings, createFolder, handleCreate, setArchived, settings.shortcuts, contexts]);
+  }, [notes, selectedId, selectedNote, showSettings, createFolder, handleCreate, setArchived, settings.shortcuts, contexts, vault.status.exists, vault.status.unlocked, vault.lock]);
+
+  // 'perNote' lock scope: whenever the vault locks (any path — idle timer,
+  // hide/sleep, the shortcut, the sidebar button, Security page), forget which
+  // notes were revealed this session so they require unlocking again.
+  useEffect(() => {
+    if (!vault.status.unlocked) setRevealedNotes(new Set());
+  }, [vault.status.unlocked]);
 
   // Auto-lock: idle timer. Only while the vault is actually unlocked and the
-  // user opted into 'after N minutes'; any user activity resets the clock.
-  // Skipped in the detached note window (windowNoteId), which has no vault UI.
+  // user opted into locking after N minutes; any user activity resets the
+  // clock. Skipped in the detached note window (windowNoteId), which has no
+  // vault UI.
   useEffect(() => {
     if (windowNoteId) return;
-    if (!vault.status.unlocked || settings.autoLockMode !== 'after') return;
+    if (!vault.status.unlocked || !settings.autoLockIdle) return;
     const timeoutMs = settings.autoLockMinutes * 60000;
     let timer: ReturnType<typeof setTimeout>;
     const scheduleLock = () => {
@@ -273,20 +288,21 @@ export default function App() {
       window.removeEventListener('mousedown', scheduleLock);
       window.removeEventListener('touchstart', scheduleLock);
     };
-  }, [vault.status.unlocked, settings.autoLockMode, settings.autoLockMinutes, vault.lock]);
+  }, [vault.status.unlocked, settings.autoLockIdle, settings.autoLockMinutes, vault.lock]);
 
-  // Auto-lock: hide/sleep. 'onHide' locks whenever the app is backgrounded;
-  // autoLockOnSleep additionally covers system sleep/lock, for which there is
-  // no dedicated Tauri event — document visibility is the practical proxy for
-  // both cases (the OS hides/suspends the webview in either scenario).
+  // Auto-lock: hide/sleep. autoLockOnHide locks whenever the app is
+  // backgrounded; autoLockOnSleep additionally covers system sleep/lock, for
+  // which there is no dedicated Tauri event — document visibility is the
+  // practical proxy for both cases (the OS hides/suspends the webview in
+  // either scenario).
   useEffect(() => {
     if (windowNoteId) return;
     if (!vault.status.unlocked) return;
-    if (settings.autoLockMode !== 'onHide' && !settings.autoLockOnSleep) return;
+    if (!settings.autoLockOnHide && !settings.autoLockOnSleep) return;
     const onVisibility = () => { if (document.hidden) void vault.lock(); };
     document.addEventListener('visibilitychange', onVisibility);
     return () => document.removeEventListener('visibilitychange', onVisibility);
-  }, [vault.status.unlocked, settings.autoLockMode, settings.autoLockOnSleep, vault.lock]);
+  }, [vault.status.unlocked, settings.autoLockOnHide, settings.autoLockOnSleep, vault.lock]);
 
   if (windowNoteId) {
     if (loading) {
@@ -295,7 +311,8 @@ export default function App() {
       );
     }
     const note = notes.find(n => n.id === windowNoteId);
-    if (note && note.protected && !vault.status.unlocked) {
+    const noteLocked = note?.protected && (!vault.status.unlocked || (settings.vaultLockScope === 'perNote' && !revealedNotes.has(note.id)));
+    if (note && noteLocked) {
       return (
         <div className="flex h-screen items-center justify-center" style={{ background: 'var(--paper)' }}>
           <div className="text-center" style={{ color: 'var(--ink-muted)' }}>
@@ -362,6 +379,11 @@ export default function App() {
 
   const afterUnlockOrSetup = () => {
     setVaultDialog(null);
+    if (pendingReveal) {
+      const id = pendingReveal;
+      setPendingReveal(null);
+      setRevealedNotes(prev => new Set(prev).add(id));
+    }
     if (pendingProtect) {
       const p = pendingProtect;
       setPendingProtect(null);
@@ -474,13 +496,13 @@ export default function App() {
             onToggleEdit={() => setDashEdit(v => !v)}
           />
         ) : selectedNote ? (
-          selectedNote.protected && !vault.status.unlocked ? (
+          selectedNote.protected && (!vault.status.unlocked || (settings.vaultLockScope === 'perNote' && !revealedNotes.has(selectedNote.id))) ? (
             <div className="flex h-full items-center justify-center" style={{ background: 'var(--paper)' }}>
               <div className="text-center" style={{ color: 'var(--ink-muted)' }}>
                 <FontAwesomeIcon icon={faLock} className="text-4xl mb-3 opacity-40" />
                 <p className="text-sm mb-4">{t('vault.noteLocked')}</p>
                 <button
-                  onClick={() => setVaultDialog('unlock')}
+                  onClick={() => { setPendingReveal(selectedNote.id); setVaultDialog('unlock'); }}
                   className="px-3 py-1.5 rounded text-sm font-medium"
                   style={{ background: 'var(--line)', color: '#1c1917' }}
                 >

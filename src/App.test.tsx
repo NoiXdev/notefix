@@ -190,10 +190,59 @@ describe("App — editor unlock gate for protected notes", () => {
   });
 });
 
+describe("App — vaultLockScope 'perNote'", () => {
+  it("shows the locked placeholder for a not-yet-revealed protected note even though the vault is unlocked", async () => {
+    vi.mocked(api.vault.status).mockResolvedValueOnce({ exists: true, unlocked: true, biometric: false });
+    vi.mocked(api.settings.load).mockResolvedValueOnce({ vaultLockScope: "perNote" });
+    mockLoad.mockResolvedValueOnce([protectedNoteMeta]);
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Diese Notiz ist geschützt")).toBeInTheDocument());
+    expect(api.notes.loadOne).not.toHaveBeenCalled();
+  });
+
+  it("shows the editor for a protected note when vaultLockScope is 'session' and the vault is unlocked", async () => {
+    vi.mocked(api.vault.status).mockResolvedValueOnce({ exists: true, unlocked: true, biometric: false });
+    vi.mocked(api.settings.load).mockResolvedValueOnce({ vaultLockScope: "session" });
+    mockLoad.mockResolvedValueOnce([protectedNoteMeta]);
+
+    render(<App />);
+
+    await waitFor(() => expect(api.notes.loadOne).toHaveBeenCalled());
+    expect(screen.queryByText("Diese Notiz ist geschützt")).not.toBeInTheDocument();
+  });
+});
+
+describe("App — lock vault shortcut", () => {
+  it("Mod+Shift+L locks the vault when it exists and is unlocked", async () => {
+    vi.mocked(api.vault.status).mockResolvedValueOnce({ exists: true, unlocked: true, biometric: false });
+
+    render(<App />);
+    await waitFor(() => expect(screen.getByTitle("Neue Notiz")).toBeInTheDocument());
+
+    // Retry the keydown: the vault status refresh (which the handler's
+    // closure needs to see status.unlocked = true) lands asynchronously
+    // after mount, so the very first dispatch can race it.
+    await waitFor(() => {
+      fireEvent.keyDown(document.body, { key: "l", metaKey: true, shiftKey: true });
+      expect(api.vault.lock).toHaveBeenCalled();
+    });
+  });
+
+  it("does nothing when the vault doesn't exist", async () => {
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByTitle("Neue Notiz")).toBeInTheDocument());
+    fireEvent.keyDown(document.body, { key: "l", metaKey: true, shiftKey: true });
+    expect(api.vault.lock).not.toHaveBeenCalled();
+  });
+});
+
 describe("App — auto-lock idle timer", () => {
   it("locks the vault after autoLockMinutes of inactivity", async () => {
     vi.mocked(api.vault.status).mockResolvedValueOnce({ exists: true, unlocked: true, biometric: false });
-    vi.mocked(api.settings.load).mockResolvedValueOnce({ autoLockMode: "after", autoLockMinutes: "0.01" });
+    vi.mocked(api.settings.load).mockResolvedValueOnce({ autoLockIdle: "true", autoLockMinutes: "0.01" });
 
     render(<App />);
 
