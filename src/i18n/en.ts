@@ -68,6 +68,9 @@ export const en = {
         switcher: 'Single context (switcher)',
         combined: 'All contexts combined',
       },
+      sidebarSide: 'Sidebar position',
+      sidebarLeft: 'Left',
+      sidebarRight: 'Right',
       theme: 'Theme',
       themes: {
         butter: 'Butter Yellow',

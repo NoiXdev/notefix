@@ -68,6 +68,9 @@ export const fr = {
         switcher: 'Un contexte (sélecteur)',
         combined: 'Tous les contextes',
       },
+      sidebarSide: 'Position de la barre latérale',
+      sidebarLeft: 'Gauche',
+      sidebarRight: 'Droite',
       theme: 'Thème',
       themes: {
         butter: 'Butter Yellow',

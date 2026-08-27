@@ -50,6 +50,31 @@ describe("useSettings — pinnedScope", () => {
   });
 });
 
+describe("useSettings — sidebarSide", () => {
+  it("defaults to left", async () => {
+    const { result } = renderHook(() => useSettings());
+    await waitFor(() => expect(result.current.settings.sidebarSide).toBe("left"));
+  });
+
+  it("loads a stored right value and falls back to left for junk", async () => {
+    mockLoad.mockResolvedValue({ sidebarSide: "right" });
+    const { result } = renderHook(() => useSettings());
+    await waitFor(() => expect(result.current.settings.sidebarSide).toBe("right"));
+
+    mockLoad.mockResolvedValue({ sidebarSide: "bogus" });
+    const { result: result2 } = renderHook(() => useSettings());
+    await waitFor(() => expect(result2.current.settings.sidebarSide).toBe("left"));
+  });
+
+  it("setSetting persists sidebarSide", async () => {
+    const { result } = renderHook(() => useSettings());
+    await waitFor(() => expect(result.current.settings.sidebarSide).toBe("left"));
+    await act(async () => { await result.current.setSetting("sidebarSide", "right"); });
+    expect(result.current.settings.sidebarSide).toBe("right");
+    expect(mockSet).toHaveBeenCalledWith("sidebarSide", "right");
+  });
+});
+
 describe("useSettings — vaultLockScope", () => {
   it("defaults to session", async () => {
     const { result } = renderHook(() => useSettings());

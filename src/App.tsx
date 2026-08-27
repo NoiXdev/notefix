@@ -466,7 +466,7 @@ export default function App() {
           onDismiss={() => void setSetting('updateDismissedVersion', updateInfo.latest)}
         />
       )}
-      <div className="flex flex-1 min-h-0 overflow-hidden">
+      <div className={`flex flex-1 min-h-0 overflow-hidden ${!isMobile && settings.sidebarSide === 'right' ? 'flex-row-reverse' : ''}`}>
       {(!isMobile || !mobileEditor) && (settings.sidebarMode === 'combined' ? (
         <CombinedNoteList
           selectedId={selectedId}
@@ -478,6 +478,7 @@ export default function App() {
           onOpenContexts={() => { setSettingsPage('contexts'); setShowSettings(true); }}
           dateFormat={settings.dateFormat}
           mobile={isMobile}
+          side={isMobile ? 'left' : settings.sidebarSide}
           vaultExists={vault.status.exists}
           vaultUnlocked={vault.status.unlocked}
           onLockVault={() => void vault.lock()}

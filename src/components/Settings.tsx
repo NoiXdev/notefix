@@ -413,6 +413,11 @@ const SIDEBAR_MODES: { value: import("../hooks/useSettings").SidebarMode; labelK
   { value: "combined", labelKey: "settings.appearance.sidebarModes.combined" },
 ];
 
+const SIDEBAR_SIDES: { value: import("../hooks/useSettings").SidebarSide; labelKey: string }[] = [
+  { value: "left", labelKey: "settings.appearance.sidebarLeft" },
+  { value: "right", labelKey: "settings.appearance.sidebarRight" },
+];
+
 // Literal swatch colors per theme (paper + accent) so the picker previews each
 // theme regardless of which one is active. Values mirror the :root sets in index.css.
 const THEME_OPTIONS: { value: import("../hooks/useSettings").Theme; labelKey: string; paper: string; accent: string }[] = [
@@ -681,6 +686,9 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
 
             <h2 className="text-sm font-semibold text-gray-800 mt-8 mb-2">{t("settings.appearance.sidebarMode")}</h2>
             <div className="max-w-sm"><Select value={settings.sidebarMode} options={SIDEBAR_MODES.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("sidebarMode", v as import("../hooks/useSettings").SidebarMode)} /></div>
+
+            <h2 className="text-sm font-semibold text-gray-800 mt-8 mb-2">{t("settings.appearance.sidebarSide")}</h2>
+            <div className="max-w-sm"><Select value={settings.sidebarSide} options={SIDEBAR_SIDES.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("sidebarSide", v as import("../hooks/useSettings").SidebarSide)} /></div>
 
             <h2 className="text-sm font-semibold text-gray-800 mt-8 mb-2">{t("settings.appearance.pinned")}</h2>
             <div className="max-w-sm"><Select value={settings.pinnedScope} options={PIN_SCOPES.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("pinnedScope", v as import("../hooks/useSettings").PinnedScope)} /></div>

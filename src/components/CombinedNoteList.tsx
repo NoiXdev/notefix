@@ -18,12 +18,16 @@ interface Props {
   onOpenContexts: () => void;
   dateFormat: DateFormat;
   mobile?: boolean;
+  /** Which side of the split view this column sits on ('left' by default) —
+   *  flips the divider border so it still sits BETWEEN the note list and the
+   *  editor. See `settings.sidebarSide` / App.tsx. */
+  side?: 'left' | 'right';
   vaultExists?: boolean;
   vaultUnlocked?: boolean;
   onLockVault?: () => void;
 }
 
-export default function CombinedNoteList({ selectedId, onSelectNote, onCreate, onOpenSearch, onOpenContexts, dateFormat, mobile, vaultExists, vaultUnlocked, onLockVault }: Props) {
+export default function CombinedNoteList({ selectedId, onSelectNote, onCreate, onOpenSearch, onOpenContexts, dateFormat, mobile, side = 'left', vaultExists, vaultUnlocked, onLockVault }: Props) {
   const { t } = useTranslation();
   const [items, setItems] = useState<CombinedNote[]>([]);
 
@@ -39,7 +43,7 @@ export default function CombinedNoteList({ selectedId, onSelectNote, onCreate, o
 
   return (
     <div
-      className={`${mobile ? 'w-full' : 'w-72 shrink-0'} flex flex-col bg-gray-950 border-r border-gray-900 h-full`}
+      className={`${mobile ? 'w-full' : 'w-72 shrink-0'} flex flex-col bg-gray-950 ${side === 'right' ? 'border-l' : 'border-r'} border-gray-900 h-full`}
       style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
       <div className="p-2 border-b border-gray-900">

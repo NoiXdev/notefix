@@ -68,6 +68,9 @@ export const de = {
         switcher: 'Ein Kontext (Umschalter)',
         combined: 'Alle Kontexte kombiniert',
       },
+      sidebarSide: 'Position der Seitenleiste',
+      sidebarLeft: 'Links',
+      sidebarRight: 'Rechts',
       theme: 'Theme',
       themes: {
         butter: 'Butter Yellow',

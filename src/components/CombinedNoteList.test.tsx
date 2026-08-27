@@ -52,6 +52,22 @@ describe('CombinedNoteList', () => {
   });
 });
 
+describe('CombinedNoteList — side-aware divider', () => {
+  it('borders the right edge by default (list on the left)', async () => {
+    const { container } = render(<CombinedNoteList selectedId={null} activeContextId="c1" onSelectNote={() => {}} onCreate={() => {}} onOpenSettings={() => {}} onOpenContexts={() => {}} dateFormat="auto" />);
+    await waitFor(() => expect(loadAll).toHaveBeenCalled());
+    expect(container.firstChild).toHaveClass('border-r');
+    expect(container.firstChild).not.toHaveClass('border-l');
+  });
+
+  it('borders the left edge when placed on the right', async () => {
+    const { container } = render(<CombinedNoteList selectedId={null} activeContextId="c1" onSelectNote={() => {}} onCreate={() => {}} onOpenSettings={() => {}} onOpenContexts={() => {}} dateFormat="auto" side="right" />);
+    await waitFor(() => expect(loadAll).toHaveBeenCalled());
+    expect(container.firstChild).toHaveClass('border-l');
+    expect(container.firstChild).not.toHaveClass('border-r');
+  });
+});
+
 describe('CombinedNoteList — vault lock button', () => {
   it('is hidden when the vault does not exist or is locked', async () => {
     const { rerender } = render(<CombinedNoteList selectedId={null} activeContextId="c1" onSelectNote={() => {}} onCreate={() => {}} onOpenSettings={() => {}} onOpenContexts={() => {}} dateFormat="auto" vaultExists={false} vaultUnlocked={false} />);
