@@ -1606,9 +1606,54 @@ pub fn vault_status(
     Ok(VaultStatus {
         exists,
         unlocked,
-        // Real biometric-availability detection lands in a later task.
-        biometric: false,
+        // Biometric unlock is offered only when the device can evaluate Touch
+        // ID (`is_available`) AND the user has enrolled a wrapped DEK
+        // (`is_enrolled`). `is_enrolled` reads the keychain without prompting.
+        biometric: crate::vault::biometric::is_available()
+            && crate::vault::biometric::is_enrolled(),
     })
+}
+
+/// Whether this device can evaluate biometric authentication (macOS Touch ID).
+/// `false` on non-macOS desktop and on mobile.
+#[tauri::command]
+pub fn vault_biometric_available() -> bool {
+    crate::vault::biometric::is_available()
+}
+
+/// Enrolls biometric unlock: stores the currently-unlocked DEK in the keychain
+/// so it can later be released after a Touch ID prompt. Requires the vault to
+/// be unlocked — the DEK is taken from the live `VaultState`, never re-derived.
+#[tauri::command]
+pub fn vault_biometric_enable(vault: VaultStateHandle<'_>) -> Result<(), String> {
+    let vault = vault.lock().map_err(|e| e.to_string())?;
+    let dek = vault.dek().ok_or_else(|| "vault locked".to_string())?;
+    crate::vault::biometric::store_dek(dek).map_err(String::from)
+}
+
+/// Disables biometric unlock by deleting the keychain-stored DEK. Idempotent.
+#[tauri::command]
+pub fn vault_biometric_disable() -> Result<(), String> {
+    crate::vault::biometric::clear().map_err(String::from)
+}
+
+/// Unlocks the vault via biometrics: prompt Touch ID, then release the
+/// keychain-wrapped DEK into `VaultState`. Async so the blocking Touch ID
+/// prompt runs off the main thread (`spawn_blocking`) — otherwise the main run
+/// loop would be blocked and could not present the system dialog.
+#[tauri::command]
+pub async fn vault_unlock_biometric(vault: VaultStateHandle<'_>) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        crate::vault::biometric::authenticate("Unlock your protected notes")
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(String::from)?;
+    let dek = crate::vault::biometric::load_dek()
+        .map_err(String::from)?
+        .ok_or_else(|| "vault: biometric unlock is not set up".to_string())?;
+    vault.lock().map_err(|e| e.to_string())?.unlock(dek);
+    Ok(())
 }
 
 /// Creates a new vault: wraps a fresh DEK under `passphrase`, persists the

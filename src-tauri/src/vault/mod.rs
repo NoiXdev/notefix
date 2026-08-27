@@ -1,4 +1,5 @@
 pub mod aead;
+pub mod biometric;
 pub mod kdf;
 pub mod recovery;
 pub mod state;

@@ -47,6 +47,14 @@ argon2 = "0.5"
 chacha20poly1305 = "0.10"
 zeroize = { version = "1", features = ["derive"] }
 
+# Biometric vault unlock (Task 8) — desktop macOS Touch ID via LAContext.
+# macOS-only so non-macOS/mobile builds are unaffected.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString", "NSError"] }
+objc2-local-authentication = "0.3"
+block2 = "0.6"
+
 [dev-dependencies]
 tempfile = "3.27.0"
 
