@@ -3,7 +3,7 @@ use crate::vault::VaultError;
 use argon2::{Algorithm, Argon2, Params, Version};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 const WRAP_AAD: &[u8] = b"notefix-dek-v1";
 
@@ -31,7 +31,7 @@ impl KdfParams {
 }
 
 #[allow(dead_code)]
-#[derive(Zeroize)]
+#[derive(Zeroize, ZeroizeOnDrop)]
 pub struct Kek([u8; 32]);
 
 #[allow(dead_code)]
