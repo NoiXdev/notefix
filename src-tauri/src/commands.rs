@@ -158,6 +158,50 @@ pub(crate) fn encrypt_note_in_place(store: &Store, id: &str, dek: &Dek) -> Resul
     Ok(())
 }
 
+/// Best-effort backfill of plaintext titles for protected notes that predate
+/// migration v13's title backfill. That migration could only derive a title
+/// from PLAINTEXT content, so a note that was already protected (ciphertext)
+/// at the time was left with `title = ''` (see `migrate.rs`, schema v13) —
+/// "picked up on their next save or re-protect" per that comment. This adds
+/// the vault-unlock moment as another chance: called from every unlock path
+/// (`vault_unlock`, `vault_unlock_recovery`, `vault_unlock_biometric`) right
+/// after the DEK becomes available.
+///
+/// Best-effort by design: a note whose content fails to decrypt (corrupt
+/// blob, foreign/mismatched key) is silently skipped rather than aborting
+/// the unlock, and nothing here ever logs key or plaintext material. Only
+/// `title` is written — `content` is read but never rewritten, preserving
+/// the `content ciphertext ⟺ protected = 1` invariant.
+fn backfill_protected_titles(store: &Store, dek: &Dek) {
+    let ids: Vec<String> = {
+        let mut stmt = match store
+            .conn
+            .prepare("SELECT id FROM notes WHERE protected = 1 AND title = ''")
+        {
+            Ok(stmt) => stmt,
+            Err(_) => return,
+        };
+        let rows = match stmt.query_map([], |r| r.get::<_, String>(0)) {
+            Ok(rows) => rows,
+            Err(_) => return,
+        };
+        rows.filter_map(Result::ok).collect()
+    };
+
+    for id in ids {
+        let stored = match store.load_note_content(&id) {
+            Ok(Some(c)) => c,
+            _ => continue,
+        };
+        let plaintext = match open_content(dek, &id, &stored) {
+            Ok(p) => p,
+            Err(_) => continue, // can't decrypt (corrupt/foreign) — skip, never abort the unlock
+        };
+        let title = crate::storage::note_preview(&plaintext);
+        let _ = store.set_title(&id, &title);
+    }
+}
+
 #[tauri::command]
 pub fn notes_load(store: State<'_, Mutex<Store>>) -> Result<Vec<NoteMeta>, String> {
     let store = store.lock().map_err(|e| e.to_string())?;
@@ -1773,7 +1817,10 @@ pub fn vault_biometric_disable() -> Result<(), String> {
 /// prompt runs off the main thread (`spawn_blocking`) — otherwise the main run
 /// loop would be blocked and could not present the system dialog.
 #[tauri::command]
-pub async fn vault_unlock_biometric(vault: VaultStateHandle<'_>) -> Result<(), String> {
+pub async fn vault_unlock_biometric(
+    store: State<'_, Mutex<Store>>,
+    vault: VaultStateHandle<'_>,
+) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(|| {
         crate::vault::biometric::authenticate("Unlock your protected notes")
     })
@@ -1783,7 +1830,11 @@ pub async fn vault_unlock_biometric(vault: VaultStateHandle<'_>) -> Result<(), S
     let dek = crate::vault::biometric::load_dek()
         .map_err(String::from)?
         .ok_or_else(|| "vault: biometric unlock is not set up".to_string())?;
+    let backfill_dek = dek.clone();
     vault.lock().map_err(|e| e.to_string())?.unlock(dek);
+    if let Ok(store) = store.lock() {
+        backfill_protected_titles(&store, &backfill_dek);
+    }
     Ok(())
 }
 
@@ -1827,7 +1878,11 @@ pub fn vault_unlock(
 ) -> Result<(), String> {
     let record = load_vault_record(&store)?;
     let dek = crate::vault::unlock_passphrase(&record, &passphrase).map_err(String::from)?;
+    let backfill_dek = dek.clone();
     vault.lock().map_err(|e| e.to_string())?.unlock(dek);
+    if let Ok(store) = store.lock() {
+        backfill_protected_titles(&store, &backfill_dek);
+    }
     Ok(())
 }
 
@@ -1839,7 +1894,11 @@ pub fn vault_unlock_recovery(
 ) -> Result<(), String> {
     let record = load_vault_record(&store)?;
     let dek = crate::vault::unlock_recovery(&record, &recovery).map_err(String::from)?;
+    let backfill_dek = dek.clone();
     vault.lock().map_err(|e| e.to_string())?.unlock(dek);
+    if let Ok(store) = store.lock() {
+        backfill_protected_titles(&store, &backfill_dek);
+    }
     Ok(())
 }
 
@@ -2156,6 +2215,70 @@ mod protected_content_tests {
         let stored_content = s.load_note_content("n1").unwrap().unwrap();
         assert_ne!(stored_content, plaintext);
         assert!(!stored_content.contains("Secret"));
+    }
+
+    /// Feature: on vault unlock, a protected note left with `title = ''` by
+    /// migration v13 (it predates the vault, so couldn't be backfilled from
+    /// ciphertext at migration time) gets its title derived from the now-
+    /// decryptable content. Content stays untouched ciphertext; `protected`
+    /// stays set.
+    #[test]
+    fn backfill_protected_titles_fills_in_empty_titles_after_unlock() {
+        let s = Store::open_in_memory().unwrap();
+        crate::migrate::run_migrations(&s.conn).unwrap();
+        let dek = Dek::random();
+        let plaintext = "<p>Old Secret</p><p>body</p>";
+
+        // Simulate a pre-existing protected note that migration v13 could not
+        // backfill: ciphertext content, protected = 1, title left empty.
+        let sealed = seal_content(&dek, "n1", plaintext);
+        s.save_note(&Note {
+            id: "n1".into(),
+            content: sealed.clone(),
+            updated_at: 1,
+            ..Default::default()
+        })
+        .unwrap();
+        s.set_note_protected("n1", true).unwrap();
+        assert_eq!(s.load_notes_meta().unwrap()[0].title, "");
+
+        backfill_protected_titles(&s, &dek);
+
+        let meta = &s.load_notes_meta().unwrap()[0];
+        assert_eq!(meta.title, "Old Secret");
+        assert!(meta.protected, "protected flag is untouched");
+        let stored_content = s.load_note_content("n1").unwrap().unwrap();
+        assert_eq!(
+            stored_content, sealed,
+            "content is read but never rewritten"
+        );
+    }
+
+    /// A note whose content can't be decrypted under the given DEK (wrong
+    /// key, corrupt blob) is skipped — never aborts the backfill, never
+    /// panics, and never touches `title` or `content`.
+    #[test]
+    fn backfill_protected_titles_skips_notes_that_fail_to_decrypt() {
+        let s = Store::open_in_memory().unwrap();
+        crate::migrate::run_migrations(&s.conn).unwrap();
+        let right_dek = Dek::random();
+        let wrong_dek = Dek::random();
+
+        s.save_note(&Note {
+            id: "n1".into(),
+            content: seal_content(&right_dek, "n1", "<p>Unreadable</p>"),
+            updated_at: 1,
+            ..Default::default()
+        })
+        .unwrap();
+        s.set_note_protected("n1", true).unwrap();
+
+        // Unlocking with the WRONG dek must not panic or abort — just skip.
+        backfill_protected_titles(&s, &wrong_dek);
+
+        let meta = &s.load_notes_meta().unwrap()[0];
+        assert_eq!(meta.title, "", "skipped note keeps its empty title");
+        assert!(meta.protected);
     }
 
     /// Mirrors the encrypt branch `note_set_protected(id, true)` takes: seal,
