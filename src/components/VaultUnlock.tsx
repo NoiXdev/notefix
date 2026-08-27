@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 interface Props {
@@ -20,6 +20,7 @@ export default function VaultUnlock({ biometricAvailable, unlock, unlockRecovery
   const [passphrase, setPassphrase] = useState('');
   const [recovery, setRecovery] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const autoTried = useRef(false);
 
   const submitBiometric = async () => {
     setError(null);
@@ -30,6 +31,17 @@ export default function VaultUnlock({ biometricAvailable, unlock, unlockRecovery
       setError(t('vault.biometricFailed'));
     }
   };
+
+  // Auto-trigger Touch ID once when the dialog opens, so the common case
+  // (macOS, biometric enrolled) needs no click. Guarded by a ref so a
+  // rejection (cancel / failed scan) doesn't loop — the button stays as a
+  // fallback to retry or switch to the passphrase.
+  useEffect(() => {
+    if (!biometricAvailable || autoTried.current) return;
+    autoTried.current = true;
+    void submitBiometric();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [biometricAvailable]);
 
   const submitPassphrase = async () => {
     setError(null);
