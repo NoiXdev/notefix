@@ -346,6 +346,26 @@ impl Store {
         Ok(())
     }
 
+    /// Mark a note dirty and bump its `updated_at`, but only while sync is
+    /// enabled — mirroring `set_folder`/`set_pinned`/`set_archived`, which only
+    /// touch `dirty`/`updated_at` in the sync context.
+    ///
+    /// Used by the protect/lock transitions, whose content write goes through
+    /// `set_content_silent` (deliberately no bump). Without this the freshly
+    /// encrypted ciphertext row would stay `dirty = 0` and never be pushed, so
+    /// the server would keep the pre-protection plaintext; and with `updated_at`
+    /// unchanged a later resync could clobber the local ciphertext back to that
+    /// plaintext under the last-writer-wins guard.
+    pub fn mark_note_dirty_if_syncing(&self, id: &str) -> rusqlite::Result<()> {
+        if self.sync_enabled {
+            self.conn.execute(
+                "UPDATE notes SET updated_at = ?2, dirty = 1 WHERE id = ?1",
+                (id, now_ms()),
+            )?;
+        }
+        Ok(())
+    }
+
     pub fn save_note(&self, note: &Note) -> rusqlite::Result<()> {
         let (updated_at, dirty) = if self.sync_enabled {
             (now_ms(), 1)
@@ -575,7 +595,48 @@ impl Store {
     pub fn set_folder_locked(&self, id: &str, v: bool) -> rusqlite::Result<()> {
         self.conn
             .execute("UPDATE folders SET locked = ?2 WHERE id = ?1", (id, v))?;
+        // The `locked` flag is folder metadata that must reach the server just
+        // like name/icon/etc. — mark the row dirty + bump `updated_at` when
+        // syncing so the transition propagates (same convention as
+        // `set_pinned`/`set_archived`, both directions).
+        if self.sync_enabled {
+            self.conn.execute(
+                "UPDATE folders SET updated_at = ?2, dirty = 1 WHERE id = ?1",
+                (id, now_ms()),
+            )?;
+        }
         Ok(())
+    }
+
+    /// True if `folder_id` — or any of its ancestors — is `locked`. `None`
+    /// (root) is never locked. Cycle-safe via a visited set, matching
+    /// `is_effectively_protected`'s walk. Shared by the MCP write-guard and,
+    /// via `commands::folder_chain_has_lock`, the move/reorder encrypt policy.
+    pub fn folder_chain_has_lock(&self, folder_id: Option<&str>) -> rusqlite::Result<bool> {
+        use rusqlite::OptionalExtension;
+        let mut folder_id: Option<String> = folder_id.map(str::to_string);
+        let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
+        while let Some(fid) = folder_id {
+            if !visited.insert(fid.clone()) {
+                break; // cycle detected — stop instead of looping forever
+            }
+            let folder: Option<(bool, Option<String>)> = self
+                .conn
+                .query_row(
+                    "SELECT locked, parent_id FROM folders WHERE id = ?1",
+                    [&fid],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?;
+            let Some((locked, parent_id)) = folder else {
+                break;
+            };
+            if locked {
+                return Ok(true);
+            }
+            folder_id = parent_id;
+        }
+        Ok(false)
     }
 
     /// Ids of notes directly in `folder_id`, plus notes in any of its descendant
@@ -928,6 +989,50 @@ mod tests {
         let saved = &s.load_notes().unwrap()[0];
         assert!(saved.dirty);
         assert!(saved.updated_at > 1); // bumped to ~now
+    }
+
+    #[test]
+    fn mark_note_dirty_if_syncing_respects_sync_flag() {
+        // I1 primitive: the protect/lock transitions bump `dirty`/`updated_at`
+        // through this helper (their content write is `set_content_silent`,
+        // which deliberately doesn't). It must no-op with sync off and re-dirty
+        // + bump with sync on.
+        let mut s = mem();
+        s.save_note(&note("n1", "<p>x</p>", 5)).unwrap(); // sync off -> clean
+        assert!(!s.load_all_notes().unwrap()[0].dirty);
+
+        s.mark_note_dirty_if_syncing("n1").unwrap(); // sync off -> no-op
+        let n = &s.load_all_notes().unwrap()[0];
+        assert!(!n.dirty);
+        assert_eq!(n.updated_at, 5);
+
+        s.sync_enabled = true;
+        s.mark_note_dirty_if_syncing("n1").unwrap(); // sync on -> dirty + bump
+        let n = &s.load_all_notes().unwrap()[0];
+        assert!(n.dirty);
+        assert!(n.updated_at > 5);
+    }
+
+    #[test]
+    fn set_folder_locked_marks_folder_dirty_when_syncing() {
+        // I1: the folder `locked` flip is metadata that must reach the server,
+        // else another device keeps the folder unlocked. No-op with sync off,
+        // dirties the row (either direction) with sync on.
+        let mut s = mem();
+        crate::folders::create_folder(&s.conn, "f1", "F", None).unwrap();
+
+        s.set_folder_locked("f1", true).unwrap(); // sync off
+        assert!(crate::folders::load_dirty_folders(&s.conn)
+            .unwrap()
+            .is_empty());
+        assert!(crate::folders::load_folders(&s.conn).unwrap()[0].locked);
+
+        s.sync_enabled = true;
+        s.set_folder_locked("f1", false).unwrap(); // sync on
+        let dirty = crate::folders::load_dirty_folders(&s.conn).unwrap();
+        assert_eq!(dirty.len(), 1);
+        assert_eq!(dirty[0].id, "f1");
+        assert!(!dirty[0].locked);
     }
 
     #[test]

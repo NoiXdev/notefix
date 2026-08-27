@@ -106,37 +106,40 @@ fn has_locked_ancestor_folder(store: &Store, note_id: &str) -> Result<bool, Stri
 
 /// True if `starting_folder_id` or any of its ancestors is `locked`.
 /// Cycle-safe via a visited set. Shared by `has_locked_ancestor_folder`
-/// (starts from a note's *current* `folder_id`) and `notes_set_folder`
-/// (starts from a move's *destination* `folder_id`, checked before the move
-/// is performed).
+/// (starts from a note's *current* `folder_id`) and `notes_set_folder` /
+/// `notes_reorder` (start from a move's *destination* `folder_id`, checked
+/// before the move is performed). Thin `String`-error wrapper over
+/// `Store::folder_chain_has_lock`.
 fn folder_chain_has_lock(store: &Store, starting_folder_id: Option<&str>) -> Result<bool, String> {
-    use rusqlite::OptionalExtension;
-    use std::collections::HashSet;
+    store
+        .folder_chain_has_lock(starting_folder_id)
+        .map_err(|e| e.to_string())
+}
 
-    let mut folder_id: Option<String> = starting_folder_id.map(str::to_string);
-    let mut visited: HashSet<String> = HashSet::new();
-    while let Some(fid) = folder_id {
-        if !visited.insert(fid.clone()) {
-            break; // cycle detected — stop instead of looping forever
-        }
-        let folder: Option<(bool, Option<String>)> = store
-            .conn
-            .query_row(
-                "SELECT locked, parent_id FROM folders WHERE id = ?1",
-                [&fid],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .optional()
-            .map_err(|e| e.to_string())?;
-        let Some((locked, parent_id)) = folder else {
-            break;
-        };
-        if locked {
-            return Ok(true);
-        }
-        folder_id = parent_id;
-    }
-    Ok(false)
+/// Encrypt one currently-plaintext note in place under `dek`: seal its content
+/// (binding the note id as AEAD associated data), flip `protected`, mark it
+/// dirty so the ciphertext + `protected = 1` propagate on sync, and purge its
+/// now-defunct plaintext revision history. The single encrypt-on-transition
+/// primitive shared by every "plaintext note enters a locked context" path
+/// (`reconcile_folder_move`, `reconcile_reorder`, `note_set_protected(true)`,
+/// `folder_set_locked(true)`), so all of them mark the row dirty identically.
+fn encrypt_note_in_place(store: &Store, id: &str, dek: &Dek) -> Result<(), String> {
+    let plaintext = store
+        .load_note_content(id)
+        .map_err(|e| e.to_string())?
+        .unwrap_or_default();
+    let sealed = seal_content(dek, id, &plaintext);
+    store
+        .set_content_silent(id, &sealed)
+        .map_err(|e| e.to_string())?;
+    store
+        .set_note_protected(id, true)
+        .map_err(|e| e.to_string())?;
+    store
+        .mark_note_dirty_if_syncing(id)
+        .map_err(|e| e.to_string())?;
+    crate::revisions::delete_revisions(&store.conn, id).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -566,19 +569,8 @@ fn reconcile_folder_move(
 
     if needs_encryption {
         let dek = dek.ok_or_else(|| "vault locked".to_string())?;
-        let plaintext = store
-            .load_note_content(id)
-            .map_err(|e| e.to_string())?
-            .unwrap_or_default();
-        let sealed = seal_content(dek, id, &plaintext);
         store.set_folder(id, folder_id).map_err(|e| e.to_string())?;
-        store
-            .set_content_silent(id, &sealed)
-            .map_err(|e| e.to_string())?;
-        store
-            .set_note_protected(id, true)
-            .map_err(|e| e.to_string())?;
-        crate::revisions::delete_revisions(&store.conn, id).map_err(|e| e.to_string())?;
+        encrypt_note_in_place(store, id, dek)?;
     } else {
         store.set_folder(id, folder_id).map_err(|e| e.to_string())?;
     }
@@ -605,19 +597,86 @@ pub fn notes_set_folder(
     Ok(())
 }
 
+/// Core reconciliation behind `notes_reorder`, factored out (like
+/// `reconcile_folder_move`) so it's unit-testable without a Tauri `State`
+/// harness: `dek` is `None` for a locked vault, `Some(&dek)` unlocked.
+///
+/// Drag-and-drop reorder assigns every id to `folder_id`. If that destination
+/// has a locked ancestor, any currently-plaintext note among `ids` would land
+/// inside a locked subtree as plaintext-at-rest — the same leak
+/// `reconcile_folder_move` prevents for the context-menu move path. So:
+/// - Already-protected (ciphertext) notes just get repositioned — the safe
+///   direction, never auto-decrypted.
+/// - A plaintext note entering the locked destination must be encrypted with
+///   the SAME primitive the move path uses (`encrypt_note_in_place`).
+/// - If the vault is locked and any plaintext note would enter the locked
+///   subtree, the WHOLE operation is refused (`Err("vault locked")`) before any
+///   row is touched — never a half-applied reorder that strands plaintext in a
+///   locked folder.
+/// - A non-locked destination is an unchanged plain reorder.
+fn reconcile_reorder(
+    store: &Store,
+    folder_id: Option<&str>,
+    ids: &[String],
+    dek: Option<&Dek>,
+) -> Result<(), String> {
+    if !folder_chain_has_lock(store, folder_id)? {
+        return store
+            .reorder_notes(folder_id, ids)
+            .map_err(|e| e.to_string());
+    }
+
+    // Destination is inside a locked subtree. Which ids are currently plaintext
+    // (physically unencrypted) and therefore need sealing on entry? A missing
+    // id (stale drag payload) is skipped — `reorder_notes` no-ops it too.
+    use rusqlite::OptionalExtension;
+    let mut to_encrypt: Vec<&String> = Vec::new();
+    for id in ids {
+        let protected: Option<bool> = store
+            .conn
+            .query_row("SELECT protected FROM notes WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+            .optional()
+            .map_err(|e| e.to_string())?;
+        if protected == Some(false) {
+            to_encrypt.push(id);
+        }
+    }
+
+    // Refuse the entire op up front if we'd strand a plaintext note in a locked
+    // folder without an unlocked DEK — nothing is mutated on this path.
+    if !to_encrypt.is_empty() && dek.is_none() {
+        return Err("vault locked".to_string());
+    }
+
+    store
+        .reorder_notes(folder_id, ids)
+        .map_err(|e| e.to_string())?;
+    if let Some(dek) = dek {
+        for id in to_encrypt {
+            encrypt_note_in_place(store, id, dek)?;
+        }
+    }
+    Ok(())
+}
+
+/// Reorders/repositions notes within a folder — see `reconcile_reorder` for the
+/// encrypt-on-drop-into-locked policy that keeps drag-and-drop as safe as the
+/// context-menu move path (`notes_set_folder`).
 #[tauri::command]
 pub fn notes_reorder(
     app: AppHandle,
     webview: WebviewWindow,
     store: State<'_, Mutex<Store>>,
+    vault: VaultStateHandle<'_>,
     folder_id: Option<String>,
     ids: Vec<String>,
 ) -> Result<(), String> {
     {
         let store = store.lock().map_err(|e| e.to_string())?;
-        store
-            .reorder_notes(folder_id.as_deref(), &ids)
-            .map_err(|e| e.to_string())?;
+        let vault = vault.lock().map_err(|e| e.to_string())?;
+        reconcile_reorder(&store, folder_id.as_deref(), &ids, vault.dek())?;
     }
     notify(&app, &webview);
     Ok(())
@@ -1773,21 +1832,10 @@ pub fn note_set_protected(
 
         if protected {
             if !store.note_protected(&id).map_err(|e| e.to_string())? {
-                let plaintext = store
-                    .load_note_content(&id)
-                    .map_err(|e| e.to_string())?
-                    .unwrap_or_default();
-                let sealed = seal_content(dek, &id, &plaintext);
-                store
-                    .set_content_silent(&id, &sealed)
-                    .map_err(|e| e.to_string())?;
-                store
-                    .set_note_protected(&id, true)
-                    .map_err(|e| e.to_string())?;
-                // v1: locking a note discards its prior plaintext revision
-                // history — keeping it would defeat encryption-at-rest for
-                // that content, since note_revisions is unencrypted.
-                crate::revisions::delete_revisions(&store.conn, &id).map_err(|e| e.to_string())?;
+                // Seal + flip `protected` + mark dirty + purge the plaintext
+                // revision history (v1: keeping it would defeat
+                // encryption-at-rest, since note_revisions is unencrypted).
+                encrypt_note_in_place(&store, &id, dek)?;
             }
         } else {
             if has_locked_ancestor_folder(&store, &id)? {
@@ -1844,22 +1892,10 @@ pub fn folder_set_locked(
                 .map_err(|e| e.to_string())?;
             for note_id in &note_ids {
                 if !store.note_protected(note_id).map_err(|e| e.to_string())? {
-                    let plaintext = store
-                        .load_note_content(note_id)
-                        .map_err(|e| e.to_string())?
-                        .unwrap_or_default();
-                    let sealed = seal_content(dek, note_id, &plaintext);
-                    store
-                        .set_content_silent(note_id, &sealed)
-                        .map_err(|e| e.to_string())?;
-                    store
-                        .set_note_protected(note_id, true)
-                        .map_err(|e| e.to_string())?;
-                    // v1: same rationale as note_set_protected(id, true) —
-                    // discard this note's plaintext revision history now
-                    // that its content is encrypted.
-                    crate::revisions::delete_revisions(&store.conn, note_id)
-                        .map_err(|e| e.to_string())?;
+                    // Same transition as note_set_protected(id, true): seal +
+                    // flip `protected` + mark dirty + discard this note's now
+                    // encryption-defeating plaintext revision history.
+                    encrypt_note_in_place(&store, note_id, dek)?;
                 }
             }
         } else {
@@ -2048,6 +2084,49 @@ mod protected_content_tests {
         );
     }
 
+    /// I1: encrypting a note on a protect/lock transition must leave its row
+    /// dirty and `updated_at` bumped, so the freshly-sealed ciphertext +
+    /// `protected = 1` are pushed — instead of the server retaining the
+    /// pre-protection plaintext (and a later resync clobbering local ciphertext
+    /// back to plaintext under the LWW guard). Exercised through
+    /// `encrypt_note_in_place`, the shared primitive every encrypt path runs
+    /// (`note_set_protected(true)` / `folder_set_locked(true)` / move / reorder).
+    #[test]
+    fn encrypting_a_note_marks_it_dirty_for_push_when_syncing() {
+        let mut s = Store::open_in_memory().unwrap();
+        crate::migrate::run_migrations(&s.conn).unwrap();
+        s.sync_enabled = true;
+        let dek = Dek::random();
+
+        s.save_note(&Note {
+            id: "n1".into(),
+            content: "<p>secret</p>".into(),
+            updated_at: 1,
+            ..Default::default()
+        })
+        .unwrap();
+        // A sync-enabled save is already dirty; clear it first so the test
+        // proves the *protect transition* itself re-dirties the row.
+        let ts = s.load_dirty_notes().unwrap()[0].updated_at;
+        s.clear_note_dirty(&[("n1".into(), ts)]).unwrap();
+        assert!(s.load_dirty_notes().unwrap().is_empty());
+
+        encrypt_note_in_place(&s, "n1", &dek).unwrap();
+
+        let dirty = s.load_dirty_notes().unwrap();
+        assert_eq!(dirty.len(), 1);
+        assert_eq!(dirty[0].id, "n1");
+        assert!(
+            dirty[0].protected,
+            "the pushed row must carry protected = 1"
+        );
+        // What propagates is ciphertext, never the plaintext the server must
+        // not keep.
+        assert_ne!(dirty[0].content, "<p>secret</p>");
+        assert!(!dirty[0].content.contains("secret"));
+        assert!(dirty[0].updated_at >= ts);
+    }
+
     /// (a) A plaintext note with an existing revision, moved into a locked
     /// folder while the vault is unlocked: `reconcile_folder_move` encrypts
     /// it in place (stored content != plaintext, `note_protected` flips to
@@ -2115,6 +2194,92 @@ mod protected_content_tests {
         crate::revisions::add_revision(&s.conn, "n1", plaintext, 50).unwrap();
 
         let err = reconcile_folder_move(&s, "n1", Some("locked-folder"), None).unwrap_err();
+        assert_eq!(err, "vault locked");
+
+        // Unmoved, still plaintext, revision untouched.
+        assert_eq!(s.load_notes().unwrap()[0].folder_id, None);
+        assert!(!s.note_protected("n1").unwrap());
+        assert_eq!(
+            s.load_note_content("n1").unwrap().as_deref(),
+            Some(plaintext)
+        );
+        assert_eq!(
+            crate::revisions::list_revisions(&s.conn, "n1")
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    /// C1 (a): drag/reorder of a plaintext note (with an existing revision)
+    /// into a locked folder while the vault is unlocked must be as safe as the
+    /// context-menu move path — `reconcile_reorder` repositions AND encrypts it
+    /// in place (ciphertext at rest, `protected` flips true) and purges its
+    /// plaintext revision history, so DnD can't leave plaintext in a locked
+    /// subtree.
+    #[test]
+    fn reconcile_reorder_encrypts_plaintext_note_into_locked_folder() {
+        let s = Store::open_in_memory().unwrap();
+        crate::migrate::run_migrations(&s.conn).unwrap();
+        crate::folders::create_folder(&s.conn, "locked-folder", "Locked", None).unwrap();
+        s.set_folder_locked("locked-folder", true).unwrap();
+        let dek = Dek::random();
+        let plaintext = "<p>very secret</p>";
+
+        s.save_note(&Note {
+            id: "n1".into(),
+            content: plaintext.into(),
+            updated_at: 1,
+            ..Default::default()
+        })
+        .unwrap();
+        crate::revisions::add_revision(&s.conn, "n1", plaintext, 50).unwrap();
+        assert_eq!(
+            crate::revisions::list_revisions(&s.conn, "n1")
+                .unwrap()
+                .len(),
+            1
+        );
+
+        reconcile_reorder(&s, Some("locked-folder"), &["n1".to_string()], Some(&dek)).unwrap();
+
+        assert_eq!(
+            s.load_notes().unwrap()[0].folder_id.as_deref(),
+            Some("locked-folder")
+        );
+        assert!(s.note_protected("n1").unwrap());
+        let stored = s.load_note_content("n1").unwrap().unwrap();
+        assert_ne!(stored, plaintext);
+        assert!(!stored.contains("very secret"));
+        assert_eq!(open_content(&dek, "n1", &stored).unwrap(), plaintext);
+        assert!(crate::revisions::list_revisions(&s.conn, "n1")
+            .unwrap()
+            .is_empty());
+    }
+
+    /// C1 (b): the same reorder-into-locked while the vault is LOCKED
+    /// (`dek: None`) must refuse the whole operation and mutate nothing — the
+    /// note stays at root, stays plaintext, and keeps its revision. No plaintext
+    /// is ever stranded inside a locked folder, not even transiently.
+    #[test]
+    fn reconcile_reorder_refuses_when_vault_locked_for_locked_destination() {
+        let s = Store::open_in_memory().unwrap();
+        crate::migrate::run_migrations(&s.conn).unwrap();
+        crate::folders::create_folder(&s.conn, "locked-folder", "Locked", None).unwrap();
+        s.set_folder_locked("locked-folder", true).unwrap();
+        let plaintext = "<p>very secret</p>";
+
+        s.save_note(&Note {
+            id: "n1".into(),
+            content: plaintext.into(),
+            updated_at: 1,
+            ..Default::default()
+        })
+        .unwrap();
+        crate::revisions::add_revision(&s.conn, "n1", plaintext, 50).unwrap();
+
+        let err =
+            reconcile_reorder(&s, Some("locked-folder"), &["n1".to_string()], None).unwrap_err();
         assert_eq!(err, "vault locked");
 
         // Unmoved, still plaintext, revision untouched.
