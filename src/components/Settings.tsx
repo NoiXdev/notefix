@@ -23,6 +23,10 @@ import { runSystemChecks } from "../systemChecks";
 import { OSS_LIBS } from "../licenses";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { isMobilePlatform } from "../platform";
+import SettingsTabs from "./settings/SettingsTabs";
+import SettingsSection from "./settings/SettingsSection";
+import SettingRow from "./settings/SettingRow";
+import SettingsGrid from "./settings/SettingsGrid";
 
 export type Page = "about" | "apps" | "security" | "appearance" | "system" | "contexts" | "mcp" | "stats" | "shortcuts" | "diagnostics";
 
@@ -60,8 +64,7 @@ function UpdateChecker({ settings, onSetSetting }: {
     api.checkForUpdate().then(setState).catch(() => setState("error"));
   };
   return (
-    <div className="mt-10 max-w-md">
-      <h2 className="text-sm font-semibold text-gray-800 mb-2">{t("update.title")}</h2>
+    <>
       <div className="flex items-center gap-3 flex-wrap">
         <button
           onClick={check}
@@ -79,15 +82,14 @@ function UpdateChecker({ settings, onSetSetting }: {
         ))}
         {state === "error" && <span className="text-sm text-red-600">{t("update.error")}</span>}
       </div>
-      <label className="mt-4 flex items-center justify-between gap-4 text-sm text-gray-800 max-w-sm">
-        <span>{t("update.onStart")}</span>
+      <SettingRow label={t("update.onStart")}>
         <Toggle
           checked={settings.checkUpdatesOnStart}
           onChange={() => onSetSetting("checkUpdatesOnStart", !settings.checkUpdatesOnStart)}
           label={t("update.onStart")}
         />
-      </label>
-    </div>
+      </SettingRow>
+    </>
   );
 }
 
@@ -118,7 +120,7 @@ function AppsPage() {
     <div>
       <h1 className="text-2xl font-bold text-gray-900 mb-1">{t("settings.apps.title")}</h1>
       <p className="text-sm text-gray-500 mb-6">{t("settings.apps.subtitle")}</p>
-      <div className="flex flex-col gap-3 max-w-md">
+      <SettingsSection title={t("settings.apps.sections.platforms")}>
         {rows.map(r => (
           <div
             key={r.name}
@@ -148,7 +150,7 @@ function AppsPage() {
             )}
           </div>
         ))}
-      </div>
+      </SettingsSection>
     </div>
   );
 }
@@ -260,91 +262,101 @@ function SecurityPage({ settings, onSetSetting }: {
     await enableBiometric();
   };
 
+  const [tab, setTab] = useState<"vault" | "autoLock">("vault");
+  const tabs = [
+    { id: "vault", label: t("security.tabs.vault") },
+    { id: "autoLock", label: t("security.tabs.autoLock") },
+  ];
+
   return (
     <div>
       <h1 className="text-2xl font-bold text-gray-900 mb-1">{t("security.title")}</h1>
       <p className="text-sm text-gray-500 mb-6">{t("security.subtitle")}</p>
 
-      <div className="flex flex-col gap-3 max-w-md">
-        {!vault.status.exists ? (
-          <>
-            <p className="text-sm text-gray-600">{t("security.notSetUp")}</p>
-            <button
-              onClick={() => setShowSetup(true)}
-              className="self-start px-4 py-1.5 rounded text-sm font-medium"
-              style={{ background: "var(--line)", color: "#1c1917" }}
-            >
-              {t("security.setUp")}
-            </button>
-          </>
-        ) : (
-          <>
-            <p className="text-sm text-gray-600">{vault.status.unlocked ? t("security.unlocked") : t("security.locked")}</p>
-            <div className="flex flex-wrap gap-2">
-              <button
-                onClick={() => void vault.lock()}
-                disabled={!vault.status.unlocked}
-                className="px-4 py-1.5 rounded text-sm font-medium border disabled:opacity-40"
-                style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}
-              >
-                {t("security.lockNow")}
-              </button>
-              <button
-                onClick={() => setShowChangePass(true)}
-                className="px-4 py-1.5 rounded text-sm font-medium border"
-                style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}
-              >
-                {t("security.changePassphrase")}
-              </button>
-            </div>
+      <SettingsTabs tabs={tabs} active={tab} onChange={id => setTab(id as "vault" | "autoLock")} />
 
-            {biometricAvailable && (
-              <label className="flex items-center justify-between gap-4 text-sm text-gray-800 mt-2 max-w-sm">
-                <span>{t("security.biometric")}</span>
-                <Toggle checked={vault.status.biometric} onChange={() => void toggleBiometric()} label={t("security.biometric")} />
-              </label>
+      {tab === "vault" && (
+        <SettingsGrid>
+          <SettingsSection title={t("security.sections.status")}>
+            {!vault.status.exists ? (
+              <>
+                <p className="text-sm text-gray-600">{t("security.notSetUp")}</p>
+                <button
+                  onClick={() => setShowSetup(true)}
+                  className="self-start px-4 py-1.5 rounded text-sm font-medium"
+                  style={{ background: "var(--line)", color: "#1c1917" }}
+                >
+                  {t("security.setUp")}
+                </button>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-gray-600">{vault.status.unlocked ? t("security.unlocked") : t("security.locked")}</p>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => void vault.lock()}
+                    disabled={!vault.status.unlocked}
+                    className="px-4 py-1.5 rounded text-sm font-medium border disabled:opacity-40"
+                    style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}
+                  >
+                    {t("security.lockNow")}
+                  </button>
+                  <button
+                    onClick={() => setShowChangePass(true)}
+                    className="px-4 py-1.5 rounded text-sm font-medium border"
+                    style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}
+                  >
+                    {t("security.changePassphrase")}
+                  </button>
+                </div>
+              </>
             )}
-          </>
-        )}
-      </div>
+          </SettingsSection>
 
-      <h2 className="text-sm font-semibold text-gray-800 mt-8 mb-2">{t("security.lockScope")}</h2>
-      <div className="max-w-sm">
-        <Select
-          value={settings.vaultLockScope}
-          options={VAULT_LOCK_SCOPES.map(o => ({ value: o.value, label: t(o.labelKey) }))}
-          onChange={v => onSetSetting("vaultLockScope", v as import("../hooks/useSettings").VaultLockScope)}
-        />
-      </div>
+          <SettingsSection title={t("security.sections.options")}>
+            <SettingRow label={t("security.lockScope")}>
+              <Select
+                value={settings.vaultLockScope}
+                options={VAULT_LOCK_SCOPES.map(o => ({ value: o.value, label: t(o.labelKey) }))}
+                onChange={v => onSetSetting("vaultLockScope", v as import("../hooks/useSettings").VaultLockScope)}
+              />
+            </SettingRow>
+            {biometricAvailable && vault.status.exists && (
+              <SettingRow label={t("security.biometric")}>
+                <Toggle checked={vault.status.biometric} onChange={() => void toggleBiometric()} label={t("security.biometric")} />
+              </SettingRow>
+            )}
+          </SettingsSection>
+        </SettingsGrid>
+      )}
 
-      <h2 className="text-sm font-semibold text-gray-800 mt-8 mb-2">{t("security.autoLock")}</h2>
-      <div className="flex flex-col gap-3 max-w-sm">
-        <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
-          <span>{t("security.autoLockIdle")}</span>
-          <Toggle checked={settings.autoLockIdle} onChange={() => onSetSetting("autoLockIdle", !settings.autoLockIdle)} label={t("security.autoLockIdle")} />
-        </label>
-        {settings.autoLockIdle && (
-          <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
-            <span>{t("security.autoLockMinutes")}</span>
-            <input
-              type="number"
-              min={1}
-              value={settings.autoLockMinutes}
-              onChange={e => onSetSetting("autoLockMinutes", Math.max(1, Number(e.target.value) || 1))}
-              className="w-24 bg-white border rounded px-2 py-1"
-              style={{ borderColor: "var(--line-muted)" }}
-            />
-          </label>
-        )}
-        <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
-          <span>{t("security.autoLockOnHide")}</span>
-          <Toggle checked={settings.autoLockOnHide} onChange={() => onSetSetting("autoLockOnHide", !settings.autoLockOnHide)} label={t("security.autoLockOnHide")} />
-        </label>
-        <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
-          <span>{t("security.lockOnSleep")}</span>
-          <Toggle checked={settings.autoLockOnSleep} onChange={() => onSetSetting("autoLockOnSleep", !settings.autoLockOnSleep)} label={t("security.lockOnSleep")} />
-        </label>
-      </div>
+      {tab === "autoLock" && (
+        <SettingsGrid>
+          <SettingsSection title={t("security.autoLock")}>
+            <SettingRow label={t("security.autoLockIdle")}>
+              <Toggle checked={settings.autoLockIdle} onChange={() => onSetSetting("autoLockIdle", !settings.autoLockIdle)} label={t("security.autoLockIdle")} />
+            </SettingRow>
+            {settings.autoLockIdle && (
+              <SettingRow label={t("security.autoLockMinutes")}>
+                <input
+                  type="number"
+                  min={1}
+                  value={settings.autoLockMinutes}
+                  onChange={e => onSetSetting("autoLockMinutes", Math.max(1, Number(e.target.value) || 1))}
+                  className="w-24 bg-white border rounded px-2 py-1"
+                  style={{ borderColor: "var(--line-muted)" }}
+                />
+              </SettingRow>
+            )}
+            <SettingRow label={t("security.autoLockOnHide")}>
+              <Toggle checked={settings.autoLockOnHide} onChange={() => onSetSetting("autoLockOnHide", !settings.autoLockOnHide)} label={t("security.autoLockOnHide")} />
+            </SettingRow>
+            <SettingRow label={t("security.lockOnSleep")}>
+              <Toggle checked={settings.autoLockOnSleep} onChange={() => onSetSetting("autoLockOnSleep", !settings.autoLockOnSleep)} label={t("security.lockOnSleep")} />
+            </SettingRow>
+          </SettingsSection>
+        </SettingsGrid>
+      )}
 
       {showSetup && (
         <VaultSetup setup={vault.setup} onSuccess={() => setShowSetup(false)} onCancel={() => setShowSetup(false)} />
@@ -360,6 +372,132 @@ function SecurityPage({ settings, onSetSetting }: {
         />
       )}
       {showChangePass && <ChangePassphraseDialog vault={vault} onClose={() => setShowChangePass(false)} />}
+    </div>
+  );
+}
+
+/** Theme, language, sidebar/list layout and editor look — grouped into tabs. */
+function AppearancePage({ settings, onSetSetting }: {
+  settings: AppSettings;
+  onSetSetting: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void;
+}) {
+  const { t } = useTranslation();
+  const [tab, setTab] = useState<"general" | "list" | "editor">("general");
+  const tabs = [
+    { id: "general", label: t("settings.appearance.tabs.general") },
+    { id: "list", label: t("settings.appearance.tabs.list") },
+    { id: "editor", label: t("settings.appearance.tabs.editor") },
+  ];
+
+  return (
+    <div>
+      <h1 className="text-2xl font-bold text-gray-900 mb-1">{t("settings.appearance.title")}</h1>
+      <p className="text-sm text-gray-500 mb-6">{t("settings.appearance.subtitle")}</p>
+
+      <SettingsTabs tabs={tabs} active={tab} onChange={id => setTab(id as "general" | "list" | "editor")} />
+
+      {tab === "general" && (
+        <SettingsGrid>
+          <SettingsSection title={t("settings.appearance.sections.look")}>
+            <SettingRow label={t("settings.appearance.theme")} stack>
+              <div className="flex flex-wrap gap-2">
+                {THEME_OPTIONS.map(o => (
+                  <button
+                    key={o.value}
+                    onClick={() => onSetSetting("theme", o.value)}
+                    className={`flex flex-col items-center gap-1.5 rounded-lg border p-2 transition-colors ${settings.theme === o.value ? "border-gray-800 ring-2 ring-gray-800" : "border-gray-200 hover:border-gray-400"}`}
+                    title={t(o.labelKey)}
+                  >
+                    <span className="flex h-9 w-14 overflow-hidden rounded border border-gray-300">
+                      <span className="flex-1" style={{ background: o.paper }} />
+                      <span style={{ width: 12, background: o.accent }} />
+                    </span>
+                    <span className="text-xs text-gray-700">{t(o.labelKey)}</span>
+                  </button>
+                ))}
+              </div>
+            </SettingRow>
+            <SettingRow label={t("settings.appearance.language")}>
+              <Select value={settings.language} options={LANGUAGES.map(l => ({ value: l.value, label: l.value === "system" ? t("settings.appearance.langAuto") : l.label }))} onChange={v => onSetSetting("language", v as import("../hooks/useSettings").LangSetting)} />
+            </SettingRow>
+            <SettingRow label={t("settings.appearance.dateFormat")}>
+              <Select value={settings.dateFormat} options={DATE_FORMATS.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("dateFormat", v as DateFormat)} />
+            </SettingRow>
+          </SettingsSection>
+
+          <SettingsSection title={t("settings.appearance.sections.content")}>
+            <SettingRow label={t("settings.appearance.copyFormat")}>
+              <Select value={settings.copyFormat ?? "md"} options={COPY_FORMATS.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("copyFormat", v as import("../copyFormat").CopyFormat)} />
+            </SettingRow>
+            <SettingRow label={t("settings.appearance.linkPreview")}>
+              <Toggle checked={settings.linkPreviewEnabled ?? true} onChange={() => onSetSetting("linkPreviewEnabled", !settings.linkPreviewEnabled)} label={t("settings.appearance.linkPreview")} />
+            </SettingRow>
+            <Select value={settings.linkPreviewMode ?? "card"} options={LINK_PREVIEW_MODES.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("linkPreviewMode", v as "url" | "inline" | "card")} />
+          </SettingsSection>
+        </SettingsGrid>
+      )}
+
+      {tab === "list" && (
+        <SettingsGrid>
+          <SettingsSection title={t("settings.appearance.sections.sidebar")}>
+            <SettingRow label={t("settings.appearance.sidebarMode")}>
+              <Select value={settings.sidebarMode} options={SIDEBAR_MODES.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("sidebarMode", v as import("../hooks/useSettings").SidebarMode)} />
+            </SettingRow>
+            <SettingRow label={t("settings.appearance.sidebarSide")}>
+              <Select value={settings.sidebarSide} options={SIDEBAR_SIDES.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("sidebarSide", v as import("../hooks/useSettings").SidebarSide)} />
+            </SettingRow>
+          </SettingsSection>
+
+          <SettingsSection title={t("settings.appearance.sections.noteList")}>
+            <SettingRow label={t("settings.appearance.pinned")}>
+              <Select value={settings.pinnedScope} options={PIN_SCOPES.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("pinnedScope", v as import("../hooks/useSettings").PinnedScope)} />
+            </SettingRow>
+            <SettingRow label={t("settings.appearance.folderColor")}>
+              <Select value={settings.folderColorStyle} options={FOLDER_COLOR_STYLES.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("folderColorStyle", v as import("../hooks/useSettings").FolderColorStyle)} />
+            </SettingRow>
+            <SettingRow label={t("settings.appearance.compactTree")}>
+              <Toggle checked={settings.compactTree ?? false} onChange={() => onSetSetting("compactTree", !settings.compactTree)} label={t("settings.appearance.compactTree")} />
+            </SettingRow>
+            <SettingRow label={t("settings.appearance.treeProgress")}>
+              <Toggle checked={settings.treeProgress ?? true} onChange={() => onSetSetting("treeProgress", !settings.treeProgress)} label={t("settings.appearance.treeProgress")} />
+            </SettingRow>
+          </SettingsSection>
+        </SettingsGrid>
+      )}
+
+      {tab === "editor" && (
+        <SettingsGrid>
+          <SettingsSection title={t("settings.appearance.sections.text")}>
+            <SettingRow label={t("settings.appearance.fontSize")}>
+              <Select value={settings.editorFontSize} options={FONT_SIZES.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("editorFontSize", v as import("../hooks/useSettings").EditorFontSize)} />
+            </SettingRow>
+            <SettingRow label={t("settings.appearance.fontFamily")}>
+              <Select value={settings.editorFontFamily} options={FONT_FAMILIES.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("editorFontFamily", v as import("../hooks/useSettings").EditorFontFamily)} />
+            </SettingRow>
+            <SettingRow label={t("settings.appearance.editorWidth")}>
+              <Select value={settings.editorWidth} options={EDITOR_WIDTHS.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("editorWidth", v as import("../hooks/useSettings").EditorWidth)} />
+            </SettingRow>
+            <SettingRow label={t("settings.appearance.lineHeight")}>
+              <Select value={settings.editorLineHeight} options={LINE_HEIGHTS.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("editorLineHeight", v as import("../hooks/useSettings").EditorLineHeight)} />
+            </SettingRow>
+          </SettingsSection>
+
+          <SettingsSection title={t("settings.appearance.sections.tools")}>
+            <SettingRow label={t("settings.appearance.toolbar")}>
+              <Select value={settings.editorToolbarPos} options={TOOLBAR_POSITIONS.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("editorToolbarPos", v as import("../hooks/useSettings").EditorToolbarPos)} />
+            </SettingRow>
+            <SettingRow label={t("settings.appearance.charCount")}>
+              <Toggle checked={settings.editorCountShow} onChange={() => onSetSetting("editorCountShow", !settings.editorCountShow)} label={t("settings.appearance.charCount")} />
+            </SettingRow>
+            {settings.editorCountShow && (
+              <Select value={settings.editorCountPos} options={COUNT_POSITIONS.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("editorCountPos", v as import("../hooks/useSettings").CountPos)} />
+            )}
+            <SettingRow label={t("settings.appearance.invisibles")}>
+              <Toggle checked={settings.editorInvisibles} onChange={() => onSetSetting("editorInvisibles", !settings.editorInvisibles)} label={t("settings.appearance.invisibles")} />
+            </SettingRow>
+          </SettingsSection>
+        </SettingsGrid>
+      )}
     </div>
   );
 }
@@ -599,7 +737,7 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
           <div>
             <Logo size={56} className="mb-4" />
             <h1 className="text-2xl font-bold text-gray-900 mb-1">{info.name}</h1>
-            <p className="text-sm text-gray-500 mb-1">
+            <p className="text-sm text-gray-500 mb-6">
               {t("settings.about.version", { version: info.version })}
               {" · "}
               <button
@@ -611,43 +749,36 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
               </button>
             </p>
             {whatsNewState === "error" && <p className="text-xs text-red-600 mb-2">{t("whatsNew.error")}</p>}
-            <p className="text-sm text-gray-600 mt-6">{info.description}</p>
-            <p className="text-sm text-gray-600 mt-4 max-w-md">{t("settings.about.story")}</p>
-            <div className="mt-6 flex flex-col gap-1 text-sm">
-              <a href="https://noix.dev" className="text-blue-700 underline">{t("settings.about.project")}</a>
-              <a href="https://docs.noix.dev" className="text-blue-700 underline">{t("settings.about.docs")}</a>
-              <span className="text-gray-500 mt-2">{t("settings.about.license")}</span>
-            </div>
-
-            {!isMobilePlatform && <UpdateChecker settings={settings} onSetSetting={onSetSetting} />}
-
-            <div className="mt-6 max-w-md">
-              <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
-                <span>{t("settings.whatsNewOnUpdate")}</span>
-                <Toggle
-                  checked={settings.whatsNewOnUpdate}
-                  onChange={() => onSetSetting("whatsNewOnUpdate", !settings.whatsNewOnUpdate)}
-                  label={t("settings.whatsNewOnUpdate")}
-                />
-              </label>
-            </div>
 
             {Array.isArray(whatsNewState) && (
               <WhatsNew releases={whatsNewState} onClose={() => setWhatsNewState("idle")} />
             )}
 
-            <div className="mt-10 max-w-md">
-              <h2 className="text-sm font-semibold text-gray-800 mb-1">{t("settings.about.openSource")}</h2>
-              <p className="text-xs text-gray-500 mb-3">{t("settings.about.openSourceIntro")}</p>
-              <ul className="flex flex-col divide-y divide-yellow-200/70 border-y border-[var(--line-muted)]/70">
-                {OSS_LIBS.map(lib => (
-                  <li key={lib.name} className="flex items-center justify-between gap-3 py-1.5 text-xs">
-                    <a href={lib.url} className="text-blue-700 underline">{lib.name}</a>
-                    <span className="text-gray-500 whitespace-nowrap">{lib.license}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
+            <SettingsGrid>
+              <SettingsSection title={t("settings.about.sections.info")}>
+                <p className="text-sm text-gray-600">{info.description}</p>
+                <p className="text-sm text-gray-600">{t("settings.about.story")}</p>
+                <div className="flex flex-col gap-1 text-sm">
+                  <a href="https://noix.dev" className="text-blue-700 underline">{t("settings.about.project")}</a>
+                  <a href="https://docs.noix.dev" className="text-blue-700 underline">{t("settings.about.docs")}</a>
+                  <span className="text-gray-500 mt-1">{t("settings.about.license")}</span>
+                </div>
+              </SettingsSection>
+
+              <div className="md:col-span-2">
+                <SettingsSection title={t("settings.about.openSource")}>
+                  <p className="text-xs text-gray-500 -mt-1">{t("settings.about.openSourceIntro")}</p>
+                  <ul className="flex flex-col divide-y divide-yellow-200/70 border-y border-[var(--line-muted)]/70">
+                    {OSS_LIBS.map(lib => (
+                      <li key={lib.name} className="flex items-center justify-between gap-3 py-1.5 text-xs">
+                        <a href={lib.url} className="text-blue-700 underline">{lib.name}</a>
+                        <span className="text-gray-500 whitespace-nowrap">{lib.license}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </SettingsSection>
+              </div>
+            </SettingsGrid>
           </div>
         )}
 
@@ -655,185 +786,98 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
 
         {page === "security" && <SecurityPage settings={settings} onSetSetting={onSetSetting} />}
 
-        {page === "appearance" && (
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900 mb-1">{t("settings.appearance.title")}</h1>
-            <p className="text-sm text-gray-500 mb-6">{t("settings.appearance.subtitle")}</p>
-
-            <h2 className="text-sm font-semibold text-gray-800 mb-2">{t("settings.appearance.theme")}</h2>
-            <div className="flex flex-wrap gap-2 mb-8">
-              {THEME_OPTIONS.map(o => (
-                <button
-                  key={o.value}
-                  onClick={() => onSetSetting("theme", o.value)}
-                  className={`flex flex-col items-center gap-1.5 rounded-lg border p-2 transition-colors ${settings.theme === o.value ? "border-gray-800 ring-2 ring-gray-800" : "border-gray-200 hover:border-gray-400"}`}
-                  title={t(o.labelKey)}
-                >
-                  <span className="flex h-9 w-14 overflow-hidden rounded border border-gray-300">
-                    <span className="flex-1" style={{ background: o.paper }} />
-                    <span style={{ width: 12, background: o.accent }} />
-                  </span>
-                  <span className="text-xs text-gray-700">{t(o.labelKey)}</span>
-                </button>
-              ))}
-            </div>
-
-            <h2 className="text-sm font-semibold text-gray-800 mb-2">{t("settings.appearance.dateFormat")}</h2>
-            <div className="max-w-sm"><Select value={settings.dateFormat} options={DATE_FORMATS.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("dateFormat", v as DateFormat)} /></div>
-
-            <h2 className="text-sm font-semibold text-gray-800 mt-8 mb-2">{t("settings.appearance.language")}</h2>
-            <div className="max-w-sm"><Select value={settings.language} options={LANGUAGES.map(l => ({ value: l.value, label: l.value === "system" ? t("settings.appearance.langAuto") : l.label }))} onChange={v => onSetSetting("language", v as import("../hooks/useSettings").LangSetting)} /></div>
-
-            <h2 className="text-sm font-semibold text-gray-800 mt-8 mb-2">{t("settings.appearance.sidebarMode")}</h2>
-            <div className="max-w-sm"><Select value={settings.sidebarMode} options={SIDEBAR_MODES.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("sidebarMode", v as import("../hooks/useSettings").SidebarMode)} /></div>
-
-            <h2 className="text-sm font-semibold text-gray-800 mt-8 mb-2">{t("settings.appearance.sidebarSide")}</h2>
-            <div className="max-w-sm"><Select value={settings.sidebarSide} options={SIDEBAR_SIDES.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("sidebarSide", v as import("../hooks/useSettings").SidebarSide)} /></div>
-
-            <h2 className="text-sm font-semibold text-gray-800 mt-8 mb-2">{t("settings.appearance.pinned")}</h2>
-            <div className="max-w-sm"><Select value={settings.pinnedScope} options={PIN_SCOPES.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("pinnedScope", v as import("../hooks/useSettings").PinnedScope)} /></div>
-
-            <h2 className="text-sm font-semibold text-gray-800 mt-8 mb-2">{t("settings.appearance.folderColor")}</h2>
-            <div className="max-w-sm"><Select value={settings.folderColorStyle} options={FOLDER_COLOR_STYLES.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("folderColorStyle", v as import("../hooks/useSettings").FolderColorStyle)} /></div>
-
-            <h2 className="text-sm font-semibold text-gray-800 mt-8 mb-2">{t("settings.appearance.treeView")}</h2>
-            <div className="flex flex-col gap-3 max-w-sm">
-              <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
-                <span>{t("settings.appearance.compactTree")}</span>
-                <Toggle checked={settings.compactTree ?? false} onChange={() => onSetSetting("compactTree", !settings.compactTree)} label={t("settings.appearance.compactTree")} />
-              </label>
-              <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
-                <span>{t("settings.appearance.treeProgress")}</span>
-                <Toggle checked={settings.treeProgress ?? true} onChange={() => onSetSetting("treeProgress", !settings.treeProgress)} label={t("settings.appearance.treeProgress")} />
-              </label>
-            </div>
-
-            <h2 className="text-sm font-semibold text-gray-800 mt-8 mb-2">{t("settings.appearance.linkPreview")}</h2>
-            <div className="flex flex-col gap-3 max-w-sm">
-              <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
-                <span>{t("settings.appearance.linkPreview")}</span>
-                <Toggle checked={settings.linkPreviewEnabled ?? true} onChange={() => onSetSetting("linkPreviewEnabled", !settings.linkPreviewEnabled)} label={t("settings.appearance.linkPreview")} />
-              </label>
-              <Select value={settings.linkPreviewMode ?? "card"} options={LINK_PREVIEW_MODES.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("linkPreviewMode", v as "url" | "inline" | "card")} />
-            </div>
-
-            <h2 className="text-sm font-semibold text-gray-800 mt-8 mb-2">{t("settings.appearance.copyFormat")}</h2>
-            <div className="max-w-sm"><Select value={settings.copyFormat ?? "md"} options={COPY_FORMATS.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("copyFormat", v as import("../copyFormat").CopyFormat)} /></div>
-
-            <h1 className="text-lg font-bold text-gray-900 mt-10 mb-4">{t("settings.appearance.editorTitle")}</h1>
-
-            <h2 className="text-sm font-semibold text-gray-800 mb-2">{t("settings.appearance.toolbar")}</h2>
-            <div className="max-w-sm mb-6"><Select value={settings.editorToolbarPos} options={TOOLBAR_POSITIONS.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("editorToolbarPos", v as import("../hooks/useSettings").EditorToolbarPos)} /></div>
-
-            <h2 className="text-sm font-semibold text-gray-800 mb-2">{t("settings.appearance.fontSize")}</h2>
-            <div className="max-w-sm mb-6"><Select value={settings.editorFontSize} options={FONT_SIZES.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("editorFontSize", v as import("../hooks/useSettings").EditorFontSize)} /></div>
-
-            <h2 className="text-sm font-semibold text-gray-800 mb-2">{t("settings.appearance.fontFamily")}</h2>
-            <div className="max-w-sm mb-6"><Select value={settings.editorFontFamily} options={FONT_FAMILIES.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("editorFontFamily", v as import("../hooks/useSettings").EditorFontFamily)} /></div>
-
-            <h2 className="text-sm font-semibold text-gray-800 mb-2">{t("settings.appearance.editorWidth")}</h2>
-            <div className="max-w-sm mb-6"><Select value={settings.editorWidth} options={EDITOR_WIDTHS.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("editorWidth", v as import("../hooks/useSettings").EditorWidth)} /></div>
-
-            <div className="flex flex-col gap-3 max-w-sm mb-4">
-              <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
-                <span>{t("settings.appearance.charCount")}</span>
-                <Toggle checked={settings.editorCountShow} onChange={() => onSetSetting("editorCountShow", !settings.editorCountShow)} label={t("settings.appearance.charCount")} />
-              </label>
-              {settings.editorCountShow && (
-                <Select value={settings.editorCountPos} options={COUNT_POSITIONS.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("editorCountPos", v as import("../hooks/useSettings").CountPos)} />
-              )}
-              <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
-                <span>{t("settings.appearance.invisibles")}</span>
-                <Toggle checked={settings.editorInvisibles} onChange={() => onSetSetting("editorInvisibles", !settings.editorInvisibles)} label={t("settings.appearance.invisibles")} />
-              </label>
-            </div>
-
-            <h2 className="text-sm font-semibold text-gray-800 mt-6 mb-2">{t("settings.appearance.lineHeight")}</h2>
-            <div className="max-w-sm"><Select value={settings.editorLineHeight} options={LINE_HEIGHTS.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("editorLineHeight", v as import("../hooks/useSettings").EditorLineHeight)} /></div>
-          </div>
-        )}
+        {page === "appearance" && <AppearancePage settings={settings} onSetSetting={onSetSetting} />}
 
         {page === "system" && (
           <div>
             <h1 className="text-2xl font-bold text-gray-900 mb-1">{t("settings.system.title")}</h1>
             <p className="text-sm text-gray-500 mb-6">{t("settings.system.subtitle")}</p>
-            <div className="flex flex-col gap-3 max-w-md">
-              {!isMobilePlatform && (
-              <>
-              <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
-                <span>{t("settings.system.startOnBoot")}</span>
-                <Toggle checked={bootEnabled} onChange={toggleBoot} label={t("settings.system.startOnBoot")} />
-              </label>
-              <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
-                <span>{t("settings.system.startMinimized")}</span>
-                <Toggle checked={settings.startMinimized} onChange={() => onSetSetting("startMinimized", !settings.startMinimized)} label={t("settings.system.startMinimized")} />
-              </label>
-              <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
-                <span>{t("settings.system.closeBehavior")}</span>
-                <div className="w-56"><Select value={settings.closeAction ?? "ask"} options={CLOSE_ACTIONS.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("closeAction", v as import("../hooks/useSettings").CloseAction)} /></div>
-              </label>
-              </>
-              )}
-              <button
-                onClick={() => onExport([], "notefix-export.json")}
-                className="mt-2 self-start px-4 py-1.5 rounded text-sm font-medium"
-                style={{ background: "var(--line)", color: "#1c1917" }}
-              >
-                {t("settings.system.exportAll")}
-              </button>
 
+            <SettingsGrid>
               {!isMobilePlatform && (
-              <>
-              <h2 className="text-sm font-semibold text-gray-800 mt-6 mb-1">{t("settings.system.location")}</h2>
-              <p className="text-xs text-gray-600 break-all mb-2">{dbPath}</p>
-              <button
-                onClick={changeLocation}
-                className="self-start px-4 py-1.5 rounded text-sm font-medium border"
-                style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}
-              >
-                {t("settings.system.change")}
-              </button>
-              {locResult && (
-                <div className="mt-3 text-sm text-gray-700">
-                  <p className="mb-2">
-                    {locResult.mode === "switched"
-                      ? t("settings.system.switched", { path: locResult.path })
-                      : t("settings.system.moved", { path: locResult.path })}
-                  </p>
-                  <button
-                    onClick={() => api.relaunch()}
-                    className="self-start px-4 py-1.5 rounded text-sm font-medium"
-                    style={{ background: "var(--line)", color: "#1c1917" }}
-                  >
-                    {t("settings.system.restartNow")}
-                  </button>
-                </div>
+                <SettingsSection title={t("settings.system.sections.start")}>
+                  <SettingRow label={t("settings.system.startOnBoot")}>
+                    <Toggle checked={bootEnabled} onChange={toggleBoot} label={t("settings.system.startOnBoot")} />
+                  </SettingRow>
+                  <SettingRow label={t("settings.system.startMinimized")}>
+                    <Toggle checked={settings.startMinimized} onChange={() => onSetSetting("startMinimized", !settings.startMinimized)} label={t("settings.system.startMinimized")} />
+                  </SettingRow>
+                  <SettingRow label={t("settings.system.closeBehavior")}>
+                    <div className="w-56"><Select value={settings.closeAction ?? "ask"} options={CLOSE_ACTIONS.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("closeAction", v as import("../hooks/useSettings").CloseAction)} /></div>
+                  </SettingRow>
+                </SettingsSection>
               )}
-              </>
-              )}
-              <h2 className="text-sm font-semibold text-gray-800 mt-6 mb-1">{t("settings.system.editorAndHistory")}</h2>
-              <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
-                <span>{t("settings.system.autosaveDelay")}</span>
-                <input type="number" min={100} step={50} value={settings.autosaveDelay ?? 400} onChange={e => onSetSetting("autosaveDelay", Math.max(100, Number(e.target.value) || 400))} className="w-24 bg-white border rounded px-2 py-1" style={{ borderColor: "var(--line-muted)" }} />
-              </label>
-              <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
-                <span>{t("settings.system.revisionLimit")}</span>
-                <input type="number" min={1} value={settings.revisionLimit ?? 50} onChange={e => onSetSetting("revisionLimit", Math.max(1, Number(e.target.value) || 50))} className="w-24 bg-white border rounded px-2 py-1" style={{ borderColor: "var(--line-muted)" }} />
-              </label>
-              <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
-                <span>{t("settings.system.startView")}</span>
-                <div className="w-56"><Select value={settings.startView ?? "lastNote"} options={START_VIEWS.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("startView", v as import("../hooks/useSettings").StartView)} /></div>
-              </label>
-              <h2 className="text-sm font-semibold text-gray-800 mt-6 mb-1">{t("settings.system.trash")}</h2>
-              <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
-                <span>{t("settings.system.trashEnabled")}</span>
-                <Toggle checked={settings.trashEnabled ?? true} onChange={() => onSetSetting("trashEnabled", !settings.trashEnabled)} label={t("settings.system.trashEnabled")} />
-              </label>
-              <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
-                <span>{t("settings.system.trashRetention")}</span>
-                <input type="number" min={1} value={settings.trashRetentionDays ?? 30} onChange={e => onSetSetting("trashRetentionDays", Math.max(1, Number(e.target.value) || 30))} className="w-24 bg-white border rounded px-2 py-1" style={{ borderColor: "var(--line-muted)" }} />
-              </label>
-            </div>
+
+              <SettingsSection title={t("settings.system.sections.storage")}>
+                <button
+                  onClick={() => onExport([], "notefix-export.json")}
+                  className="self-start px-4 py-1.5 rounded text-sm font-medium"
+                  style={{ background: "var(--line)", color: "#1c1917" }}
+                >
+                  {t("settings.system.exportAll")}
+                </button>
+
+                {!isMobilePlatform && (
+                  <>
+                    <SettingRow label={t("settings.system.location")} hint={dbPath} stack>
+                      <button
+                        onClick={changeLocation}
+                        className="self-start px-4 py-1.5 rounded text-sm font-medium border"
+                        style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}
+                      >
+                        {t("settings.system.change")}
+                      </button>
+                    </SettingRow>
+                    {locResult && (
+                      <div className="text-sm text-gray-700">
+                        <p className="mb-2">
+                          {locResult.mode === "switched"
+                            ? t("settings.system.switched", { path: locResult.path })
+                            : t("settings.system.moved", { path: locResult.path })}
+                        </p>
+                        <button
+                          onClick={() => api.relaunch()}
+                          className="self-start px-4 py-1.5 rounded text-sm font-medium"
+                          style={{ background: "var(--line)", color: "#1c1917" }}
+                        >
+                          {t("settings.system.restartNow")}
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                <SettingRow label={t("settings.system.trashEnabled")}>
+                  <Toggle checked={settings.trashEnabled ?? true} onChange={() => onSetSetting("trashEnabled", !settings.trashEnabled)} label={t("settings.system.trashEnabled")} />
+                </SettingRow>
+                <SettingRow label={t("settings.system.trashRetention")}>
+                  <input type="number" min={1} value={settings.trashRetentionDays ?? 30} onChange={e => onSetSetting("trashRetentionDays", Math.max(1, Number(e.target.value) || 30))} className="w-24 bg-white border rounded px-2 py-1" style={{ borderColor: "var(--line-muted)" }} />
+                </SettingRow>
+              </SettingsSection>
+
+              <SettingsSection title={t("settings.system.editorAndHistory")}>
+                <SettingRow label={t("settings.system.autosaveDelay")}>
+                  <input type="number" min={100} step={50} value={settings.autosaveDelay ?? 400} onChange={e => onSetSetting("autosaveDelay", Math.max(100, Number(e.target.value) || 400))} className="w-24 bg-white border rounded px-2 py-1" style={{ borderColor: "var(--line-muted)" }} />
+                </SettingRow>
+                <SettingRow label={t("settings.system.revisionLimit")}>
+                  <input type="number" min={1} value={settings.revisionLimit ?? 50} onChange={e => onSetSetting("revisionLimit", Math.max(1, Number(e.target.value) || 50))} className="w-24 bg-white border rounded px-2 py-1" style={{ borderColor: "var(--line-muted)" }} />
+                </SettingRow>
+                <SettingRow label={t("settings.system.startView")}>
+                  <div className="w-56"><Select value={settings.startView ?? "lastNote"} options={START_VIEWS.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("startView", v as import("../hooks/useSettings").StartView)} /></div>
+                </SettingRow>
+              </SettingsSection>
+
+              <SettingsSection title={t("update.title")}>
+                {!isMobilePlatform && <UpdateChecker settings={settings} onSetSetting={onSetSetting} />}
+                <SettingRow label={t("settings.whatsNewOnUpdate")}>
+                  <Toggle
+                    checked={settings.whatsNewOnUpdate}
+                    onChange={() => onSetSetting("whatsNewOnUpdate", !settings.whatsNewOnUpdate)}
+                    label={t("settings.whatsNewOnUpdate")}
+                  />
+                </SettingRow>
+              </SettingsSection>
+            </SettingsGrid>
           </div>
         )}
 
@@ -853,12 +897,14 @@ export default function Settings({ onClose, settings, onSetSetting, onExport, in
           <div>
             <h1 className="text-2xl font-bold text-gray-900 mb-6">{t("settings.stats.title")}</h1>
             {stats && (
-              <dl className="grid grid-cols-2 gap-4 max-w-md text-gray-800">
-                <div><dt className="text-xs text-gray-500">{t("settings.stats.notes")}</dt><dd className="text-2xl font-bold">{stats.notes}</dd></div>
-                <div><dt className="text-xs text-gray-500">{t("settings.stats.archived")}</dt><dd className="text-2xl font-bold">{stats.archived}</dd></div>
-                <div><dt className="text-xs text-gray-500">{t("settings.stats.characters")}</dt><dd className="text-2xl font-bold">{stats.characters}</dd></div>
-                <div><dt className="text-xs text-gray-500">{t("settings.stats.words")}</dt><dd className="text-2xl font-bold">{stats.words}</dd></div>
-              </dl>
+              <SettingsSection title={t("settings.stats.sections.overview")}>
+                <dl className="grid grid-cols-2 gap-4 text-gray-800">
+                  <div><dt className="text-xs text-gray-500">{t("settings.stats.notes")}</dt><dd className="text-2xl font-bold">{stats.notes}</dd></div>
+                  <div><dt className="text-xs text-gray-500">{t("settings.stats.archived")}</dt><dd className="text-2xl font-bold">{stats.archived}</dd></div>
+                  <div><dt className="text-xs text-gray-500">{t("settings.stats.characters")}</dt><dd className="text-2xl font-bold">{stats.characters}</dd></div>
+                  <div><dt className="text-xs text-gray-500">{t("settings.stats.words")}</dt><dd className="text-2xl font-bold">{stats.words}</dd></div>
+                </dl>
+              </SettingsSection>
             )}
           </div>
         )}
@@ -919,7 +965,7 @@ function ContextsPage() {
     <div>
       <h1 className="text-2xl font-bold text-gray-900 mb-1">{t("contexts.title")}</h1>
       <p className="text-sm text-gray-500 mb-6">{t("contexts.subtitle")}</p>
-      <div className="flex flex-col gap-2 max-w-lg">
+      <SettingsSection title={t("contexts.sections.manage")}>
         {ctx.map(c => (
           <div key={c.id} className="flex items-start justify-between gap-3 rounded border px-3 py-2" style={{ borderColor: "var(--line-muted)", background: "var(--paper-raised)" }}>
             <div className="min-w-0">
@@ -938,13 +984,13 @@ function ContextsPage() {
             </div>
           </div>
         ))}
-      </div>
-      <div className="mt-4 flex items-center gap-2">
-        <button onClick={() => setDialog({ mode: "add" })} className="px-4 py-1.5 rounded text-sm font-medium" style={{ background: "var(--line)", color: "#1c1917" }}>{t("contexts.add")}</button>
-        <button onClick={() => { setError(null); setDialog({ mode: "addServer" }); }} className="px-4 py-1.5 rounded text-sm font-medium border" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>{t("contexts.addServer")}</button>
-        {connecting && <span className="text-xs text-gray-500">{t("contexts.connecting")}</span>}
-        {error && <span className="text-xs text-red-600" role="alert">{error}</span>}
-      </div>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setDialog({ mode: "add" })} className="px-4 py-1.5 rounded text-sm font-medium" style={{ background: "var(--line)", color: "#1c1917" }}>{t("contexts.add")}</button>
+          <button onClick={() => { setError(null); setDialog({ mode: "addServer" }); }} className="px-4 py-1.5 rounded text-sm font-medium border" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>{t("contexts.addServer")}</button>
+          {connecting && <span className="text-xs text-gray-500">{t("contexts.connecting")}</span>}
+          {error && <span className="text-xs text-red-600" role="alert">{error}</span>}
+        </div>
+      </SettingsSection>
 
       {dialog?.mode === "add" && (
         <PromptDialog
@@ -1004,7 +1050,7 @@ function SystemChecksPage({ settings, onChangeLocation }: { settings: AppSetting
     <div>
       <h1 className="text-2xl font-bold text-gray-900 mb-1">{t("diagnostics.title")}</h1>
       <p className="text-sm text-gray-500 mb-6">{t("diagnostics.subtitle")}</p>
-      <div className="flex flex-col gap-3 max-w-lg">
+      <SettingsSection title={t("diagnostics.sections.checks")}>
         {(checks ?? []).map(c => (
           <div key={c.key} className="flex items-start justify-between gap-3 text-sm">
             <div>
@@ -1016,8 +1062,8 @@ function SystemChecksPage({ settings, onChangeLocation }: { settings: AppSetting
             )}
           </div>
         ))}
-        <button onClick={run} className="self-start mt-2 px-4 py-1.5 rounded text-sm font-medium border" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>{t("diagnostics.recheck")}</button>
-      </div>
+        <button onClick={run} className="self-start px-4 py-1.5 rounded text-sm font-medium border" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>{t("diagnostics.recheck")}</button>
+      </SettingsSection>
     </div>
   );
 }
@@ -1065,77 +1111,96 @@ function McpPage({ settings, onSetSetting }: { settings: AppSettings; onSetSetti
     }
   };
 
+  const [tab, setTab] = useState<"server" | "access">("server");
+  const tabs = [
+    { id: "server", label: t("settings.mcp.tabs.server") },
+    { id: "access", label: t("settings.mcp.tabs.access") },
+  ];
+
   return (
     <div>
       <h1 className="text-2xl font-bold text-gray-900 mb-1">{t("settings.mcp.title")}</h1>
       <p className="text-sm text-gray-500 mb-6">{t("settings.mcp.subtitle")}</p>
-      <div className="flex flex-col gap-3 max-w-md">
-        <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
-          <span>{t("settings.mcp.enabled")}</span>
-          <Toggle checked={settings.mcpEnabled ?? false} onChange={() => onSetSetting("mcpEnabled", !settings.mcpEnabled)} label={t("settings.mcp.enabled")} />
-        </label>
 
-        <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
-          <span>{t("settings.mcp.reachable")}</span>
-          <div className="w-56"><Select value={settings.mcpBind ?? "internal"} options={MCP_BINDS.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("mcpBind", v as "internal" | "external")} /></div>
-        </label>
-        {settings.mcpBind === "external" && (
-          <div className="rounded border px-3 py-2 text-xs" style={{ background: "#fee2e2", borderColor: "#fca5a5", color: "#991b1b" }}>
-            {t("settings.mcp.externalWarning")}
+      <SettingsTabs tabs={tabs} active={tab} onChange={id => setTab(id as "server" | "access")} />
+
+      {tab === "server" && (
+        <SettingsGrid>
+          <SettingsSection title={t("settings.mcp.sections.config")}>
+            <SettingRow label={t("settings.mcp.enabled")}>
+              <Toggle checked={settings.mcpEnabled ?? false} onChange={() => onSetSetting("mcpEnabled", !settings.mcpEnabled)} label={t("settings.mcp.enabled")} />
+            </SettingRow>
+
+            <SettingRow label={t("settings.mcp.reachable")}>
+              <div className="w-40"><Select value={settings.mcpBind ?? "internal"} options={MCP_BINDS.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={v => onSetSetting("mcpBind", v as "internal" | "external")} /></div>
+            </SettingRow>
+            {settings.mcpBind === "external" && (
+              <div className="rounded border px-3 py-2 text-xs" style={{ background: "#fee2e2", borderColor: "#fca5a5", color: "#991b1b" }}>
+                {t("settings.mcp.externalWarning")}
+              </div>
+            )}
+
+            <SettingRow label={t("settings.mcp.port")}>
+              <input type="number" min={1} max={65535} value={settings.mcpPort ?? 4357} onChange={e => onSetSetting("mcpPort", Math.min(65535, Math.max(1, Number(e.target.value) || 4357)))} className="w-24 bg-white border rounded px-2 py-1" style={{ borderColor: "var(--line-muted)" }} />
+            </SettingRow>
+
+            <SettingRow label={t("settings.mcp.authRequired")}>
+              <Toggle checked={settings.mcpAuthRequired ?? true} onChange={() => onSetSetting("mcpAuthRequired", !settings.mcpAuthRequired)} label={t("settings.mcp.authRequired")} />
+            </SettingRow>
+
+            <SettingRow label={t("settings.mcp.token")} stack>
+              <div className="flex items-center gap-2">
+                <input type="text" readOnly value={settings.mcpToken} className="flex-1 bg-white border rounded px-2 py-1 text-xs font-mono" style={{ borderColor: "var(--line-muted)" }} />
+                <button onClick={() => onSetSetting("mcpToken", crypto.randomUUID())} className="shrink-0 px-3 py-1 rounded text-xs font-medium border" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>
+                  {t("settings.mcp.regenerate")}
+                </button>
+              </div>
+            </SettingRow>
+          </SettingsSection>
+
+          <div className="md:col-span-2">
+            <SettingsSection title={t("settings.mcp.sections.connection")}>
+              <SettingRow label={t("settings.mcp.status")} stack>
+                <p className="text-xs text-gray-600 break-all font-mono">{url}</p>
+              </SettingRow>
+
+              <SettingRow label={t("settings.mcp.demo")} hint={t("settings.mcp.demoHint")} stack>
+                <div className="relative">
+                  <pre className="bg-white border rounded p-3 text-[11px] leading-relaxed font-mono overflow-auto" style={{ borderColor: "var(--line-muted)" }}>{demo}</pre>
+                  <button onClick={copyDemo} className="absolute top-2 right-2 px-2 py-0.5 rounded text-[11px] font-medium border" style={{ background: "var(--line)", borderColor: "var(--line-muted)", color: "#1c1917" }}>
+                    {copied ? t("settings.mcp.copied") : t("settings.mcp.copy")}
+                  </button>
+                </div>
+              </SettingRow>
+            </SettingsSection>
           </div>
-        )}
+        </SettingsGrid>
+      )}
 
-        <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
-          <span>{t("settings.mcp.port")}</span>
-          <input type="number" min={1} max={65535} value={settings.mcpPort ?? 4357} onChange={e => onSetSetting("mcpPort", Math.min(65535, Math.max(1, Number(e.target.value) || 4357)))} className="w-24 bg-white border rounded px-2 py-1" style={{ borderColor: "var(--line-muted)" }} />
-        </label>
+      {tab === "access" && (
+        <SettingsGrid>
+          <SettingsSection title={t("settings.mcp.tabs.access")}>
+            <SettingRow label={t("settings.mcp.allowWrite")}>
+              <Toggle checked={settings.mcpAllowWrite ?? false} onChange={() => onSetSetting("mcpAllowWrite", !settings.mcpAllowWrite)} label={t("settings.mcp.allowWrite")} />
+            </SettingRow>
 
-        <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
-          <span>{t("settings.mcp.authRequired")}</span>
-          <Toggle checked={settings.mcpAuthRequired ?? true} onChange={() => onSetSetting("mcpAuthRequired", !settings.mcpAuthRequired)} label={t("settings.mcp.authRequired")} />
-        </label>
-
-        <h2 className="text-sm font-semibold text-gray-800 mt-2">{t("settings.mcp.token")}</h2>
-        <div className="flex items-center gap-2">
-          <input type="text" readOnly value={settings.mcpToken} className="flex-1 bg-white border rounded px-2 py-1 text-xs font-mono" style={{ borderColor: "var(--line-muted)" }} />
-          <button onClick={() => onSetSetting("mcpToken", crypto.randomUUID())} className="shrink-0 px-3 py-1 rounded text-xs font-medium border" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>
-            {t("settings.mcp.regenerate")}
-          </button>
-        </div>
-
-        <label className="flex items-center justify-between gap-4 text-sm text-gray-800 mt-2">
-          <span>{t("settings.mcp.allowWrite")}</span>
-          <Toggle checked={settings.mcpAllowWrite ?? false} onChange={() => onSetSetting("mcpAllowWrite", !settings.mcpAllowWrite)} label={t("settings.mcp.allowWrite")} />
-        </label>
-
-        <label className="flex items-center justify-between gap-4 text-sm text-gray-800">
-          <span>{t("settings.mcp.protectedAccess")}</span>
-          <div className="w-40">
-            <Select
-              value={settings.mcpProtectedAccess ?? "off"}
-              options={MCP_PROTECTED_ACCESS.map(o => ({ value: o.value, label: t(o.labelKey) }))}
-              onChange={v => onSetSetting("mcpProtectedAccess", v as import("../hooks/useSettings").McpProtectedAccess)}
-            />
-          </div>
-        </label>
-        {settings.mcpProtectedAccess !== "off" && (
-          <div className="rounded border px-3 py-2 text-xs" style={{ background: "#fee2e2", borderColor: "#fca5a5", color: "#991b1b" }}>
-            {t("settings.mcp.protectedAccessWarning")}
-          </div>
-        )}
-
-        <h2 className="text-sm font-semibold text-gray-800 mt-2">{t("settings.mcp.status")}</h2>
-        <p className="text-xs text-gray-600 break-all font-mono">{url}</p>
-
-        <h2 className="text-sm font-semibold text-gray-800 mt-2">{t("settings.mcp.demo")}</h2>
-        <p className="text-xs text-gray-500">{t("settings.mcp.demoHint")}</p>
-        <div className="relative">
-          <pre className="bg-white border rounded p-3 text-[11px] leading-relaxed font-mono overflow-auto" style={{ borderColor: "var(--line-muted)" }}>{demo}</pre>
-          <button onClick={copyDemo} className="absolute top-2 right-2 px-2 py-0.5 rounded text-[11px] font-medium border" style={{ background: "var(--line)", borderColor: "var(--line-muted)", color: "#1c1917" }}>
-            {copied ? t("settings.mcp.copied") : t("settings.mcp.copy")}
-          </button>
-        </div>
-      </div>
+            <SettingRow label={t("settings.mcp.protectedAccess")}>
+              <div className="w-40">
+                <Select
+                  value={settings.mcpProtectedAccess ?? "off"}
+                  options={MCP_PROTECTED_ACCESS.map(o => ({ value: o.value, label: t(o.labelKey) }))}
+                  onChange={v => onSetSetting("mcpProtectedAccess", v as import("../hooks/useSettings").McpProtectedAccess)}
+                />
+              </div>
+            </SettingRow>
+            {settings.mcpProtectedAccess !== "off" && (
+              <div className="rounded border px-3 py-2 text-xs" style={{ background: "#fee2e2", borderColor: "#fca5a5", color: "#991b1b" }}>
+                {t("settings.mcp.protectedAccessWarning")}
+              </div>
+            )}
+          </SettingsSection>
+        </SettingsGrid>
+      )}
     </div>
   );
 }

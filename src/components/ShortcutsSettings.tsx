@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { SHORTCUT_ACTIONS, resolveBindings, eventToCombo, comboLabel } from '../shortcuts';
+import SettingsSection from './settings/SettingsSection';
 
 export default function ShortcutsSettings({ value, onChange }: { value: Record<string, string>; onChange: (v: Record<string, string>) => void }) {
   const { t } = useTranslation();
@@ -29,7 +30,7 @@ export default function ShortcutsSettings({ value, onChange }: { value: Record<s
     <div>
       <h1 className="text-2xl font-bold text-gray-900 mb-1">{t('shortcuts.title')}</h1>
       <p className="text-sm text-gray-500 mb-6">{t('shortcuts.help')}</p>
-      <div className="flex flex-col gap-2 max-w-lg">
+      <SettingsSection title={t('shortcuts.sections.bindings')}>
         {SHORTCUT_ACTIONS.map(a => {
           const combo = bindings[a.id];
           const conflict = counts[combo] > 1;
@@ -47,8 +48,8 @@ export default function ShortcutsSettings({ value, onChange }: { value: Record<s
             </div>
           );
         })}
-        <button onClick={() => onChange({})} className="self-start mt-2 px-4 py-1.5 rounded text-sm font-medium border" style={{ borderColor: 'var(--line-muted)', color: '#1c1917' }}>{t('shortcuts.resetAll')}</button>
-      </div>
+        <button onClick={() => onChange({})} className="self-start px-4 py-1.5 rounded text-sm font-medium border" style={{ borderColor: 'var(--line-muted)', color: '#1c1917' }}>{t('shortcuts.resetAll')}</button>
+      </SettingsSection>
     </div>
   );
 }

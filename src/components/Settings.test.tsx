@@ -148,6 +148,7 @@ describe("Settings — folderColorStyle", () => {
     const onSetSetting = vi.fn();
     render(<Settings onClose={vi.fn()} settings={{ startMinimized: false, dateFormat: "auto" as const, pinnedScope: "perFolder" as const, folderColorStyle: "icon" as const, revisionLimit: 50, autosaveDelay: 400, startView: "lastNote" as const, dashboardLayout: [{ key: "recent", x: 0, y: 0, w: 6, h: 4 }], compactTree: false, treeProgress: true, trashEnabled: true, trashRetentionDays: 30, closeAction: "ask" as const, shortcuts: {}, language: "system" as const, linkPreviewEnabled: true, linkPreviewMode: "card" as const, copyFormat: "md" as const, mcpEnabled: false, mcpBind: "internal" as const, mcpPort: 4357, mcpAuthRequired: true, mcpToken: "", mcpAllowWrite: false }} onSetSetting={onSetSetting} onExport={vi.fn()} />);
     fireEvent.click(screen.getByText("Darstellung"));
+    fireEvent.click(screen.getByText("Liste & Ordner"));
     fireEvent.change(screen.getByDisplayValue("Nur Icon einfärben"), { target: { value: "row" } });
     expect(onSetSetting).toHaveBeenCalledWith("folderColorStyle", "row");
   });
@@ -158,6 +159,7 @@ describe("Settings — pinnedScope", () => {
     const onSetSetting = vi.fn();
     render(<Settings onClose={vi.fn()} settings={{ startMinimized: false, dateFormat: "auto" as const, pinnedScope: "perFolder" as const, folderColorStyle: "icon" as const, revisionLimit: 50, autosaveDelay: 400, startView: "lastNote" as const, dashboardLayout: [{ key: "recent", x: 0, y: 0, w: 6, h: 4 }], compactTree: false, treeProgress: true, trashEnabled: true, trashRetentionDays: 30, closeAction: "ask" as const, shortcuts: {}, language: "system" as const, linkPreviewEnabled: true, linkPreviewMode: "card" as const, copyFormat: "md" as const, mcpEnabled: false, mcpBind: "internal" as const, mcpPort: 4357, mcpAuthRequired: true, mcpToken: "", mcpAllowWrite: false }} onSetSetting={onSetSetting} onExport={vi.fn()} />);
     fireEvent.click(screen.getByText("Darstellung"));
+    fireEvent.click(screen.getByText("Liste & Ordner"));
     fireEvent.change(screen.getByDisplayValue("Gepinnt zuerst je Ordner"), { target: { value: "global" } });
     expect(onSetSetting).toHaveBeenCalledWith("pinnedScope", "global");
   });
@@ -180,6 +182,7 @@ describe("Settings — tree view", () => {
     const onSetSetting = vi.fn();
     render(<Settings onClose={vi.fn()} settings={full} onSetSetting={onSetSetting} onExport={vi.fn()} />);
     fireEvent.click(screen.getByText("Darstellung"));
+    fireEvent.click(screen.getByText("Liste & Ordner"));
     fireEvent.click(screen.getByLabelText(/Kompakte Ansicht/));
     expect(onSetSetting).toHaveBeenCalledWith("compactTree", true);
   });
@@ -223,6 +226,7 @@ describe("Settings — Security", () => {
     const onSetSetting = vi.fn();
     render(<Settings onClose={vi.fn()} settings={full} onSetSetting={onSetSetting} onExport={vi.fn()} />);
     fireEvent.click(screen.getByText("Sicherheit"));
+    fireEvent.click(screen.getByText("Auto-Lock"));
     await waitFor(() => expect(screen.getByText("Nach Inaktivität sperren")).toBeInTheDocument());
     fireEvent.click(screen.getByLabelText("Nach Inaktivität sperren"));
     expect(onSetSetting).toHaveBeenCalledWith("autoLockIdle", false);
@@ -285,7 +289,7 @@ describe("Settings — What's New (About page)", () => {
   it("toggling 'What's New after update' calls onSetSetting", async () => {
     const onSetSetting = vi.fn();
     render(<Settings onClose={vi.fn()} settings={full} onSetSetting={onSetSetting} onExport={vi.fn()} />);
-    await waitFor(() => expect(screen.getByText("Notefix")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("System"));
     fireEvent.click(screen.getByLabelText(/nach einem Update anzeigen/));
     expect(onSetSetting).toHaveBeenCalledWith("whatsNewOnUpdate", false);
   });
