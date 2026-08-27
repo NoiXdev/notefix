@@ -1,8 +1,10 @@
 use std::sync::Mutex;
 
+use base64::Engine;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 use crate::storage::{Note, NoteMeta, SearchHit, Store};
+use crate::vault::aead::Dek;
 
 fn now_ms() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -51,6 +53,81 @@ fn broadcast_changed(app: &AppHandle, sender_label: &str) {
     }
 }
 
+// Protected-notes vault: encrypt/decrypt around note content, and the
+// protect/unprotect + folder-lock transition commands (Task 6).
+//
+// The physical-state invariant that makes this straightforward: `content` is
+// ciphertext *iff* `notes.protected = 1`. `folders.locked` is a separate
+// "intent" flag. Reads/writes below always consult `protected` directly
+// (cheap); only the transition commands walk the folder tree.
+
+/// Seals a note's plaintext HTML into a base64-encoded AEAD blob for storage
+/// in the `notes.content` column. The note id is bound in as associated data
+/// so a sealed blob can't be silently reattached to a different note's row.
+fn seal_content(dek: &Dek, note_id: &str, html: &str) -> String {
+    base64::engine::general_purpose::STANDARD.encode(crate::vault::aead::seal(
+        dek,
+        note_id.as_bytes(),
+        html.as_bytes(),
+    ))
+}
+
+/// Reverses `seal_content`: base64-decode, open the AEAD blob (checking the
+/// note id as associated data), then validate the plaintext is UTF-8. Every
+/// failure maps to a plain `String` — never key material or plaintext.
+fn open_content(dek: &Dek, note_id: &str, stored: &str) -> Result<String, String> {
+    let blob = base64::engine::general_purpose::STANDARD
+        .decode(stored)
+        .map_err(|e| e.to_string())?;
+    let plaintext =
+        crate::vault::aead::open(dek, note_id.as_bytes(), &blob).map_err(|e| e.to_string())?;
+    String::from_utf8(plaintext).map_err(|e| e.to_string())
+}
+
+/// True if any ancestor folder of `note_id` (not counting the note's own
+/// `protected` flag — see `Store::is_effectively_protected` for that) is
+/// `locked`. Cycle-safe via a visited set, mirroring the walk in
+/// `Store::is_effectively_protected`.
+fn has_locked_ancestor_folder(store: &Store, note_id: &str) -> Result<bool, String> {
+    use rusqlite::OptionalExtension;
+    use std::collections::HashSet;
+
+    let mut folder_id: Option<String> = store
+        .conn
+        .query_row(
+            "SELECT folder_id FROM notes WHERE id = ?1",
+            [note_id],
+            |r| r.get::<_, Option<String>>(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .flatten();
+
+    let mut visited: HashSet<String> = HashSet::new();
+    while let Some(fid) = folder_id {
+        if !visited.insert(fid.clone()) {
+            break; // cycle detected — stop instead of looping forever
+        }
+        let folder: Option<(bool, Option<String>)> = store
+            .conn
+            .query_row(
+                "SELECT locked, parent_id FROM folders WHERE id = ?1",
+                [&fid],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        let Some((locked, parent_id)) = folder else {
+            break;
+        };
+        if locked {
+            return Ok(true);
+        }
+        folder_id = parent_id;
+    }
+    Ok(false)
+}
+
 #[tauri::command]
 pub fn notes_load(store: State<'_, Mutex<Store>>) -> Result<Vec<NoteMeta>, String> {
     let store = store.lock().map_err(|e| e.to_string())?;
@@ -58,13 +135,26 @@ pub fn notes_load(store: State<'_, Mutex<Store>>) -> Result<Vec<NoteMeta>, Strin
 }
 
 /// The full HTML content of one note (empty string if it no longer exists).
+/// Protected notes require the vault to be unlocked — `Err("vault locked")`
+/// otherwise — and are decrypted before returning.
 #[tauri::command]
-pub fn notes_load_one(store: State<'_, Mutex<Store>>, id: String) -> Result<String, String> {
+pub fn notes_load_one(
+    store: State<'_, Mutex<Store>>,
+    vault: VaultStateHandle<'_>,
+    id: String,
+) -> Result<String, String> {
     let store = store.lock().map_err(|e| e.to_string())?;
-    Ok(store
-        .load_note_content(&id)
-        .map_err(|e| e.to_string())?
-        .unwrap_or_default())
+    let stored = match store.load_note_content(&id).map_err(|e| e.to_string())? {
+        Some(c) => c,
+        None => return Ok(String::new()),
+    };
+    if store.note_protected(&id).map_err(|e| e.to_string())? {
+        let vault = vault.lock().map_err(|e| e.to_string())?;
+        let dek = vault.dek().ok_or_else(|| "vault locked".to_string())?;
+        open_content(dek, &id, &stored)
+    } else {
+        Ok(stored)
+    }
 }
 
 /// Full-text search within the active context (title-first), with snippets.
@@ -82,14 +172,31 @@ pub fn notes_save(
     app: AppHandle,
     webview: WebviewWindow,
     store: State<'_, Mutex<Store>>,
+    vault: VaultStateHandle<'_>,
     note: Note,
 ) -> Result<(), String> {
     {
         let store = store.lock().map_err(|e| e.to_string())?;
-        store.save_note(&note).map_err(|e| e.to_string())?;
-        let limit = crate::settings::get_int(&store.conn, "revisionLimit", 50);
-        crate::revisions::add_revision(&store.conn, &note.id, &note.content, limit)
+        let protected = store
+            .is_effectively_protected(&note.id)
             .map_err(|e| e.to_string())?;
+        if protected {
+            let vault = vault.lock().map_err(|e| e.to_string())?;
+            let dek = vault.dek().ok_or_else(|| "vault locked".to_string())?;
+            let mut sealed = note.clone();
+            sealed.content = seal_content(dek, &note.id, &note.content);
+            store.save_note(&sealed).map_err(|e| e.to_string())?;
+            store
+                .set_note_protected(&note.id, true)
+                .map_err(|e| e.to_string())?;
+            // Never persist a protected note's plaintext into the (unencrypted)
+            // note_revisions table — skip revision history for this save.
+        } else {
+            store.save_note(&note).map_err(|e| e.to_string())?;
+            let limit = crate::settings::get_int(&store.conn, "revisionLimit", 50);
+            crate::revisions::add_revision(&store.conn, &note.id, &note.content, limit)
+                .map_err(|e| e.to_string())?;
+        }
     }
     broadcast_changed(&app, webview.label());
     crate::tray::rebuild_menu(&app);
@@ -1515,6 +1622,132 @@ pub fn vault_change_passphrase(
     Ok(())
 }
 
+/// Encrypts or decrypts one note's stored content in place, keeping
+/// `notes.protected` in sync with the physical content state. Requires the
+/// vault to be unlocked.
+///
+/// `protected = false` is refused with an error while the note is inside a
+/// `locked` folder — the folder is the source of truth for that note's
+/// protection until the folder itself is unlocked.
+#[tauri::command]
+pub fn note_set_protected(
+    app: AppHandle,
+    webview: WebviewWindow,
+    store: State<'_, Mutex<Store>>,
+    vault: VaultStateHandle<'_>,
+    id: String,
+    protected: bool,
+) -> Result<(), String> {
+    {
+        let store = store.lock().map_err(|e| e.to_string())?;
+        let vault = vault.lock().map_err(|e| e.to_string())?;
+        let dek = vault.dek().ok_or_else(|| "vault locked".to_string())?;
+
+        if protected {
+            if !store.note_protected(&id).map_err(|e| e.to_string())? {
+                let plaintext = store
+                    .load_note_content(&id)
+                    .map_err(|e| e.to_string())?
+                    .unwrap_or_default();
+                let sealed = seal_content(dek, &id, &plaintext);
+                store
+                    .set_content_silent(&id, &sealed)
+                    .map_err(|e| e.to_string())?;
+                store
+                    .set_note_protected(&id, true)
+                    .map_err(|e| e.to_string())?;
+            }
+        } else {
+            if has_locked_ancestor_folder(&store, &id)? {
+                return Err("note is protected by its folder".to_string());
+            }
+            if store.note_protected(&id).map_err(|e| e.to_string())? {
+                let ciphertext = store
+                    .load_note_content(&id)
+                    .map_err(|e| e.to_string())?
+                    .unwrap_or_default();
+                let plaintext = open_content(dek, &id, &ciphertext)?;
+                store
+                    .set_content_silent(&id, &plaintext)
+                    .map_err(|e| e.to_string())?;
+                store
+                    .set_note_protected(&id, false)
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+    }
+    notify(&app, &webview);
+    Ok(())
+}
+
+/// Locks or unlocks a folder, encrypting/decrypting the notes in its subtree
+/// to match. Requires the vault to be unlocked.
+///
+/// v1 limitation: `notes.protected` tracks only physical ciphertext state,
+/// not a separate "individually locked" intent, so unlocking a folder
+/// decrypts every subtree note that has no *other* locked ancestor —
+/// including a note that was individually protected while it happened to
+/// live inside this now-unlocking folder. Acceptable for v1.
+#[tauri::command]
+pub fn folder_set_locked(
+    app: AppHandle,
+    webview: WebviewWindow,
+    store: State<'_, Mutex<Store>>,
+    vault: VaultStateHandle<'_>,
+    id: String,
+    locked: bool,
+) -> Result<(), String> {
+    {
+        let store = store.lock().map_err(|e| e.to_string())?;
+        let vault = vault.lock().map_err(|e| e.to_string())?;
+        let dek = vault.dek().ok_or_else(|| "vault locked".to_string())?;
+        let note_ids = store.note_ids_in_subtree(&id).map_err(|e| e.to_string())?;
+
+        if locked {
+            store
+                .set_folder_locked(&id, true)
+                .map_err(|e| e.to_string())?;
+            for note_id in &note_ids {
+                if !store.note_protected(note_id).map_err(|e| e.to_string())? {
+                    let plaintext = store
+                        .load_note_content(note_id)
+                        .map_err(|e| e.to_string())?
+                        .unwrap_or_default();
+                    let sealed = seal_content(dek, note_id, &plaintext);
+                    store
+                        .set_content_silent(note_id, &sealed)
+                        .map_err(|e| e.to_string())?;
+                    store
+                        .set_note_protected(note_id, true)
+                        .map_err(|e| e.to_string())?;
+                }
+            }
+        } else {
+            store
+                .set_folder_locked(&id, false)
+                .map_err(|e| e.to_string())?;
+            for note_id in &note_ids {
+                let still_locked = has_locked_ancestor_folder(&store, note_id)?;
+                if store.note_protected(note_id).map_err(|e| e.to_string())? && !still_locked {
+                    let ciphertext = store
+                        .load_note_content(note_id)
+                        .map_err(|e| e.to_string())?
+                        .unwrap_or_default();
+                    let plaintext = open_content(dek, note_id, &ciphertext)?;
+                    store
+                        .set_content_silent(note_id, &plaintext)
+                        .map_err(|e| e.to_string())?;
+                    store
+                        .set_note_protected(note_id, false)
+                        .map_err(|e| e.to_string())?;
+                }
+            }
+        }
+    }
+    notify(&app, &webview);
+    Ok(())
+}
+
 #[cfg(test)]
 mod widget_url_tests {
     use super::{parse_widget_url, WidgetAction};
@@ -1541,5 +1774,77 @@ mod widget_url_tests {
         );
         assert_eq!(parse_widget_url("notefix://note"), WidgetAction::Auth); // no id
         assert_eq!(parse_widget_url("garbage"), WidgetAction::Auth);
+    }
+}
+
+// Task 6 has no Tauri `State` mocking harness available (same constraint
+// noted by Task 5), so command wiring is verified by reading `notes_load_one`
+// / `notes_save` / `note_set_protected` / `folder_set_locked` end-to-end
+// rather than by invoking the `#[tauri::command]` functions directly. What
+// IS unit-testable without a harness — the `seal_content`/`open_content`
+// helpers, and the `Store`-level effect a protected save has on `content` —
+// is covered here.
+#[cfg(test)]
+mod protected_content_tests {
+    use super::*;
+    use crate::storage::{Note, Store};
+    use crate::vault::aead::Dek;
+
+    #[test]
+    fn seal_open_content_roundtrip() {
+        let dek = Dek::random();
+        let stored = seal_content(&dek, "n1", "<p>secret</p>");
+        assert_ne!(stored, "<p>secret</p>");
+        assert_eq!(open_content(&dek, "n1", &stored).unwrap(), "<p>secret</p>");
+    }
+
+    #[test]
+    fn open_content_rejects_mismatched_note_id() {
+        // The note id is bound in as AEAD associated data, so a sealed blob
+        // can't be silently opened under a different note's id.
+        let dek = Dek::random();
+        let stored = seal_content(&dek, "n1", "<p>secret</p>");
+        assert!(open_content(&dek, "other-note", &stored).is_err());
+    }
+
+    #[test]
+    fn open_content_rejects_wrong_key() {
+        let stored = seal_content(&Dek::random(), "n1", "<p>secret</p>");
+        assert!(open_content(&Dek::random(), "n1", &stored).is_err());
+    }
+
+    /// Mirrors the branch `notes_save` takes when
+    /// `store.is_effectively_protected(id)` is true: seal the plaintext,
+    /// persist it, and flip `protected`. No Tauri `State` harness exists in
+    /// this repo, so this exercises `Store` + the helpers directly instead of
+    /// invoking the `#[tauri::command]` fn.
+    #[test]
+    fn protected_save_stores_ciphertext_and_decrypts_back() {
+        let s = Store::open_in_memory().unwrap();
+        crate::migrate::run_migrations(&s.conn).unwrap();
+        let dek = Dek::random();
+        let plaintext = "<p>very secret</p>";
+
+        s.save_note(&Note {
+            id: "n1".into(),
+            content: plaintext.into(),
+            updated_at: 1,
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(!s.is_effectively_protected("n1").unwrap());
+
+        s.set_note_protected("n1", true).unwrap();
+        assert!(s.is_effectively_protected("n1").unwrap());
+
+        // What notes_save does once is_effectively_protected(id) is true.
+        let sealed = seal_content(&dek, "n1", plaintext);
+        s.set_content_silent("n1", &sealed).unwrap();
+
+        let stored = s.load_note_content("n1").unwrap().unwrap();
+        assert_ne!(stored, plaintext);
+        assert!(!stored.contains("very secret"));
+
+        assert_eq!(open_content(&dek, "n1", &stored).unwrap(), plaintext);
     }
 }

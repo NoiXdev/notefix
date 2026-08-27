@@ -32,7 +32,12 @@ pub struct Store {
     pub sync_enabled: bool,
 }
 
-const COLS: &str = "id, content, updated_at, pinned, archived, color, due_at, folder_id, position, deleted_at, dirty";
+// `protected` is appended at the end so `row_to_note` (which only reads
+// indices 0-10) is unaffected, while `row_to_meta` reads index 11 to blank
+// the preview/task counts for protected (ciphertext) rows. Every query built
+// from `COLS` implicitly carries it — including `search_notes`, which also
+// calls `row_to_meta`.
+const COLS: &str = "id, content, updated_at, pinned, archived, color, due_at, folder_id, position, deleted_at, dirty, protected";
 
 fn now_ms() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -151,7 +156,17 @@ pub fn task_counts(html: &str) -> (i64, i64) {
 
 fn row_to_meta(r: &rusqlite::Row) -> rusqlite::Result<NoteMeta> {
     let content: String = r.get(1)?;
-    let (tasks_done, tasks_total) = task_counts(&content);
+    let protected: bool = r.get(11)?;
+    // Ciphertext never gets run through the preview/task-count heuristics —
+    // that would extract garbage (or, in principle, leak a plaintext-looking
+    // fragment by coincidence). Protected rows report a blank preview and
+    // zero task counts instead.
+    let (preview, tasks_done, tasks_total) = if protected {
+        (String::new(), 0, 0)
+    } else {
+        let (tasks_done, tasks_total) = task_counts(&content);
+        (note_preview(&content), tasks_done, tasks_total)
+    };
     Ok(NoteMeta {
         id: r.get(0)?,
         updated_at: r.get(2)?,
@@ -163,7 +178,7 @@ fn row_to_meta(r: &rusqlite::Row) -> rusqlite::Result<NoteMeta> {
         position: r.get(8)?,
         deleted_at: r.get(9)?,
         dirty: r.get(10)?,
-        preview: note_preview(&content),
+        preview,
         tasks_done,
         tasks_total,
     })
@@ -475,13 +490,18 @@ impl Store {
         Ok(())
     }
 
-    // Protected-notes vault plumbing (schema v12). Not yet called from app
-    // code — wired in by a later task — so items carry `#[allow(dead_code)]`
-    // per the Task 1/2 precedent in `vault/`.
+    // Protected-notes vault plumbing (schema v12). `vault_record`/
+    // `set_vault_record` are wired in by Task 5's vault commands and
+    // `note_protected`/`set_note_protected`/`set_folder_locked`/
+    // `note_ids_in_subtree`/`is_effectively_protected` by Task 6's
+    // encrypt/decrypt + protect/lock commands (which walk the folder-lock
+    // chain via raw SQL in `commands::has_locked_ancestor_folder` rather than
+    // through `folder_locked`, so that one — like `clear_vault_record`,
+    // reserved for a future vault-reset feature — stays genuinely unused and
+    // keeps `#[allow(dead_code)]` per the Task 1/2 precedent in `vault/`.
 
     /// The stored vault record (opaque JSON blob managed by the crypto layer),
     /// or `None` if no vault has been set up yet.
-    #[allow(dead_code)]
     pub fn vault_record(&self) -> rusqlite::Result<Option<String>> {
         use rusqlite::OptionalExtension;
         self.conn
@@ -490,7 +510,6 @@ impl Store {
     }
 
     /// Create or overwrite the single vault record row.
-    #[allow(dead_code)]
     pub fn set_vault_record(&self, json: &str) -> rusqlite::Result<()> {
         let now = now_ms();
         self.conn.execute(
@@ -508,7 +527,6 @@ impl Store {
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub fn note_protected(&self, id: &str) -> rusqlite::Result<bool> {
         self.conn
             .query_row("SELECT protected FROM notes WHERE id = ?1", [id], |r| {
@@ -516,7 +534,6 @@ impl Store {
             })
     }
 
-    #[allow(dead_code)]
     pub fn set_note_protected(&self, id: &str, v: bool) -> rusqlite::Result<()> {
         self.conn
             .execute("UPDATE notes SET protected = ?2 WHERE id = ?1", (id, v))?;
@@ -531,7 +548,6 @@ impl Store {
             })
     }
 
-    #[allow(dead_code)]
     pub fn set_folder_locked(&self, id: &str, v: bool) -> rusqlite::Result<()> {
         self.conn
             .execute("UPDATE folders SET locked = ?2 WHERE id = ?1", (id, v))?;
@@ -540,7 +556,6 @@ impl Store {
 
     /// Ids of notes directly in `folder_id`, plus notes in any of its descendant
     /// folders (recursive).
-    #[allow(dead_code)]
     pub fn note_ids_in_subtree(&self, folder_id: &str) -> rusqlite::Result<Vec<String>> {
         let mut folder_ids = crate::folders::descendants(&self.conn, folder_id)?;
         folder_ids.push(folder_id.to_string());
@@ -558,7 +573,6 @@ impl Store {
     /// writes never produce, but an unchecked sync pull could via
     /// `folders::upsert_folder_from_server` — terminates the walk instead of
     /// looping forever: re-visiting an id ends the chain rather than erroring.
-    #[allow(dead_code)]
     pub fn is_effectively_protected(&self, note_id: &str) -> rusqlite::Result<bool> {
         use rusqlite::OptionalExtension;
         let row: Option<(bool, Option<String>)> = self
@@ -1153,5 +1167,26 @@ mod tests {
         );
         s.clear_vault_record().unwrap();
         assert_eq!(s.vault_record().unwrap(), None);
+    }
+
+    #[test]
+    fn protected_note_has_blank_preview() {
+        let s = store();
+        s.save_note(&note(
+            "a",
+            r#"<p>Title</p><li data-checked="true">x</li>"#,
+            1000,
+        ))
+        .unwrap();
+        // Sanity check: an unprotected note gets a real preview + task counts.
+        let meta = s.load_notes_meta().unwrap();
+        assert_eq!(meta[0].preview, "Title");
+        assert_eq!((meta[0].tasks_done, meta[0].tasks_total), (1, 1));
+
+        s.set_note_protected("a", true).unwrap();
+        let meta = s.load_notes_meta().unwrap();
+        assert_eq!(meta.len(), 1);
+        assert_eq!(meta[0].preview, "");
+        assert_eq!((meta[0].tasks_done, meta[0].tasks_total), (0, 0));
     }
 }

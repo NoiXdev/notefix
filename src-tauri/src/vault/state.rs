@@ -28,10 +28,8 @@ impl VaultState {
         self.dek.is_some()
     }
 
-    /// Not yet called from app code — note encryption lands in a later
-    /// task — so it carries `#[allow(dead_code)]` per the Task 1/2 precedent
-    /// in `vault/`.
-    #[allow(dead_code)]
+    /// The unlocked DEK, or `None` while the vault is locked. Used by Task 6's
+    /// encrypt/decrypt commands to seal/open protected note content.
     pub fn dek(&self) -> Option<&Dek> {
         self.dek.as_ref()
     }

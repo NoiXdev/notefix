@@ -350,6 +350,8 @@ pub fn run() {
             commands::vault_unlock_recovery,
             commands::vault_lock,
             commands::vault_change_passphrase,
+            commands::note_set_protected,
+            commands::folder_set_locked,
             linkmeta::fetch_link_meta,
             update::check_for_update,
         ])
