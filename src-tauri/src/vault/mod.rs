@@ -1,4 +1,5 @@
 pub mod aead;
+pub mod kdf;
 
 /// Errors produced by the protected-notes vault subsystem.
 ///
