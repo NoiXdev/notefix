@@ -730,9 +730,17 @@ pub async fn apply(
     let router = axum::Router::new()
         .route("/mcp", axum::routing::post(mcp_route))
         .with_state(state);
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .map_err(|e| e.to_string())?;
+    // Bind with SO_REUSEADDR so a restart (e.g. reconfigure) doesn't fail with
+    // EADDRINUSE while the previous listener's socket is still lingering.
+    let socket = if addr.is_ipv4() {
+        tokio::net::TcpSocket::new_v4()
+    } else {
+        tokio::net::TcpSocket::new_v6()
+    }
+    .map_err(|e| e.to_string())?;
+    socket.set_reuseaddr(true).map_err(|e| e.to_string())?;
+    socket.bind(addr).map_err(|e| e.to_string())?;
+    let listener = socket.listen(1024).map_err(|e| e.to_string())?;
     let (tx, rx) = tokio::sync::oneshot::channel();
     SHUTDOWN
         .get_or_init(|| Mutex::new(None))

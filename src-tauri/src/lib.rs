@@ -216,7 +216,7 @@ pub fn run() {
             if mcp_enabled {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
-                    let _ = crate::mcp::apply(
+                    if let Err(e) = crate::mcp::apply(
                         handle,
                         true,
                         mcp_bind,
@@ -225,7 +225,10 @@ pub fn run() {
                         mcp_auth_required,
                         mcp_allow_write,
                     )
-                    .await;
+                    .await
+                    {
+                        eprintln!("MCP autostart failed: {e}");
+                    }
                 });
             }
 

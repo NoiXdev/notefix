@@ -179,8 +179,15 @@ export default function App() {
     } catch { /* ignore */ }
   }, [loaded, settings.checkUpdatesOnStart]);
 
+  const mcpAppliedRef = useRef(false);
   useEffect(() => {
     if (!loaded) return;
+    // The backend already autostarts the MCP server from persisted settings at
+    // launch (see lib.rs setup). Skip this first post-load apply so we don't
+    // stop the running server and immediately rebind — that restart races the
+    // not-yet-released port (EADDRINUSE) and can leave the server down. Only
+    // user-driven config changes (ref already set) trigger a real re-apply.
+    if (!mcpAppliedRef.current) { mcpAppliedRef.current = true; return; }
     void api.mcpApplyConfig({
       enabled: settings.mcpEnabled,
       bind: settings.mcpBind,
