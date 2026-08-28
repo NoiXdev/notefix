@@ -125,8 +125,11 @@ export default function App() {
       void reloadNotes();
       void reloadFolders();
       void reloadSettings();
+      // Switching contexts locks the vault backend-side (the DEK belongs to the
+      // previous context's DB); refresh so the UI reflects the locked state.
+      void vault.refresh();
     });
-  }, [reloadNotes, reloadFolders, reloadSettings]);
+  }, [reloadNotes, reloadFolders, reloadSettings, vault.refresh]);
 
   // Prompt to bind a workspace when the active context is an unbound server context.
   useEffect(() => {

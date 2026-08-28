@@ -927,7 +927,7 @@ pub fn context_add(
             .map_err(|e| e.to_string())?;
         to_infos(&r)
     };
-    swap_store_to(&store, &path, false)?;
+    swap_store_to(&app, &store, &path, false)?;
     broadcast_context_changed(&app);
     Ok(infos)
 }
@@ -948,7 +948,7 @@ pub fn context_switch(
             .map_err(|e| e.to_string())?;
         (p, kind)
     };
-    swap_store_to(&store, std::path::Path::new(&path), kind == "server")?;
+    swap_store_to(&app, &store, std::path::Path::new(&path), kind == "server")?;
     broadcast_context_changed(&app);
     Ok(())
 }
@@ -1109,17 +1109,28 @@ pub async fn server_auth_complete(
             .map_err(|e| e.to_string())?;
         to_infos(&r)
     };
-    swap_store_to(&store, &path, true)?;
+    swap_store_to(&app, &store, &path, true)?;
     broadcast_context_changed(&app);
     Ok(infos)
 }
 
 // Lock convention: never hold the Store and Registry locks simultaneously; if ever needed, lock Store before Registry.
 fn swap_store_to(
+    app: &AppHandle,
     store: &State<'_, Mutex<Store>>,
     path: &std::path::Path,
     sync_enabled: bool,
 ) -> Result<(), String> {
+    // The active context DB is changing. The unlocked DEK belongs to the
+    // previous context's vault and must never touch another context's
+    // ciphertext — decrypting would fail, and sealing a note under the wrong
+    // DEK would make it unrecoverable. Lock the vault before swapping (and
+    // before taking the store lock, so the two mutexes are never nested).
+    {
+        let vs = app.state::<Mutex<crate::vault::state::VaultState>>();
+        let mut guard = vs.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        guard.lock();
+    }
     let mut s = store.lock().map_err(|e| e.to_string())?;
     let opened = Store::open(path).map_err(|e| e.to_string())?;
     s.conn = opened.conn;
