@@ -29,7 +29,7 @@ tauri-plugin-single-instance = { version = "2.4.2", features = ["deep-link"] }
 tauri-plugin-dialog = "2.7.1"
 tauri-plugin-process = "2.3.1"
 tauri-plugin-deep-link = "2"
-base64 = "0.22"
+base64 = "0.23"
 regex = "1"
 uuid = { version = "1", features = ["v4"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "charset", "http2", "json", "multipart", "query"] }
