@@ -79,7 +79,7 @@
     "conventional-changelog-cli": "^5.0.0",
     "conventional-changelog-conventionalcommits": "^10.2.0",
     "jsdom": "^29.1.1",
-    "typescript": "~6.0.3",
+    "typescript": "~7.0.2",
     "vite": "^8.1.2",
     "vitest": "^4.1.9"
   }
