@@ -368,6 +368,7 @@ export const en = {
     italic: 'Italic',
     underline: 'Underline',
     strikethrough: 'Strikethrough',
+    heading: 'Heading {{level}}',
     taskList: 'Task list',
     bulletList: 'Bullet list',
     numberedList: 'Numbered list',

@@ -368,6 +368,7 @@ export const fr = {
     italic: 'Italique',
     underline: 'Souligné',
     strikethrough: 'Barré',
+    heading: 'Titre {{level}}',
     taskList: 'Liste de tâches',
     bulletList: 'Liste à puces',
     numberedList: 'Liste numérotée',

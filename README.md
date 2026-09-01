@@ -21,9 +21,10 @@ but the app is fully featured offline on its own.
 
 ## Features
 
-- **Rich-text editor** — headings, bold/italic/underline, links, task lists, and
-  syntax-highlighted code blocks, powered by [TipTap](https://tiptap.dev/). Paste or
-  drag in images and resize them inline.
+- **Rich-text editor** — headings (markdown shortcuts `# ` to `###### `, plus H1-H3
+  toolbar buttons), bold/italic/underline, links, task lists, and syntax-highlighted
+  code blocks, powered by [TipTap](https://tiptap.dev/). Paste or drag in images and
+  resize them inline. A markdown view toggles the note to plain markdown and back.
 - **Folders & organization** — nested folders with custom icons and colors, pinned
   notes, color labels, an archive, and a trash with configurable retention.
 - **Search & dashboard** — instant full-text search and a customizable, drag-and-drop

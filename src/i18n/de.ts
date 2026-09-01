@@ -368,6 +368,7 @@ export const de = {
     italic: 'Kursiv',
     underline: 'Unterstrichen',
     strikethrough: 'Durchgestrichen',
+    heading: 'Überschrift {{level}}',
     taskList: 'Aufgabenliste',
     bulletList: 'Aufzählung',
     numberedList: 'Nummerierte Liste',

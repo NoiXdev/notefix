@@ -192,6 +192,31 @@
   margin-bottom: 0.15rem;
 }
 
+/* h4-h6 had no styles, so Tailwind's preflight (font-size/weight: inherit) made
+   them look exactly like body text — typing `#### ` seemed to do nothing. */
+.ProseMirror h4 {
+  font-size: 1em;
+  font-weight: 700;
+  line-height: 1.4;
+  margin-bottom: 0.15rem;
+}
+
+.ProseMirror h5 {
+  font-size: 0.95em;
+  font-weight: 600;
+  line-height: 1.4;
+  margin-bottom: 0.15rem;
+}
+
+.ProseMirror h6 {
+  font-size: 0.95em;
+  font-weight: 600;
+  line-height: 1.4;
+  margin-bottom: 0.15rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
 .ProseMirror img {
   max-width: 100%;
   height: auto;

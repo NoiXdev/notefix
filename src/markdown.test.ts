@@ -84,3 +84,14 @@ describe('markdown blank lines', () => {
     expect(htmlToMarkdown('<ul><li><p>a</p><p></p></li></ul>', { blankLines: true })).not.toContain('<br>');
   });
 });
+
+describe('markdown headings', () => {
+  it('round-trips every atx level', () => {
+    for (const level of [1, 2, 3, 4, 5, 6]) {
+      const hashes = '#'.repeat(level);
+      const html = markdownToHtml(`${hashes} Titel`);
+      expect(html).toContain(`<h${level}`);
+      expect(htmlToMarkdown(html)).toBe(`${hashes} Titel`);
+    }
+  });
+});

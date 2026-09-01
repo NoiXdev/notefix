@@ -16,6 +16,7 @@ vi.mock("@tiptap/react", () => {
         toggleBulletList: () => ({ run: vi.fn() }),
         toggleOrderedList: () => ({ run: vi.fn() }),
         toggleTaskList: () => ({ run: vi.fn() }),
+        toggleHeading: () => ({ run: vi.fn() }),
         setImage: () => ({ run: vi.fn() }),
       }),
     }),

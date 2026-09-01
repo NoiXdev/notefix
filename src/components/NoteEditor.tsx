@@ -103,6 +103,10 @@ function ToolbarBtn({ onClick, active, title, children, findToggle }: ToolbarBtn
  *  loading overlay and defer the parse a frame so the overlay paints first. */
 const LARGE_NOTE_BYTES = 50_000;
 
+/** Heading levels with a toolbar button. Deeper levels (#####, ######) stay
+ *  available through the markdown syntax and the markdown view. */
+const HEADING_LEVELS = [1, 2, 3] as const;
+
 export default function NoteEditor({ note, onChange, isWindow = false, onSetDue, autosaveDelay = 400, linkPreviewEnabled = true, linkPreviewMode = 'card', copyFormat = 'md', findShortcut = 'Mod+F', countShow = true, countPos = 'topRight', invisibles = false, toolbarPos = 'bottom' }: Props) {
   const { t } = useTranslation();
   const [pinned, setPinned] = useState(false);
@@ -515,6 +519,19 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
             <polyline points="3 7 5 9 9 5" /><polyline points="3 17 5 19 9 15" /><line x1="13" y1="7" x2="21" y2="7" /><line x1="13" y1="17" x2="21" y2="17" />
           </svg>
         </ToolbarBtn>
+
+        <div className="w-px h-5 bg-[var(--accent)] mx-1" />
+
+        {HEADING_LEVELS.map(level => (
+          <ToolbarBtn
+            key={level}
+            onClick={() => editor.chain().focus().toggleHeading({ level }).run()}
+            active={editor.isActive('heading', { level })}
+            title={t('editor.heading', { level })}
+          >
+            <span className="text-xs font-bold">H{level}</span>
+          </ToolbarBtn>
+        ))}
 
         <div className="w-px h-5 bg-[var(--accent)] mx-1" />
 
