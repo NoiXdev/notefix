@@ -43,7 +43,7 @@ url = "2"
 time = { version = "0.3", features = ["parsing", "formatting"] }
 comrak = "0.54.0"
 htmd = "0.5.5"
-argon2 = "0.5"
+argon2 = "0.6"
 chacha20poly1305 = "0.10"
 zeroize = { version = "1", features = ["derive"] }
 
