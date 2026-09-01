@@ -57,3 +57,30 @@ describe('markdown link-preview + code block', () => {
     expect(markdownToHtml(md)).toContain('<code');
   });
 });
+
+describe('markdown blank lines', () => {
+  it('keeps the empty paragraphs before a list as explicit blank lines', () => {
+    const md = htmlToMarkdown('<p>Text</p><p></p><p></p><ul><li><p>Punkt</p></li></ul>', { blankLines: true });
+    expect(md).toBe('Text\n\n<br>\n\n<br>\n\n- Punkt');
+  });
+  it('round-trips blank lines between paragraphs and a list', () => {
+    const html = '<p>Text</p><p></p><p></p><ul><li>Punkt</li></ul>';
+    expect(markdownToHtml(htmlToMarkdown(html, { blankLines: true })).replace(/\n/g, '')).toBe(html);
+  });
+  it('treats <p><br></p> as a blank line too', () => {
+    expect(htmlToMarkdown('<p>a</p><p><br></p><p>b</p>', { blankLines: true })).toBe('a\n\n<br>\n\nb');
+  });
+  it('leaves a note that is only empty paragraphs empty', () => {
+    expect(htmlToMarkdown('<p></p>', { blankLines: true })).toBe('');
+    expect(htmlToMarkdown('<p></p><p></p>', { blankLines: true })).toBe('');
+  });
+  it('keeps single line breaks inside a paragraph out of it', () => {
+    expect(htmlToMarkdown('<p>a<br>b</p>', { blankLines: true })).not.toContain('<br>');
+  });
+  it('stays out of exports and copies unless asked for', () => {
+    expect(htmlToMarkdown('<p>a</p><p></p><p>b</p>')).toBe('a\n\nb');
+  });
+  it('does not touch empty paragraphs nested in a list item', () => {
+    expect(htmlToMarkdown('<ul><li><p>a</p><p></p></li></ul>', { blankLines: true })).not.toContain('<br>');
+  });
+});

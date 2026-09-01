@@ -330,7 +330,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
       editor.commands.setContent(markdownToHtml(mdText));
       setMdMode(false);
     } else {
-      setMdText(htmlToMarkdown(editor.getHTML()));
+      setMdText(htmlToMarkdown(editor.getHTML(), { blankLines: true }));
       setMdMode(true);
     }
   };

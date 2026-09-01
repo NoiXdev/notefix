@@ -13,13 +13,53 @@ td.addRule('tiptapTaskItem', {
   },
 });
 
+/** Empty paragraphs — the blank lines you get from pressing Enter a few times —
+ *  have no markdown equivalent: a run of blank lines collapses into a single
+ *  paragraph break. `markBlankLines` turns each one into a marker <br> that this
+ *  rule writes out as an explicit `<br>` line, which `markdownToHtml` reads back
+ *  as an empty paragraph. Without it, switching to the markdown view and back
+ *  silently dropped every blank line. */
+const BLANK_LINE_ATTR = 'data-blank-line';
+
+td.addRule('blankLine', {
+  filter: (node) => node.nodeName === 'BR' && (node as HTMLElement).getAttribute(BLANK_LINE_ATTR) !== null,
+  replacement: () => '\n\n<br>\n\n',
+});
+
 td.addRule('linkPreview', {
   filter: (node) => node.nodeName === 'A' && (node as HTMLElement).getAttribute('data-link-preview') !== null,
   replacement: (_content, node) => (node as HTMLElement).getAttribute('href') || '',
 });
 
-export function htmlToMarkdown(html: string): string {
-  return td.turndown(html || '').replace(/^(-|\*|\+)\s{3,}/gm, '$1 ');
+/** Replaces top-level empty paragraphs (also `<p><br></p>`, as pasted HTML
+ *  writes them) with the marker <br> the `blankLine` rule picks up. Nested
+ *  empty paragraphs — inside a list item, say — are left alone. */
+function markBlankLines(html: string): string {
+  const el = document.createElement('div');
+  el.innerHTML = html;
+  // A note that is nothing but empty paragraphs stays empty markdown.
+  if (!(el.textContent || '').trim() && !el.querySelector('img')) return html;
+  Array.from(el.children).forEach(child => {
+    if (child.nodeName !== 'P') return;
+    if ((child.textContent || '').trim() !== '') return;
+    if (child.querySelector(':not(br)')) return;
+    const br = document.createElement('br');
+    br.setAttribute(BLANK_LINE_ATTR, '');
+    child.replaceWith(br);
+  });
+  return el.innerHTML;
+}
+
+export interface HtmlToMarkdownOptions {
+  /** Carry blank lines across as explicit `<br>` lines (see `markBlankLines`).
+   *  The editor's markdown view needs it to round-trip losslessly; exports and
+   *  clipboard copies leave it off, where clean markdown beats exact fidelity. */
+  blankLines?: boolean;
+}
+
+export function htmlToMarkdown(html: string, opts: HtmlToMarkdownOptions = {}): string {
+  const source = opts.blankLines ? markBlankLines(html || '') : (html || '');
+  return td.turndown(source).replace(/^(-|\*|\+)\s{3,}/gm, '$1 ');
 }
 
 function fixTaskLists(html: string): string {
@@ -51,7 +91,20 @@ function restoreLinkPreviews(html: string): string {
   return el.innerHTML;
 }
 
+/** Counterpart of `markBlankLines`: a `<br>` line in the markdown reaches us as
+ *  a top-level <br> element (marked passes HTML blocks through), and becomes the
+ *  empty paragraph it came from. <br>s inside a paragraph — the line breaks from
+ *  `breaks: true` — are untouched. */
+function restoreBlankLines(html: string): string {
+  const el = document.createElement('div');
+  el.innerHTML = html;
+  Array.from(el.children).forEach(child => {
+    if (child.nodeName === 'BR') child.replaceWith(document.createElement('p'));
+  });
+  return el.innerHTML;
+}
+
 export function markdownToHtml(md: string): string {
   const html = marked.parse(md || '', { gfm: true, breaks: true, async: false }) as string;
-  return restoreLinkPreviews(fixTaskLists(html));
+  return restoreLinkPreviews(fixTaskLists(restoreBlankLines(html)));
 }
