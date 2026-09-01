@@ -46,21 +46,12 @@ jobs:
       # extension, notarizes, and prints DMG=<path> for upload.
       macos_build_script: scripts/macos-release.sh
 
-  # Build the Android APK and attach it to the release just created above.
-  # Chained via `needs` (not the release event) because a GITHUB_TOKEN release
-  # does not fire `release: published`.
-  apk:
-    needs: release
-    if: ${{ inputs.dry_run == false }}
-    uses: NoiXdev/github-workflows/.github/workflows/build_tauri_android_apk.yaml@main
-    secrets: inherit
-    with:
-      release_tag: ${{ needs.release.outputs.tag }}
-
-  # Build the signed release AAB and publish it to Google Play (production).
-  # Chained on the tag for the same GITHUB_TOKEN reason as the apk job. Requires
-  # the ANDROID_KEYSTORE_* and PLAY_SERVICE_ACCOUNT_JSON secrets (secrets:
-  # inherit). The app must already have a manual first release in Play.
+  # Build the signed release AAB + APK: publish the AAB to Google Play
+  # (production) and attach the signed release APK to the GitHub release.
+  # Chained on the tag (not the release event) because a GITHUB_TOKEN release
+  # does not fire `release: published`. Requires the ANDROID_KEYSTORE_* and
+  # PLAY_SERVICE_ACCOUNT_JSON secrets (secrets: inherit). The app must already
+  # have a manual first release in Play.
   play:
     needs: release
     if: ${{ inputs.dry_run == false }}
