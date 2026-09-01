@@ -1,4 +1,54 @@
-## [0.6.0](https://github.com/NoiXdev/notefix/compare/v0.5.0...v) (2026-08-06)
+## [0.7.0](https://github.com/NoiXdev/notefix/compare/v0.6.0...v) (2026-09-01)
+
+
+### Features
+
+* **mcp:** add per-item MCP visibility and gated protected-note access ([cc23692](https://github.com/NoiXdev/notefix/commit/cc23692575ab9d5b6ab7577ec95a6707195cc396))
+* **releases:** add github_releases command for the changelog fetch ([5a02897](https://github.com/NoiXdev/notefix/commit/5a028978f5be7df525cc62065409096baf3901a2))
+* **settings:** add "Apps" page promoting the other platforms + server ([042d6bb](https://github.com/NoiXdev/notefix/commit/042d6bb89ebf921b8d36a967fc9733521936fcab))
+* **settings:** add i18n labels for the new tabs and section cards ([4de0130](https://github.com/NoiXdev/notefix/commit/4de0130e0de5269737d11de4075d64a7598941bb))
+* **settings:** add reusable section/tab/row layout primitives ([e048464](https://github.com/NoiXdev/notefix/commit/e04846413d66ad6b1ab720b14539edf26637dc03))
+* **settings:** add sidebar side (left/right) to Appearance ([ab60be4](https://github.com/NoiXdev/notefix/commit/ab60be478532edf40f5f14ef75fff42c85d5b525))
+* **storage:** schema v12 protected/locked columns + vault record + subtree helpers ([e6f6d4f](https://github.com/NoiXdev/notefix/commit/e6f6d4f4ece5a64da10538b3ef21b8db7ff13389))
+* **sync:** carry protected/locked flags over the wire ([d490178](https://github.com/NoiXdev/notefix/commit/d490178c2927c10cdf40e0105fe8f83f79bf617f))
+* **vault:** add a sidebar lock button and fix protected-note titles ([71230f1](https://github.com/NoiXdev/notefix/commit/71230f1ea439fc7d7c677360632d73992a711d3a))
+* **vault:** add lock-scope setting, independent auto-lock toggles, and a lock-vault shortcut ([d450d46](https://github.com/NoiXdev/notefix/commit/d450d4691bba03f1432f693ae1e8229e6b169475))
+* **vault:** Argon2id KEK derivation + DEK wrap/unwrap ([c07d338](https://github.com/NoiXdev/notefix/commit/c07d338cb77c51b3677e45a4ee5581d44e7b7596))
+* **vault:** auto-trigger Touch ID when the unlock dialog opens ([f207fce](https://github.com/NoiXdev/notefix/commit/f207fceb5a4f8d4bda65020629da0c60fb989e65))
+* **vault:** biometric unlock via keychain + macOS Touch ID ([02bbb67](https://github.com/NoiXdev/notefix/commit/02bbb67ebb424f1158f6b678b05280c4b7b487fa))
+* **vault:** editor unlock gate + auto-lock wiring ([687338d](https://github.com/NoiXdev/notefix/commit/687338d85c70c80c8bcf3797bc604c6533837302))
+* **vault:** encrypt note content at rest + protect note/folder commands ([c088fb8](https://github.com/NoiXdev/notefix/commit/c088fb84b9169a5113fe285f9cb8ec4720474f25))
+* **vault:** exclude protected notes from search while locked ([c2d52c7](https://github.com/NoiXdev/notefix/commit/c2d52c71283716e5b7ff230e96af7c3dca60938e))
+* **vault:** keep protected notes findable via a plaintext title ([3d4a74a](https://github.com/NoiXdev/notefix/commit/3d4a74acd704585f81e19c1d402ec4ae6d37da83))
+* **vault:** locked note placeholders + lock/unlock actions ([a2e9b84](https://github.com/NoiXdev/notefix/commit/a2e9b8439e0359157709d64601d16823205d6ee1))
+* **vault:** recovery key + vault record setup/unlock/rewrap ([39f400b](https://github.com/NoiXdev/notefix/commit/39f400bade128ec8f95c13d75139ccfd94ed3962))
+* **vault:** Security settings page + de/en/fr strings ([db2e376](https://github.com/NoiXdev/notefix/commit/db2e3764dc7321d1c6b13b294600867d0c947084))
+* **vault:** setup + unlock dialogs ([95afb32](https://github.com/NoiXdev/notefix/commit/95afb32afe97de61f6b78c60d3cdce1b9399b04f))
+* **vault:** TS api bindings for the vault ([b495ce2](https://github.com/NoiXdev/notefix/commit/b495ce2d8c90d676123c86b6fae1b7945f0d6dad))
+* **vault:** useVault hook + auto-lock/biometric settings ([8c7c00f](https://github.com/NoiXdev/notefix/commit/8c7c00f80baab8f1aa9269cd98962287adcafe7f))
+* **vault:** VaultState + status/setup/unlock/lock/change-passphrase commands ([42dca3b](https://github.com/NoiXdev/notefix/commit/42dca3b13285ba4766e86ab0b339f04e5e4cab8f))
+* **vault:** XChaCha20-Poly1305 content sealing + Dek type ([cb21329](https://github.com/NoiXdev/notefix/commit/cb21329b8257c0d7ebc7fbbfca608350967796c4))
+* **whats-new:** add the changelog dialog, version compare, and settings ([c123c82](https://github.com/NoiXdev/notefix/commit/c123c823d71e48a3b992db04bd5a5e874b4d1f71))
+* **whats-new:** show the changelog after an update and from About ([c622911](https://github.com/NoiXdev/notefix/commit/c6229119ff12f4a654ab000258b641068d469d6d))
+
+
+### Bug Fixes
+
+* **android:** align native libraries to 16 KB pages ([2cd4638](https://github.com/NoiXdev/notefix/commit/2cd4638ed54b4752b7e4265640c617d1ef3a7c44))
+* **mcp:** apply visibility policy to the resources/* surface ([07f6087](https://github.com/NoiXdev/notefix/commit/07f6087bd1419026ffe26c5db46a3015caae23b8))
+* **mcp:** don't restart-race the autostarted server on launch ([7b0c801](https://github.com/NoiXdev/notefix/commit/7b0c801a82f358583adcb6fd69b4b8bf3867cb66))
+* **storage:** make folder-tree walks cycle-safe ([1dbfab5](https://github.com/NoiXdev/notefix/commit/1dbfab5e5eb83f3125d2c2149cddb126afa63eb5))
+* **vault:** backfill protected-note titles on unlock ([6908eb3](https://github.com/NoiXdev/notefix/commit/6908eb37c0f933b6d3de96755197822d3ff9f671))
+* **vault:** encrypt notes moved into a locked folder and purge revisions on any transition ([1eb38b8](https://github.com/NoiXdev/notefix/commit/1eb38b87be6da9bc2ba331879027b71f6ee3e12a))
+* **vault:** lock the vault when the active context changes ([014c865](https://github.com/NoiXdev/notefix/commit/014c86585fd045b731fcb0721a65b981cf27d4a8))
+* **vault:** make the MCP tools vault-aware ([10fce83](https://github.com/NoiXdev/notefix/commit/10fce833d7ef94a46088fdcaf0cffbc88bdfc4b0))
+* **vault:** purge plaintext revisions when a note becomes protected ([23a802b](https://github.com/NoiXdev/notefix/commit/23a802b58c791c31d5eda345c7bfa30e023652e9))
+* **vault:** refuse vault_setup when a vault already exists ([9a723c7](https://github.com/NoiXdev/notefix/commit/9a723c78bd0ebebaf76abd57f2fba05890b81f70))
+* **vault:** seal notes on drag-reorder into locked folders and dirty protect transitions ([db0c2e1](https://github.com/NoiXdev/notefix/commit/db0c2e1b37a3a7a1db39b034ad17541675d8e18d))
+* **vault:** sync backfilled protected-note titles to other devices ([b80cdec](https://github.com/NoiXdev/notefix/commit/b80cdecdd7b58cea8f7f4e6e9e4d757f7c5b8622))
+* **vault:** zeroize Kek on drop ([ca2a8b9](https://github.com/NoiXdev/notefix/commit/ca2a8b9c77725b7bf68d8ef071a559414b6fb09c))
+
+## [0.6.0](https://github.com/NoiXdev/notefix/compare/v0.5.0...v0.6.0) (2026-08-06)
 
 
 ### Features
