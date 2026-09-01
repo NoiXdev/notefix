@@ -1,0 +1,39 @@
+name: Android → Play (test upload)
+run-name: Play test upload → ${{ inputs.track }} (${{ inputs.status }})
+
+# Manual, isolated test of the Google Play publish pipeline. Builds the signed
+# AAB from the current commit and uploads it to the chosen track (default:
+# internal) WITHOUT running a full release — use it to verify the secrets and
+# the service-account access before relying on the production auto-publish in
+# the Release workflow.
+#
+# NOTE: Google Play rejects a versionCode that already exists for the package on
+# ANY track. The version in src-tauri/tauri.conf.json must therefore be higher
+# than anything already uploaded to Play — bump it first if a test upload fails
+# with a "version code has already been used" error.
+
+on:
+  workflow_dispatch:
+    inputs:
+      track:
+        description: "Play track to upload to"
+        type: choice
+        default: internal
+        options: [internal, alpha, beta, production]
+      status:
+        description: "Release status"
+        type: choice
+        default: draft
+        options: [draft, completed, inProgress, halted]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    uses: NoiXdev/github-workflows/.github/workflows/publish_tauri_android_play.yaml@main
+    secrets: inherit
+    with:
+      package_name: dev.noix.notefix
+      track: ${{ inputs.track }}
+      status: ${{ inputs.status }}
