@@ -1,6 +1,14 @@
 fn main() {
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
-        build_widget_reload();
+    match std::env::var("CARGO_CFG_TARGET_OS").as_deref() {
+        Ok("macos") => build_widget_reload(),
+        // Android 16 KB page-size support (required by Google Play for apps
+        // targeting Android 15+). NDK r27 links shared libraries with 4 KB-aligned
+        // LOAD segments by default; force 16 KB so the app loads on devices using
+        // 16 KB memory pages. Emitted here rather than via .cargo/config.toml
+        // because Tauri sets RUSTFLAGS during the Android build, which overrides
+        // target-scoped config rustflags entirely.
+        Ok("android") => println!("cargo:rustc-link-arg=-Wl,-z,max-page-size=16384"),
+        _ => {}
     }
     tauri_build::build()
 }
