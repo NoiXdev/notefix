@@ -38,7 +38,7 @@ tokio = { version = "1", default-features = false, features = ["net", "sync", "t
 # Auth bridge (A1): PKCE + OS keychain token storage.
 keyring = { version = "3", features = ["apple-native"] }
 sha2 = "0.11"
-rand = "0.9"
+rand = "0.10"
 url = "2"
 time = { version = "0.3", features = ["parsing", "formatting"] }
 comrak = "0.54.0"
