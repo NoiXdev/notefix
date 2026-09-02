@@ -930,6 +930,82 @@ pub fn sync_status_synced(store: &Store) -> Result<SyncStatus, String> {
     })
 }
 
+/// The snapshot `run_sync_cycle` takes under the store lock before its network
+/// round-trip. Kept as one value so the push payload and the ids needed to
+/// clear the dirty flags afterwards can never drift apart.
+pub struct SyncPush {
+    /// Dirty folders, already mapped to the server wire shape.
+    pub folders: Vec<serde_json::Value>,
+    /// Dirty notes, already mapped to the server wire shape.
+    pub notes: Vec<serde_json::Value>,
+    /// Snapshot of `(id, updated_at)` per pushed note, so the post-sync
+    /// dirty-clear skips any row re-edited during the network window — its
+    /// `updated_at` will have moved on, and it stays queued for the next cycle
+    /// instead of being silently dropped.
+    pub note_ids: Vec<(String, i64)>,
+    /// Same snapshot for folders.
+    pub folder_ids: Vec<(String, i64)>,
+    /// The pull cursor to resume from.
+    pub since: i64,
+}
+
+/// Collect everything `run_sync_cycle` needs before releasing the store lock
+/// for its network calls.
+pub fn collect_sync_push(store: &Store) -> Result<SyncPush, String> {
+    let dn = store.load_dirty_notes().map_err(|e| e.to_string())?;
+    let df = crate::folders::load_dirty_folders(&store.conn).map_err(|e| e.to_string())?;
+    let since = crate::migrate::get_meta_i64(&store.conn, "sync_cursor", 0);
+    Ok(SyncPush {
+        folders: df.iter().map(crate::sync::folder_to_wire).collect(),
+        notes: dn.iter().map(crate::sync::note_to_wire).collect(),
+        note_ids: dn.iter().map(|n| (n.id.clone(), n.updated_at)).collect(),
+        folder_ids: df.iter().map(|f| (f.id.clone(), f.updated_at)).collect(),
+        since,
+    })
+}
+
+/// Apply one successful sync round-trip: clear the dirty flags for exactly the
+/// rows that were pushed and are still unchanged, merge the pulled rows, and
+/// advance both sync markers. `note_ids` / `folder_ids` are the snapshots from
+/// the matching [`SyncPush`].
+pub fn commit_sync_result(
+    store: &Store,
+    note_ids: &[(String, i64)],
+    folder_ids: &[(String, i64)],
+    pulled_folders: &[serde_json::Value],
+    pulled_notes: &[serde_json::Value],
+    cursor: i64,
+    now: i64,
+) -> Result<(), String> {
+    store
+        .clear_note_dirty(note_ids)
+        .map_err(|e| e.to_string())?;
+    crate::folders::clear_folder_dirty(&store.conn, folder_ids).map_err(|e| e.to_string())?;
+    crate::sync::apply_pulled(store, pulled_folders, pulled_notes).map_err(|e| e.to_string())?;
+    crate::migrate::set_meta_i64(&store.conn, "sync_cursor", cursor).map_err(|e| e.to_string())?;
+    crate::migrate::set_meta_i64(&store.conn, "sync_last_at", now).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Of the image paths a context references, the subset that actually exists in
+/// its images folder. A path that fails `safe_subpath` validation counts as
+/// absent, so a malicious relpath can never make the image phase read outside
+/// the images root.
+pub fn locally_present_images(
+    referenced: &std::collections::HashSet<String>,
+    images_root: &Path,
+) -> std::collections::HashSet<String> {
+    referenced
+        .iter()
+        .filter(|p| {
+            crate::images::safe_subpath(p)
+                .map(|sp| images_root.join(sp).is_file())
+                .unwrap_or(false)
+        })
+        .cloned()
+        .collect()
+}
+
 // ---------------------------------------------------------------------------
 // Export / import / images
 // ---------------------------------------------------------------------------
@@ -1678,18 +1754,19 @@ mod search_tests {
     }
 
     #[test]
-    fn a_protected_notes_plaintext_title_is_still_searchable_when_unlocked() {
+    fn a_protected_notes_body_never_matches_in_either_lock_state() {
+        // Locked, the ciphertext row is filtered out; unlocked it becomes a
+        // candidate again, but `preview` is blanked for ciphertext and the
+        // stored body is base64, so neither the title nor the body text can
+        // produce a match. Full-text search over sealed notes is out of scope.
         let s = store();
         let dek = Dek::random();
         seed(&s, "n1", "<p>Bank Codes</p><p>secret body</p>");
         encrypt_note_in_place(&s, "n1", &dek).unwrap();
 
-        // Locked: the row is filtered out entirely.
         assert!(search_notes(&s, "Bank", false).unwrap().is_empty());
-        // Unlocked: the row is a candidate again — but `preview` is blanked for
-        // ciphertext, so the title alone does not produce a body/preview match.
-        let unlocked = search_notes(&s, "Bank", true).unwrap();
-        assert!(unlocked.is_empty() || unlocked[0].note.id == "n1");
+        assert!(search_notes(&s, "Bank", true).unwrap().is_empty());
+        assert!(search_notes(&s, "secret body", true).unwrap().is_empty());
     }
 
     #[test]
@@ -4042,5 +4119,249 @@ mod db_location_tests {
         point_active_context_at(&mut r, Path::new("/new/notefix.db"));
 
         assert_eq!(r.contexts[0].path, "/old/notefix.db");
+    }
+}
+
+#[cfg(test)]
+mod sync_cycle_tests {
+    use super::test_support::*;
+    use super::*;
+
+    #[test]
+    fn collect_sync_push_snapshots_every_dirty_row() {
+        let s = syncing_store();
+        seed(&s, "n1", "<p>a</p>");
+        crate::folders::create_folder(&s.conn, "f1", "F", None).unwrap();
+        crate::folders::touch_folder(&s.conn, "f1").unwrap();
+
+        let push = collect_sync_push(&s).unwrap();
+
+        assert_eq!(push.notes.len(), 1);
+        assert_eq!(push.folders.len(), 1);
+        assert_eq!(push.note_ids.len(), 1);
+        assert_eq!(push.note_ids[0].0, "n1");
+        assert_eq!(push.folder_ids[0].0, "f1");
+        assert_eq!(push.since, 0, "no cursor yet on a fresh context");
+        assert_eq!(
+            push.notes[0]["id"], "n1",
+            "already in the server wire shape"
+        );
+    }
+
+    #[test]
+    fn collect_sync_push_is_empty_when_nothing_is_dirty() {
+        let s = syncing_store();
+        seed(&s, "n1", "<p>a</p>");
+        clear_dirty(&s);
+
+        let push = collect_sync_push(&s).unwrap();
+
+        assert!(push.notes.is_empty() && push.note_ids.is_empty());
+        assert!(push.folders.is_empty() && push.folder_ids.is_empty());
+    }
+
+    #[test]
+    fn collect_sync_push_resumes_from_the_stored_cursor() {
+        let s = syncing_store();
+        crate::migrate::set_meta_i64(&s.conn, "sync_cursor", 4_242).unwrap();
+
+        assert_eq!(collect_sync_push(&s).unwrap().since, 4_242);
+    }
+
+    #[test]
+    fn committing_clears_the_pushed_rows_and_advances_both_markers() {
+        let s = syncing_store();
+        seed(&s, "n1", "<p>a</p>");
+        let push = collect_sync_push(&s).unwrap();
+
+        commit_sync_result(&s, &push.note_ids, &push.folder_ids, &[], &[], 99, 1_700).unwrap();
+
+        assert!(s.load_dirty_notes().unwrap().is_empty());
+        assert_eq!(crate::migrate::get_meta_i64(&s.conn, "sync_cursor", 0), 99);
+        assert_eq!(
+            crate::migrate::get_meta_i64(&s.conn, "sync_last_at", 0),
+            1_700
+        );
+    }
+
+    #[test]
+    fn a_row_re_edited_during_the_network_window_stays_queued() {
+        // The (id, updated_at) snapshot is what makes this safe: the edit that
+        // landed mid-flight bumped `updated_at`, so the clear must not match.
+        let s = syncing_store();
+        seed(&s, "n1", "<p>a</p>");
+        let push = collect_sync_push(&s).unwrap();
+
+        // …network window… the user edits the note again.
+        s.set_content_silent("n1", "<p>edited mid-flight</p>")
+            .unwrap();
+        s.conn
+            .execute(
+                "UPDATE notes SET updated_at = ?2, dirty = 1 WHERE id = ?1",
+                ("n1", push.note_ids[0].1 + 1),
+            )
+            .unwrap();
+
+        commit_sync_result(&s, &push.note_ids, &push.folder_ids, &[], &[], 5, 1).unwrap();
+
+        let still_dirty = s.load_dirty_notes().unwrap();
+        assert_eq!(still_dirty.len(), 1, "the re-edit is pushed next cycle");
+        assert_eq!(still_dirty[0].content, "<p>edited mid-flight</p>");
+    }
+
+    #[test]
+    fn committing_merges_the_pulled_rows_into_the_local_cache() {
+        let s = syncing_store();
+        let pulled_note = serde_json::json!({
+            "id": "server-note",
+            "content": "<p>from the server</p>",
+            "updatedAt": 5_000,
+            "folderId": serde_json::Value::Null,
+            "pinned": false,
+            "archived": false,
+            "color": "",
+            "dueAt": serde_json::Value::Null,
+            "position": 0,
+            "deletedAt": serde_json::Value::Null,
+            "protected": false,
+            "title": "from the server",
+        });
+
+        commit_sync_result(&s, &[], &[], &[], &[pulled_note], 7, 1).unwrap();
+
+        let notes = s.load_notes().unwrap();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].id, "server-note");
+        assert_eq!(notes[0].content, "<p>from the server</p>");
+        assert!(!notes[0].dirty, "a pulled row arrives clean");
+    }
+
+    #[test]
+    fn locally_present_images_keeps_only_files_that_exist() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("a/b")).unwrap();
+        std::fs::write(dir.path().join("a/b/here.png"), b"x").unwrap();
+        let referenced: std::collections::HashSet<String> = ["a/b/here.png", "a/b/gone.png"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        let present = locally_present_images(&referenced, dir.path());
+
+        assert_eq!(present.len(), 1);
+        assert!(present.contains("a/b/here.png"));
+    }
+
+    #[test]
+    fn locally_present_images_treats_a_traversing_path_as_absent() {
+        // Even if `../secret` exists on disk, it must never be reported as a
+        // locally present image — that would upload a file outside the root.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("images");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(dir.path().join("secret.txt"), b"x").unwrap();
+        let referenced: std::collections::HashSet<String> =
+            ["../secret.txt".to_string(), "".to_string()]
+                .into_iter()
+                .collect();
+
+        assert!(locally_present_images(&referenced, &root).is_empty());
+    }
+
+    #[test]
+    fn locally_present_images_of_nothing_is_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(locally_present_images(&Default::default(), dir.path()).is_empty());
+    }
+}
+
+/// A dropped table is the cheapest way to make every `rusqlite` call in an op
+/// fail. These prove the ops surface a database failure as an `Err(String)`
+/// rather than panicking or, worse, silently reporting success.
+#[cfg(test)]
+mod database_error_tests {
+    use super::test_support::*;
+    use super::*;
+
+    fn store_without_notes() -> Store {
+        let s = store();
+        s.conn.execute_batch("DROP TABLE notes;").unwrap();
+        s
+    }
+
+    #[test]
+    fn note_reads_report_the_failure() {
+        let s = store_without_notes();
+        assert!(load_note_content(&s, None, "n1").is_err());
+        assert!(search_notes(&s, "x", true).is_err());
+        assert!(note_stats(&s).is_err());
+    }
+
+    #[test]
+    fn note_writes_report_the_failure() {
+        let s = store_without_notes();
+        assert!(save_note(&s, None, &note("n1", "<p>x</p>")).is_err());
+        assert!(delete_note(&s, "n1", 1).is_err());
+        assert!(reconcile_folder_move(&s, "n1", None, None).is_err());
+        assert!(reconcile_reorder(&s, None, &["n1".into()], None).is_err());
+    }
+
+    #[test]
+    fn protection_transitions_report_the_failure() {
+        let s = store_without_notes();
+        let dek = Dek::random();
+        assert!(set_note_protected(&s, &dek, "n1", true).is_err());
+        assert!(encrypt_note_in_place(&s, "n1", &dek).is_err());
+    }
+
+    #[test]
+    fn exports_report_the_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = store_without_notes();
+        assert!(export_notes_json(&s, &dir.path().join("a.json"), &[]).is_err());
+        assert!(export_notes_inlined(&s, dir.path(), &dir.path().join("b.json"), &[]).is_err());
+        assert!(export_notes_bundle(&s, dir.path(), &dir.path().join("bundle"), &[]).is_err());
+        assert!(note_inlined_html(&s, dir.path(), "n1").is_err());
+    }
+
+    #[test]
+    fn sync_collection_reports_the_failure() {
+        let s = store_without_notes();
+        assert!(collect_sync_push(&s).is_err());
+        assert!(sync_status_synced(&s).is_err());
+        assert!(commit_sync_result(&s, &[("n1".into(), 1)], &[], &[], &[], 1, 1).is_err());
+    }
+
+    #[test]
+    fn folder_ops_report_a_missing_folders_table() {
+        let s = store();
+        s.conn.execute_batch("DROP TABLE folders;").unwrap();
+        assert!(folder_create(&s, "f", "F", None).is_err());
+        assert!(folder_rename(&s, "f", "F2").is_err());
+        assert!(folder_move(&s, "f", None).is_err());
+        assert!(folder_delete(&s, "f", "recursive").is_err());
+        assert!(folders_reorder(&s, None, &["f".into()]).is_err());
+        assert!(folder_set_icon(&s, "f", "i").is_err());
+        assert!(folder_set_color(&s, "f", "c").is_err());
+        assert!(folder_set_sort(&s, "f", "name").is_err());
+        assert!(folder_chain_has_lock(&s, Some("f")).is_err());
+        assert!(set_folder_locked(&s, &Dek::random(), "f", true).is_err());
+    }
+
+    #[test]
+    fn vault_ops_report_a_missing_vault_table() {
+        let s = store();
+        s.conn.execute_batch("DROP TABLE vault;").unwrap();
+        assert!(load_vault_record(&s).is_err());
+        assert!(vault_setup(&s, "x").is_err());
+        assert!(!err_of(vault_unlock_passphrase(&s, "x")).is_empty());
+    }
+
+    #[test]
+    fn the_backfill_survives_a_missing_notes_table() {
+        // It is best-effort by design: a broken database must not abort an
+        // otherwise-successful vault unlock.
+        let s = store_without_notes();
+        backfill_protected_titles(&s, &Dek::random());
     }
 }

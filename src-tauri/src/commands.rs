@@ -1008,20 +1008,15 @@ pub async fn run_sync_cycle(app: &AppHandle) -> Result<(), String> {
     );
 
     // Collect dirty rows + cursor under the lock, then release it.
-    let (folders, notes, note_ids, folder_ids, since) = {
+    let ops::SyncPush {
+        folders,
+        notes,
+        note_ids,
+        folder_ids,
+        since,
+    } = {
         let s = store_state.lock().map_err(|e| e.to_string())?;
-        let dn = s.load_dirty_notes().map_err(|e| e.to_string())?;
-        let df = crate::folders::load_dirty_folders(&s.conn).map_err(|e| e.to_string())?;
-        let since = crate::migrate::get_meta_i64(&s.conn, "sync_cursor", 0);
-        let folders: Vec<_> = df.iter().map(crate::sync::folder_to_wire).collect();
-        let notes: Vec<_> = dn.iter().map(crate::sync::note_to_wire).collect();
-        // Snapshot (id, updated_at) so the post-sync dirty-clear skips any row
-        // re-edited during the network window (its updated_at will have changed).
-        let note_ids: Vec<(String, i64)> =
-            dn.iter().map(|n| (n.id.clone(), n.updated_at)).collect();
-        let folder_ids: Vec<(String, i64)> =
-            df.iter().map(|f| (f.id.clone(), f.updated_at)).collect();
-        (folders, notes, note_ids, folder_ids, since)
+        ops::collect_sync_push(&s)?
     };
 
     // Network: push then pull (no lock held).
@@ -1048,14 +1043,7 @@ pub async fn run_sync_cycle(app: &AppHandle) -> Result<(), String> {
         Ok((cursor, pf, pn)) => {
             {
                 let s = store_state.lock().map_err(|e| e.to_string())?;
-                s.clear_note_dirty(&note_ids).map_err(|e| e.to_string())?;
-                crate::folders::clear_folder_dirty(&s.conn, &folder_ids)
-                    .map_err(|e| e.to_string())?;
-                crate::sync::apply_pulled(&s, &pf, &pn).map_err(|e| e.to_string())?;
-                crate::migrate::set_meta_i64(&s.conn, "sync_cursor", cursor)
-                    .map_err(|e| e.to_string())?;
-                crate::migrate::set_meta_i64(&s.conn, "sync_last_at", now_ms())
-                    .map_err(|e| e.to_string())?;
+                ops::commit_sync_result(&s, &note_ids, &folder_ids, &pf, &pn, cursor, now_ms())?;
             }
             broadcast_context_changed(app); // refresh the UI from the updated cache
                                             // S2b: transfer referenced images (non-fatal — notes already synced).
@@ -1129,15 +1117,7 @@ pub async fn run_image_phase(
         let s = store_state.lock().map_err(|e| e.to_string())?;
         crate::images::collect_referenced(&s)
     };
-    let local_present: HashSet<String> = referenced
-        .iter()
-        .filter(|p| {
-            crate::images::safe_subpath(p)
-                .map(|sp| images_root.join(sp).is_file())
-                .unwrap_or(false)
-        })
-        .cloned()
-        .collect();
+    let local_present: HashSet<String> = ops::locally_present_images(&referenced, &images_root);
 
     // Manifest (network). On failure: skip the image phase (offline / not ready).
     let server =
