@@ -2110,46 +2110,61 @@ pub async fn vault_rotate(
     // bookkeeping (which would file this workspace's keys under another
     // context) and still hands the codes back; the next pull of the right
     // context caches the own entry and the new generation anyway.
-    let switched = app.state::<ops::SyncEpoch>().changed_since(epoch);
+    // Both the store write-back and the ring install re-check the epoch
+    // INSIDE their own lock scope: a swap landing between the check and the
+    // lock would otherwise file this workspace's keys under another context.
+    let switched = {
+        let store = store_state.lock().map_err(|e| e.to_string())?;
+        if app.state::<ops::SyncEpoch>().changed_since(epoch) {
+            true
+        } else {
+            let cached = ops::cached_vault_entries(&store)?.unwrap_or_default();
+            let merged = ops::merge_my_entry(&cached, own_entry)?;
+            let merged = match &payload.recovery {
+                Some(r) => ops::merge_recovery_entry(&merged, new_generation, r)?,
+                None => merged,
+            };
+            // The cache, the generation and the pending flag are one fact about
+            // the rotation. A crash between them could leave the device claiming
+            // generation N+1 with no wrap for it — unable to open its own new
+            // notes and unable to rotate again.
+            let tx = store
+                .conn
+                .unchecked_transaction()
+                .map_err(|e| e.to_string())?;
+            store
+                .set_vault_entries(&merged.to_json())
+                .map_err(|e| e.to_string())?;
+            crate::migrate::set_meta_i64(
+                &store.conn,
+                "vault_generation",
+                i64::from(new_generation),
+            )
+            .map_err(|e| e.to_string())?;
+            crate::migrate::delete_meta(&store.conn, "vault_rotation_pending")
+                .map_err(|e| e.to_string())?;
+            tx.commit().map_err(|e| e.to_string())?;
+            false
+        }
+    };
     if switched {
         eprintln!(
             "vault rotation: the active context changed mid-request; \
              the codes are returned but nothing was cached locally"
         );
-    }
-    if !switched {
-        let store = store_state.lock().map_err(|e| e.to_string())?;
-        let cached = ops::cached_vault_entries(&store)?.unwrap_or_default();
-        let merged = ops::merge_my_entry(&cached, own_entry)?;
-        let merged = match &payload.recovery {
-            Some(r) => ops::merge_recovery_entry(&merged, new_generation, r)?,
-            None => merged,
-        };
-        // The cache, the generation and the pending flag are one fact about
-        // the rotation. A crash between them could leave the device claiming
-        // generation N+1 with no wrap for it — unable to open its own new
-        // notes and unable to rotate again.
-        let tx = store
-            .conn
-            .unchecked_transaction()
-            .map_err(|e| e.to_string())?;
-        store
-            .set_vault_entries(&merged.to_json())
-            .map_err(|e| e.to_string())?;
-        crate::migrate::set_meta_i64(&store.conn, "vault_generation", i64::from(new_generation))
-            .map_err(|e| e.to_string())?;
-        crate::migrate::delete_meta(&store.conn, "vault_rotation_pending")
-            .map_err(|e| e.to_string())?;
-        tx.commit().map_err(|e| e.to_string())?;
-    }
-    if !switched {
+    } else {
         // The ring belongs to the ACTIVE context; installing this workspace's
         // new DEK into another context's ring would let it seal that
-        // context's notes under a foreign key.
-        vault_state
-            .lock()
-            .map_err(|e| e.to_string())?
-            .unlock(new_generation, new_dek);
+        // context's notes under a foreign key — so re-check under the ring's
+        // own lock as well.
+        let mut vault = vault_state.lock().map_err(|e| e.to_string())?;
+        if app.state::<ops::SyncEpoch>().changed_since(epoch) {
+            eprintln!(
+                "vault rotation: the active context changed before the new key was installed"
+            );
+        } else {
+            vault.unlock(new_generation, new_dek);
+        }
     }
     broadcast_context_changed(&app);
 

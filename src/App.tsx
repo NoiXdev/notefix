@@ -396,7 +396,7 @@ export default function App() {
       );
     }
     return note
-      ? <div className="h-screen"><NoteEditor note={note} onChange={updateNote} readOnly={!!note.protected && vault.status.sealOutdated} rotationCodePending={vault.status.rotationCode} onEnterRotationCode={() => setRotationRedeem(true)} isWindow onSetDue={setDue} autosaveDelay={settings.autosaveDelay} linkPreviewEnabled={settings.linkPreviewEnabled} linkPreviewMode={settings.linkPreviewMode} copyFormat={settings.copyFormat} countShow={settings.editorCountShow} countPos={settings.editorCountPos} invisibles={settings.editorInvisibles} toolbarPos={settings.editorToolbarPos} /></div>
+      ? <div className="h-screen"><NoteEditor note={note} onChange={updateNote} readOnly={!!note.protected && vault.status.sealOutdated} rotationCodePending={vault.status.rotationCode} isWindow onSetDue={setDue} autosaveDelay={settings.autosaveDelay} linkPreviewEnabled={settings.linkPreviewEnabled} linkPreviewMode={settings.linkPreviewMode} copyFormat={settings.copyFormat} countShow={settings.editorCountShow} countPos={settings.editorCountPos} invisibles={settings.editorInvisibles} toolbarPos={settings.editorToolbarPos} /></div>
       : <div className="flex h-screen items-center justify-center text-gray-400 text-sm">{t('common.noteNotFound')}</div>;
   }
 

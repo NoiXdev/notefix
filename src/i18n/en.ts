@@ -570,7 +570,7 @@ export const en = {
     readOnly: 'Read-only',
     readOnlyUnlock: 'This note is secured with a newer key. Unlock the vault again with your password to edit it.',
     readOnlyCode: 'This note is secured with a newer key. Enter your change code to edit it.',
-    enterCode: 'Enter change code',
+    enterCode: 'Enter rotation code',
     generationOutdated: 'This device does not have the newest vault key yet. Enter your change code or unlock again with your password.',
     biometricFailed: 'Touch ID failed — enter your passphrase',
     biometricOtherContext: 'Touch ID is set up for a different context — enter your passphrase and re-enable Touch ID here',
