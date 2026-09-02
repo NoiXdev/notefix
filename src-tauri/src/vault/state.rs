@@ -59,10 +59,9 @@ impl VaultState {
         self.ring.get(&generation.unwrap_or(1))
     }
 
-    /// Every generation currently unlocked, ascending. Not yet called from
-    /// app code — a later task surfaces it (e.g. rotation progress/diagnostics)
-    /// — so it carries `#[allow(dead_code)]` per the `touch` precedent above.
-    #[allow(dead_code)]
+    /// Every generation currently unlocked, ascending — the creator's
+    /// recovery follow-up walks it to find the DEKs it can still wrap
+    /// (`commands::vault_recovery_followup`).
     pub fn generations(&self) -> Vec<u32> {
         self.ring.keys().copied().collect()
     }

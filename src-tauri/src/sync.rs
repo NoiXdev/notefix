@@ -384,6 +384,22 @@ fn vault_invite_by_token_url(server_url: &str, ws: &str, token: &str) -> String 
     )
 }
 
+fn vault_rotate_url(server_url: &str, ws: &str) -> String {
+    format!("{}/api/workspaces/{ws}/vault/rotate", base(server_url))
+}
+
+fn vault_recovery_url(server_url: &str, ws: &str) -> String {
+    format!("{}/api/workspaces/{ws}/vault/recovery", base(server_url))
+}
+
+fn members_url(server_url: &str, ws: &str) -> String {
+    format!("{}/api/workspaces/{ws}/members", base(server_url))
+}
+
+fn me_url(server_url: &str) -> String {
+    format!("{}/api/user", base(server_url))
+}
+
 /// Whether `POST …/vault` seeded the workspace vault, or found one already
 /// there. `AlreadyExists` is a normal outcome, not an error: two devices can
 /// legitimately race to seed the same workspace.
@@ -533,6 +549,125 @@ fn parse_invitation_id(body: &Value) -> Result<u64, SyncError> {
     body["invitationId"]
         .as_u64()
         .ok_or_else(|| SyncError::Fatal("vault invite lookup: no invitation id".into()))
+}
+
+/// The `{"members": [{"userId": n, "role": "..."}]}` body of the members
+/// listing. Pulled out so the parsing is testable without a network call.
+fn parse_members_response(body: &Value) -> Vec<(u64, String)> {
+    body["members"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|m| {
+            let id = m["userId"].as_u64()?;
+            Some((id, m["role"].as_str().unwrap_or_default().to_string()))
+        })
+        .collect()
+}
+
+/// GET /api/user — the authenticated user's own id, needed to tell the
+/// caller's own rotation entry apart from everyone else's. Nothing else from
+/// that response is read, kept or logged.
+pub async fn fetch_me(server_url: &str, token: &str) -> Result<u64, SyncError> {
+    let resp = client()?
+        .get(me_url(server_url))
+        .bearer_auth(token)
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| SyncError::Offline(e.to_string()))?;
+    classify_status(resp.status(), "user")?;
+    let body: Value = resp
+        .json()
+        .await
+        .map_err(|e| SyncError::Fatal(e.to_string()))?;
+    body["id"]
+        .as_u64()
+        .ok_or_else(|| SyncError::Fatal("user: no id".into()))
+}
+
+/// GET …/members — owner plus members of the workspace, as `(user id, role)`.
+pub async fn fetch_members(
+    server_url: &str,
+    token: &str,
+    ws: &str,
+) -> Result<Vec<(u64, String)>, SyncError> {
+    let resp = client()?
+        .get(members_url(server_url, ws))
+        .bearer_auth(token)
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| SyncError::Offline(e.to_string()))?;
+    classify_status(resp.status(), "members")?;
+    let body: Value = resp
+        .json()
+        .await
+        .map_err(|e| SyncError::Fatal(e.to_string()))?;
+    Ok(parse_members_response(&body))
+}
+
+/// POST …/vault/rotate — install a new key generation: one wrap per remaining
+/// member (the caller's own under their passphrase, everyone else's under a
+/// one-time rotation code) plus, when the caller holds it, the recovery wrap.
+/// Returns the generation the workspace ended up on.
+pub async fn vault_rotate(
+    server_url: &str,
+    token: &str,
+    ws: &str,
+    payload: &crate::ops::RotatePayload,
+) -> Result<u32, SyncError> {
+    let resp = client()?
+        .post(vault_rotate_url(server_url, ws))
+        .bearer_auth(token)
+        .header("Accept", "application/json")
+        .json(payload)
+        .send()
+        .await
+        .map_err(|e| SyncError::Offline(e.to_string()))?;
+    classify_status(resp.status(), "vault rotate")?;
+    let body: Value = resp
+        .json()
+        .await
+        .map_err(|e| SyncError::Fatal(e.to_string()))?;
+    Ok(parse_vault_generation(&body).unwrap_or(payload.generation))
+}
+
+/// The `{"vaultGeneration": n}` body of a rotation. Falls back to the
+/// generation the caller asked for when the server answers without one.
+fn parse_vault_generation(body: &Value) -> Option<u32> {
+    body["vaultGeneration"].as_u64().map(|g| g as u32)
+}
+
+/// POST …/vault/recovery — the creator adding the recovery wrap for a
+/// generation somebody else rotated. A 409 means the wrap is already there,
+/// which is exactly the state the caller wanted, so it is reported as `Ok`.
+pub async fn vault_post_recovery(
+    server_url: &str,
+    token: &str,
+    ws: &str,
+    generation: u32,
+    payload: &crate::ops::RecoveryPayload,
+) -> Result<(), SyncError> {
+    let body = serde_json::json!({
+        "generation": generation,
+        "recoverySalt": payload.recovery_salt,
+        "dekWrappedRecovery": payload.dek_wrapped_recovery,
+        "dekCheck": payload.dek_check,
+    });
+    let resp = client()?
+        .post(vault_recovery_url(server_url, ws))
+        .bearer_auth(token)
+        .header("Accept", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| SyncError::Offline(e.to_string()))?;
+    if resp.status() == reqwest::StatusCode::CONFLICT {
+        return Ok(());
+    }
+    classify_status(resp.status(), "vault recovery")
 }
 
 #[cfg(test)]
@@ -939,6 +1074,42 @@ mod tests {
             vault_invite_by_token_url("https://s", "ws1", "tok"),
             "https://s/api/workspaces/ws1/vault/invites/by-token/tok"
         );
+        assert_eq!(
+            vault_rotate_url("https://s/", "ws1"),
+            "https://s/api/workspaces/ws1/vault/rotate"
+        );
+        assert_eq!(
+            vault_recovery_url("https://s", "ws1"),
+            "https://s/api/workspaces/ws1/vault/recovery"
+        );
+        assert_eq!(
+            members_url("https://s/", "ws1"),
+            "https://s/api/workspaces/ws1/members"
+        );
+        assert_eq!(me_url("https://s/"), "https://s/api/user");
+    }
+
+    #[test]
+    fn parse_members_response_reads_ids_and_roles() {
+        let body = json!({"members": [
+            {"userId": 1, "role": "owner"},
+            {"userId": 2, "role": "editor"},
+            {"role": "editor"},
+        ]});
+        assert_eq!(
+            parse_members_response(&body),
+            vec![(1, "owner".to_string()), (2, "editor".to_string())]
+        );
+        assert!(parse_members_response(&json!({})).is_empty());
+    }
+
+    #[test]
+    fn parse_vault_generation_reads_the_new_generation() {
+        assert_eq!(
+            parse_vault_generation(&json!({"vaultGeneration": 3})),
+            Some(3)
+        );
+        assert_eq!(parse_vault_generation(&json!({})), None);
     }
 
     #[test]

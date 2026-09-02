@@ -95,6 +95,12 @@ pub struct VaultStatus {
     /// [`vault_recovery_holder`]. An invited member holds no recovery key, so
     /// offering them "unlock with your recovery key" would be a dead end.
     pub recovery_holder: bool,
+    /// The workspace rotated its key and parked this caller's new wrap under
+    /// a one-time rotation code — the unlock flow asks for it.
+    pub rotation_code: bool,
+    /// This user holds the recovery key and some generation has no recovery
+    /// wrap yet (somebody else rotated) — see [`generations_missing_recovery`].
+    pub recovery_missing: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -854,8 +860,15 @@ pub struct RecoveryEntryWire {
     pub dek_check: Option<String>,
 }
 
-/// The cached `{"mine":[…],"recovery":[…]}` blob as it sits in
+/// The cached `{"mine":[…],"recovery":[…],"rotation":[…]}` blob as it sits in
 /// `vault.entries` — the server's wire shape, stored verbatim.
+///
+/// `rotation` carries the caller's own rotation wraps: after a member was
+/// removed the rotating owner wraps the NEW generation for every remaining
+/// member under a one-time rotation code, and the member turns that into a
+/// wrap of their own (`vault_rotation_redeem`). Every list is
+/// `#[serde(default)]`, so a cache written before rotation wraps existed
+/// still parses.
 #[derive(Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 struct VaultEntriesWire {
@@ -863,6 +876,8 @@ struct VaultEntriesWire {
     mine: Vec<MyEntryWire>,
     #[serde(default)]
     recovery: Vec<RecoveryEntryWire>,
+    #[serde(default)]
+    rotation: Vec<MyEntryWire>,
 }
 
 /// A parsed [`MyEntryWire`]: the passphrase wrap for one generation, shaped
@@ -888,6 +903,11 @@ pub struct RecoveryEntry {
 pub struct VaultEntries {
     pub mine: Vec<MyEntry>,
     pub recovery: Vec<RecoveryEntry>,
+    /// Wraps waiting for a one-time ROTATION code (same wire shape as
+    /// `mine`, but the KEK derives from the code, not from a passphrase).
+    /// Emptied generation by generation as [`merge_my_entry`] installs the
+    /// member's own wrap.
+    pub rotation: Vec<MyEntry>,
 }
 
 /// Base64 that treats an empty string as "field absent" — a server that
@@ -969,6 +989,7 @@ impl VaultEntries {
         let wire = VaultEntriesWire {
             mine: self.mine.iter().map(MyEntryWire::from).collect(),
             recovery: self.recovery.iter().map(RecoveryEntryWire::from).collect(),
+            rotation: self.rotation.iter().map(MyEntryWire::from).collect(),
         };
         serde_json::to_string(&wire).expect("VaultEntriesWire has no non-serializable fields")
     }
@@ -989,11 +1010,16 @@ impl VaultEntries {
                 .into_iter()
                 .map(RecoveryEntry::try_from)
                 .collect::<Result<Vec<_>, _>>()?,
+            rotation: wire
+                .rotation
+                .into_iter()
+                .map(MyEntry::try_from)
+                .collect::<Result<Vec<_>, _>>()?,
         })
     }
 
     pub fn is_empty(&self) -> bool {
-        self.mine.is_empty() && self.recovery.is_empty()
+        self.mine.is_empty() && self.recovery.is_empty() && self.rotation.is_empty()
     }
 }
 
@@ -1153,6 +1179,17 @@ pub fn load_vault_unlock_inputs(store: &Store) -> Result<VaultUnlockInputs, Stri
 pub fn vault_exists(store: &Store) -> Result<bool, String> {
     if store.vault_record().map_err(|e| e.to_string())?.is_some() {
         return Ok(true);
+    }
+    Ok(cached_vault_entries(store)?.is_some_and(|e| !e.mine.is_empty()))
+}
+
+/// Whether "set up a vault" on this store would really mean "unlock the one
+/// the workspace already has": no local record, but a wrapped key cached for
+/// this caller. [`vault_setup`] refuses both cases with the same generic
+/// error; the command layer uses this to say the actionable thing instead.
+pub fn server_vault_needs_unlock(store: &Store) -> Result<bool, String> {
+    if store.vault_record().map_err(|e| e.to_string())?.is_some() {
+        return Ok(false);
     }
     Ok(cached_vault_entries(store)?.is_some_and(|e| !e.mine.is_empty()))
 }
@@ -1424,6 +1461,9 @@ pub fn rewrap_for_server(
         entries: VaultEntries {
             mine,
             recovery: entries.recovery.clone(),
+            // Rotation wraps derive their KEK from the one-time code, not
+            // from the passphrase, so a passphrase change leaves them alone.
+            rotation: entries.rotation.clone(),
         },
         uploads,
         deks,
@@ -1604,6 +1644,11 @@ pub fn parse_invitation_ref(input: &str) -> Result<InvitationRef, String> {
 /// that already covers the same generation (accepting a second invitation for
 /// a generation this device already holds must not leave two wraps behind).
 /// The recovery half is untouched — an invited member never gets one.
+///
+/// A pending ROTATION wrap for that same generation is dropped: the server
+/// deletes it in the same transaction that stores the caller's own key
+/// (`PUT …/vault/keys/me`), so keeping it would leave the UI asking for a
+/// rotation code that is already spent.
 pub fn merge_my_entry(entries: &VaultEntries, entry: MyEntryWire) -> Result<VaultEntries, String> {
     let generation = entry.generation;
     let parsed = MyEntry::try_from(entry)?;
@@ -1618,6 +1663,12 @@ pub fn merge_my_entry(entries: &VaultEntries, entry: MyEntryWire) -> Result<Vaul
     Ok(VaultEntries {
         mine,
         recovery: entries.recovery.clone(),
+        rotation: entries
+            .rotation
+            .iter()
+            .filter(|e| e.generation != generation)
+            .cloned()
+            .collect(),
     })
 }
 
@@ -1668,6 +1719,347 @@ pub fn accept_invite_entry(
     })
 }
 
+// ---------------------------------------------------------------------------
+// Key rotation
+//
+// When a member is removed the workspace's key has to change: the removed
+// member still knows the old DEK, and every note that stays sealed under it
+// stays readable to them. The rotating client mints a NEW DEK and hands the
+// server one wrap per remaining member — its own under its own passphrase
+// (`kind: "own"`), everyone else's under a fresh one-time ROTATION code
+// (`kind: "code"`, the invite wrap reused), which the owner passes on out of
+// band. Members redeem their code with their passphrase
+// (`vault_rotation_redeem`), and existing ciphertext moves to the new
+// generation lazily ([`reseal_lagging_notes`]).
+//
+// The workspace's single recovery wrap can only be produced by whoever holds
+// the recovery key: the creator adds it inline when they rotate, and after
+// someone else rotated they add it afterwards ([`recovery_followup`]).
+// ---------------------------------------------------------------------------
+
+/// One `keys[]` element of `POST …/vault/rotate`: a wrap of the NEW DEK for
+/// one member. `kind` is `"own"` (a passphrase wrap, stored as that member's
+/// key row) or `"code"` (a rotation-code wrap, parked until the member
+/// redeems it).
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RotateKeyWire {
+    pub user_id: u64,
+    pub kind: String,
+    pub kdf_params: KdfParams,
+    pub dek_wrapped: String,
+    pub dek_check: String,
+}
+
+/// The body of `POST …/vault/rotate`. `recovery` is `null` when the rotating
+/// user does not hold the recovery key — the creator supplies it later
+/// through `POST …/vault/recovery`.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RotatePayload {
+    pub generation: u32,
+    pub keys: Vec<RotateKeyWire>,
+    pub recovery: Option<RecoveryPayload>,
+}
+
+impl RotatePayload {
+    /// The rotating caller's own entry, as the cache stores it. Read back off
+    /// the payload rather than derived a second time — the Argon2 derivation
+    /// behind it is deliberately expensive.
+    pub fn own_entry(&self) -> Option<MyEntryWire> {
+        self.keys
+            .iter()
+            .find(|k| k.kind == "own")
+            .map(|k| MyEntryWire {
+                generation: self.generation,
+                kdf_params: k.kdf_params.clone(),
+                dek_wrapped: k.dek_wrapped.clone(),
+                dek_check: k.dek_check.clone(),
+            })
+    }
+}
+
+/// Builds the rotation body for `new_dek`: the caller's own wrap under their
+/// passphrase, one rotation-code wrap per other member, and — when the caller
+/// holds the recovery key — the workspace recovery wrap for the new
+/// generation. Returns the body plus one `(user id, code)` per other member;
+/// those codes exist nowhere else and are never stored.
+pub fn rotation_payload(
+    new_generation: u32,
+    new_dek: &Dek,
+    own: (u64, &str),
+    others: &[u64],
+    recovery: Option<&str>,
+) -> Result<(RotatePayload, Vec<(u64, String)>), String> {
+    let (own_id, passphrase) = own;
+    let own_entry = my_entry_for(new_dek, new_generation, passphrase);
+    let mut keys = vec![RotateKeyWire {
+        user_id: own_id,
+        kind: "own".to_string(),
+        kdf_params: own_entry.kdf_params,
+        dek_wrapped: own_entry.dek_wrapped,
+        dek_check: own_entry.dek_check,
+    }];
+    let mut codes = Vec::new();
+    for &user_id in others {
+        // The members listing includes the caller; wrapping them twice would
+        // make the server reject the whole rotation.
+        if user_id == own_id {
+            continue;
+        }
+        let (code, wrap) = make_invite_wrap(new_dek, new_generation);
+        keys.push(RotateKeyWire {
+            user_id,
+            kind: "code".to_string(),
+            kdf_params: wrap.kdf_params,
+            dek_wrapped: wrap.dek_wrapped,
+            dek_check: wrap.dek_check,
+        });
+        codes.push((user_id, code));
+    }
+    let recovery = match recovery {
+        None => None,
+        Some(key) => Some(recovery_payload_for(new_dek, key)?),
+    };
+    Ok((
+        RotatePayload {
+            generation: new_generation,
+            keys,
+            recovery,
+        },
+        codes,
+    ))
+}
+
+/// One generation's recovery wrap, built the same way [`crate::vault::setup`]
+/// builds a vault's: fresh salt, recovery KDF params, normalized key.
+fn recovery_payload_for(dek: &Dek, recovery_key: &str) -> Result<RecoveryPayload, String> {
+    let (salt, wrapped, check) =
+        crate::vault::wrap_under_recovery(dek, recovery_key).map_err(String::from)?;
+    Ok(RecoveryPayload {
+        recovery_salt: STANDARD.encode(salt),
+        dek_wrapped_recovery: STANDARD.encode(&wrapped),
+        dek_check: STANDARD.encode(&check),
+    })
+}
+
+/// Generations the workspace wrapped for this caller under a one-time
+/// rotation code and that they hold no own wrap for yet — ascending. Backs
+/// `vault_status.rotation_code` and drives [`rotation_redeem_entries`].
+pub fn pending_rotation_generations(entries: &VaultEntries) -> Vec<u32> {
+    let mut gens: Vec<u32> = entries
+        .rotation
+        .iter()
+        .map(|r| r.generation)
+        .filter(|g| !entries.mine.iter().any(|m| m.generation == *g))
+        .collect();
+    gens.sort_unstable();
+    gens.dedup();
+    gens
+}
+
+/// Opens the pending rotation wraps `code` fits and re-wraps each DEK under
+/// `passphrase` — one `(generation, DEK, own wrap)` per generation it opened,
+/// ascending, ready to be PUT and then cached.
+///
+/// Deliberately PER GENERATION, not all-or-nothing: two rotations while a
+/// member was away leave that member two wraps behind two DIFFERENT one-time
+/// codes. Failing the whole redemption on the first wrap a code does not open
+/// would make both codes useless and strand them on `rotation_code` forever.
+/// So each code redeems its own generation and leaves the rest pending for
+/// the next one.
+///
+/// `Err("invalid rotation code")` only when NOTHING opened — and every
+/// failure collapses into that one message: a rejected code must not reveal
+/// *how* it was wrong.
+pub fn rotation_redeem_entries(
+    entries: &VaultEntries,
+    code: &str,
+    passphrase: &str,
+) -> Result<Vec<(u32, Dek, MyEntryWire)>, String> {
+    let pending = pending_rotation_generations(entries);
+    if pending.is_empty() {
+        return Err("no rotation pending".to_string());
+    }
+    let mut out = Vec::with_capacity(pending.len());
+    for generation in pending {
+        let Some(entry) = entries.rotation.iter().find(|r| r.generation == generation) else {
+            continue;
+        };
+        let wire = MyEntryWire::from(entry);
+        let wrap = InviteWrap {
+            generation,
+            kdf_params: wire.kdf_params,
+            dek_wrapped: wire.dek_wrapped,
+            dek_check: wire.dek_check,
+        };
+        let Ok(dek) = open_invite_wrap(&wrap, code) else {
+            continue; // a different rotation's code — leave it pending
+        };
+        let own = my_entry_for(&dek, generation, passphrase);
+        out.push((generation, dek, own));
+    }
+    if out.is_empty() {
+        return Err("invalid rotation code".to_string());
+    }
+    Ok(out)
+}
+
+/// Generations this caller holds an own wrap for that the workspace has no
+/// recovery wrap for. Non-empty only after somebody rotated without the
+/// recovery key — the creator's follow-up work list, and the source of
+/// `vault_status.recovery_missing`.
+pub fn generations_missing_recovery(entries: &VaultEntries) -> Vec<u32> {
+    let mut gens: Vec<u32> = entries
+        .mine
+        .iter()
+        .map(|m| m.generation)
+        .filter(|g| !entries.recovery.iter().any(|r| r.generation == *g))
+        .collect();
+    gens.sort_unstable();
+    gens.dedup();
+    gens
+}
+
+/// Proves `passphrase` is the one the workspace currently wraps this caller's
+/// key under, by requiring it to open the NEWEST cached `mine` entry — the
+/// wrap every rotation and redemption builds on. An empty cache has nothing
+/// to prove anything against and is rejected.
+pub fn verify_newest_passphrase(entries: &VaultEntries, passphrase: &str) -> Result<(), String> {
+    let newest = entries
+        .mine
+        .iter()
+        .map(|e| e.generation)
+        .max()
+        .ok_or_else(|| "wrong passphrase".to_string())?;
+    let opened = unlock_entries_with_passphrase(entries, passphrase)?;
+    match opened.iter().any(|(g, _)| *g == newest) {
+        true => Ok(()),
+        false => Err("wrong passphrase".to_string()),
+    }
+}
+
+/// Proves `recovery_key` is this vault's recovery key by opening the cached
+/// generation-1 recovery wrap with it.
+pub fn verify_recovery_key(entries: &VaultEntries, recovery_key: &str) -> Result<(), String> {
+    let opened = unlock_entries_with_recovery(entries, recovery_key)?;
+    match opened.iter().any(|(g, _)| *g == 1) {
+        true => Ok(()),
+        false => Err("wrong recovery key".to_string()),
+    }
+}
+
+/// The creator's recovery follow-up: after verifying `recovery_key`, one
+/// `POST …/vault/recovery` body per generation that lacks a recovery wrap and
+/// whose DEK the ring can actually hand over. A generation nobody unlocked
+/// cannot be wrapped and is simply skipped — the next unlock picks it up.
+pub fn recovery_followup(
+    entries: &VaultEntries,
+    deks: &[(u32, Dek)],
+    recovery_key: &str,
+) -> Result<Vec<(u32, RecoveryPayload)>, String> {
+    verify_recovery_key(entries, recovery_key)?;
+    let mut out = Vec::new();
+    for generation in generations_missing_recovery(entries) {
+        let Some((_, dek)) = deks.iter().find(|(g, _)| *g == generation) else {
+            continue;
+        };
+        out.push((generation, recovery_payload_for(dek, recovery_key)?));
+    }
+    Ok(out)
+}
+
+/// Folds a freshly uploaded recovery wrap into the cache, replacing any entry
+/// for the same generation.
+pub fn merge_recovery_entry(
+    entries: &VaultEntries,
+    generation: u32,
+    payload: &RecoveryPayload,
+) -> Result<VaultEntries, String> {
+    let parsed = RecoveryEntry::try_from(RecoveryEntryWire {
+        generation,
+        recovery_salt: payload.recovery_salt.clone(),
+        dek_wrapped_recovery: payload.dek_wrapped_recovery.clone(),
+        dek_check: Some(payload.dek_check.clone()),
+    })?;
+    let mut recovery: Vec<RecoveryEntry> = entries
+        .recovery
+        .iter()
+        .filter(|e| e.generation != generation)
+        .cloned()
+        .collect();
+    recovery.push(parsed);
+    recovery.sort_by_key(|e| e.generation);
+    Ok(VaultEntries {
+        mine: entries.mine.clone(),
+        recovery,
+        rotation: entries.rotation.clone(),
+    })
+}
+
+/// Moves up to `batch` protected notes that are still sealed under an older
+/// key generation onto the ring's newest one, marking each dirty so the next
+/// sync cycle pushes the re-sealed ciphertext.
+///
+/// A row whose `key_gen` is NULL is on the work list because schema v15 added
+/// the column without backfilling it, and the global rule reads NULL as
+/// generation 1 ([`VaultState::dek_for`]). Such a row is only STAMPED with
+/// the newest generation when that already IS its generation — no re-seal, no
+/// dirty flag, no `updated_at` change. Re-sealing it would burn a new nonce
+/// on the same key, re-upload the note and move its "last edited" date for no
+/// cryptographic gain. It still counts as handled, so the work list drains;
+/// on a ring whose newest generation is 1 the sweep therefore never touches
+/// content at all.
+///
+/// Otherwise deliberately best-effort per note: a generation this ring cannot
+/// open (a member who joined at a later generation never sees the older DEKs)
+/// and a row that will not open are skipped rather than failing the batch —
+/// the note keeps its old generation and simply stays on the work list.
+pub fn reseal_lagging_notes(
+    store: &Store,
+    vault: &VaultState,
+    batch: usize,
+) -> Result<usize, String> {
+    let (Some(newest_dek), Some(newest)) = (vault.dek(), vault.newest_generation()) else {
+        return Ok(0);
+    };
+    let ids = store
+        .notes_with_key_gen_below(newest, batch)
+        .map_err(|e| e.to_string())?;
+    let mut done = 0;
+    for id in ids {
+        let old_gen = store.note_key_gen(&id).map_err(|e| e.to_string())?;
+        if old_gen.unwrap_or(1) == newest {
+            // Already sealed under the newest key — only the column was blank.
+            store
+                .set_note_key_gen(&id, Some(newest))
+                .map_err(|e| e.to_string())?;
+            done += 1;
+            continue;
+        }
+        let Some(stored) = store.load_note_content(&id).map_err(|e| e.to_string())? else {
+            continue;
+        };
+        let Some(old_dek) = vault.dek_for(old_gen) else {
+            continue; // not ours to re-seal
+        };
+        let Ok(plaintext) = open_content(old_dek, &id, &stored) else {
+            continue;
+        };
+        store
+            .set_content_silent(&id, &seal_content(newest_dek, &id, &plaintext))
+            .map_err(|e| e.to_string())?;
+        store
+            .set_note_key_gen(&id, Some(newest))
+            .map_err(|e| e.to_string())?;
+        store
+            .mark_note_dirty_if_syncing(&id)
+            .map_err(|e| e.to_string())?;
+        done += 1;
+    }
+    Ok(done)
+}
+
 /// Whether this user holds a recovery key for this context's vault at all —
 /// the gate for every recovery-key control in the UI.
 ///
@@ -1699,6 +2091,12 @@ pub struct VaultStatusFlags {
     pub exists: bool,
     pub conflict: bool,
     pub recovery_holder: bool,
+    /// A rotation code is waiting to be redeemed — the workspace wrapped a
+    /// newer generation for this caller under a one-time code.
+    pub rotation_code: bool,
+    /// This user holds the recovery key, and some generation of the vault has
+    /// no recovery wrap yet (somebody else rotated). Only they can add it.
+    pub recovery_missing: bool,
 }
 
 pub fn vault_status_flags(
@@ -1724,6 +2122,15 @@ pub fn vault_status_flags(
             record.as_ref(),
             is_server_context,
         ),
+        rotation_code: entries
+            .as_ref()
+            .is_some_and(|e| !pending_rotation_generations(e).is_empty()),
+        // Only the creator holds recovery wraps at all, so only they are ever
+        // asked to fill a gap in them.
+        recovery_missing: is_server_context
+            && entries.as_ref().is_some_and(|e| {
+                !e.recovery.is_empty() && !generations_missing_recovery(e).is_empty()
+            }),
     })
 }
 
@@ -1751,7 +2158,12 @@ pub fn context_vault_info(path: &Path) -> ContextVaultInfo {
         let store = Store::open(path).map_err(|e| e.to_string())?;
         crate::migrate::run_migrations(&store.conn).map_err(|e| e.to_string())?;
         Ok(ContextVaultInfo {
-            exists: store.vault_record().map_err(|e| e.to_string())?.is_some(),
+            // Same rule as `vault_status.exists` ([`vault_exists`]): a member
+            // who joined a workspace at generation >= 2 has no local record —
+            // nothing is mirrored for them — but the cached wrap proves the
+            // vault is there. Reading only the record would leave their row
+            // saying "no vault" and hide every vault action on it.
+            exists: vault_exists(&store)?,
             generation: u32::try_from(crate::migrate::get_meta_i64(
                 &store.conn,
                 "vault_generation",
@@ -4329,6 +4741,7 @@ mod vault_entries_tests {
             "pw",
         );
         let entries = VaultEntries {
+            rotation: vec![],
             mine: vec![mine(1, rec1), mine(2, rec2)],
             recovery: vec![],
         };
@@ -4381,6 +4794,7 @@ mod vault_entries_tests {
     fn entries_roundtrip_carries_the_recovery_wrap_and_unlocks_from_it() {
         let (rec, rk, dek) = crate::vault::setup("pw").unwrap();
         let entries = VaultEntries {
+            rotation: vec![],
             recovery: vec![recovery_of(1, &rec)],
             mine: vec![mine(1, rec)],
         };
@@ -4402,6 +4816,7 @@ mod vault_entries_tests {
         assert!(!vault_exists(&s).unwrap());
         let (rec, _rk, _dek) = crate::vault::setup("pw").unwrap();
         let entries = VaultEntries {
+            rotation: vec![],
             mine: vec![mine(1, rec)],
             recovery: vec![],
         };
@@ -4421,6 +4836,7 @@ mod vault_entries_tests {
         let s = store();
         let (rec, rk, dek) = crate::vault::setup("pw").unwrap();
         let entries = VaultEntries {
+            rotation: vec![],
             recovery: vec![recovery_of(1, &rec)],
             mine: vec![mine(1, rec)],
         };
@@ -4467,6 +4883,7 @@ mod vault_entries_tests {
         // rotation), so the two are provably one vault.
         let gen2 = Dek::random();
         let entries = VaultEntries {
+            rotation: vec![],
             mine: vec![
                 mine(1, crate::vault::rewrap_passphrase(&local, &dek, "pw")),
                 mine(2, crate::vault::rewrap_passphrase(&local, &gen2, "pw")),
@@ -4495,6 +4912,7 @@ mod vault_entries_tests {
         local.dek_check = None; // predates the check: nothing to verify against
         conflicted(&s, &local);
         let entries = VaultEntries {
+            rotation: vec![],
             mine: vec![mine(1, crate::vault::rewrap_passphrase(&local, &dek, "pw"))],
             recovery: vec![],
         };
@@ -4521,6 +4939,7 @@ mod vault_entries_tests {
         local.dek_check = None;
         conflicted(&s, &local);
         let entries = VaultEntries {
+            rotation: vec![],
             mine: vec![],
             recovery: vec![recovery_of(1, &local)],
         };
@@ -4546,6 +4965,7 @@ mod vault_entries_tests {
         let (server, _rk2, server_dek) = crate::vault::setup("pw").unwrap();
         assert_ne!(local_dek.expose(), server_dek.expose());
         let entries = VaultEntries {
+            rotation: vec![],
             mine: vec![mine(1, server)],
             recovery: vec![],
         };
@@ -4585,6 +5005,7 @@ mod vault_entries_tests {
         let before = s.vault_record().unwrap().unwrap();
         let (server, _rk2, server_dek) = crate::vault::setup("pw").unwrap();
         let entries = VaultEntries {
+            rotation: vec![],
             mine: vec![mine(1, server)],
             recovery: vec![],
         };
@@ -4608,6 +5029,7 @@ mod vault_entries_tests {
         let (local, _rk, local_dek) = crate::vault::setup("mine").unwrap();
         conflicted(&s, &local);
         let entries = VaultEntries {
+            rotation: vec![],
             mine: vec![mine(1, crate::vault::setup("theirs").unwrap().0)],
             recovery: vec![],
         };
@@ -4640,6 +5062,7 @@ mod vault_entries_tests {
         let (mut rec, _rk, _dek) = crate::vault::setup("pw").unwrap();
         rec.dek_check = Some(crate::vault::make_dek_check(&Dek::random()));
         let entries = VaultEntries {
+            rotation: vec![],
             mine: vec![mine(1, rec)],
             recovery: vec![],
         };
@@ -4681,7 +5104,10 @@ mod vault_entries_tests {
                 r#""kdfParams":{{"salt":[{salt}],"m_cost":{m},"t_cost":{t},"p_cost":{p}}},"#,
                 r#""dekWrapped":"{wrapped}","dekCheck":"{check}"}}],"#,
                 r#""recovery":[{{"generation":1,"recoverySalt":"{rsalt}","#,
-                r#""dekWrappedRecovery":"{rwrapped}","dekCheck":"{check}"}}]}}"#
+                r#""dekWrappedRecovery":"{rwrapped}","dekCheck":"{check}"}}],"#,
+                // Since the rotation-codes step the server always sends this
+                // third list — empty while nothing is waiting to be redeemed.
+                r#""rotation":[]}}"#
             ),
             salt = salt,
             m = rec.kdf_params.m_cost,
@@ -4720,6 +5146,7 @@ mod vault_entries_tests {
     fn rewrap_for_server_produces_one_upload_per_generation_and_keeps_the_dek() {
         let (local, rk, dek) = crate::vault::setup("old").unwrap();
         let entries = VaultEntries {
+            rotation: vec![],
             mine: vec![mine(
                 1,
                 crate::vault::rewrap_passphrase(&local, &dek, "old"),
@@ -4762,6 +5189,7 @@ mod vault_entries_tests {
     fn rewrap_for_server_refuses_a_wrong_current_passphrase() {
         let (local, _rk, dek) = crate::vault::setup("old").unwrap();
         let entries = VaultEntries {
+            rotation: vec![],
             mine: vec![mine(
                 1,
                 crate::vault::rewrap_passphrase(&local, &dek, "old"),
@@ -4834,6 +5262,7 @@ mod vault_entries_tests {
         let (rec, _rk, _dek) = crate::vault::setup("pw").unwrap();
         s.set_vault_entries(
             &VaultEntries {
+                rotation: vec![],
                 mine: vec![mine(1, rec)],
                 recovery: vec![],
             }
@@ -5149,6 +5578,7 @@ mod vault_invite_tests {
 
         let (rec, _rk, _d) = crate::vault::setup("pw").unwrap();
         let with_recovery = VaultEntries {
+            rotation: vec![],
             mine: mine_only.mine.clone(),
             recovery: vec![RecoveryEntry {
                 generation: 1,
@@ -5283,6 +5713,563 @@ mod context_vault_info_tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("does-not-exist.db");
         assert_eq!(context_vault_info(&path), ContextVaultInfo::default());
+    }
+
+    #[test]
+    fn a_member_who_joined_after_a_rotation_still_reports_an_existing_vault() {
+        // No local record is mirrored for a generation > 1, so reading the
+        // record alone would say "no vault" and hide every vault action on
+        // that context's row.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("c.db");
+        {
+            let s = Store::open(&path).unwrap();
+            crate::migrate::run_migrations(&s.conn).unwrap();
+            s.set_vault_entries(
+                &serde_json::json!({"mine": [my_entry_for(&Dek::random(), 2, "pw")]}).to_string(),
+            )
+            .unwrap();
+            crate::migrate::set_meta_i64(&s.conn, "vault_generation", 2).unwrap();
+            assert!(s.vault_record().unwrap().is_none());
+        }
+
+        assert_eq!(
+            context_vault_info(&path),
+            ContextVaultInfo {
+                exists: true,
+                generation: 2,
+                rotation_pending: false,
+            }
+        );
+    }
+}
+
+/// Rotating a workspace vault key after a member was removed: the payload the
+/// owner uploads, the codes they hand out, what a member's redemption
+/// produces, the creator's recovery follow-up, and the lazy re-seal.
+#[cfg(test)]
+mod vault_rotation_tests {
+    use super::test_support::*;
+    use super::*;
+
+    /// The cached entries of a vault's CREATOR at generation 1: their own
+    /// passphrase wrap plus the workspace recovery wrap.
+    fn creator_entries(dek: &Dek, passphrase: &str) -> (VaultEntries, String) {
+        let (record, recovery_key, _d) = crate::vault::setup(passphrase).unwrap();
+        let entries = VaultEntries {
+            mine: vec![MyEntry {
+                generation: 1,
+                record: crate::vault::rewrap_passphrase(&record, dek, passphrase),
+            }],
+            recovery: vec![RecoveryEntry {
+                generation: 1,
+                recovery_salt: record.recovery_salt,
+                dek_wrapped_recovery: record.dek_wrapped_recovery.clone(),
+                dek_check: record.dek_check.clone(),
+            }],
+            rotation: vec![],
+        };
+        (entries, recovery_key.as_str().to_string())
+    }
+
+    #[test]
+    fn the_cache_carries_rotation_wraps_and_older_caches_still_parse() {
+        let dek = Dek::random();
+        let (_code, wrap) = make_invite_wrap(&dek, 2);
+        let json = serde_json::json!({
+            "mine": [my_entry_for(&dek, 1, "pw")],
+            "recovery": [],
+            "rotation": [{
+                "generation": 2,
+                "kdfParams": serde_json::to_value(&wrap.kdf_params).unwrap(),
+                "dekWrapped": wrap.dek_wrapped,
+                "dekCheck": wrap.dek_check,
+            }],
+        })
+        .to_string();
+        let entries = VaultEntries::from_json(&json).unwrap();
+        assert_eq!(entries.rotation.len(), 1);
+        assert_eq!(pending_rotation_generations(&entries), vec![2]);
+
+        // Round-trips through the cache unchanged...
+        let back = VaultEntries::from_json(&entries.to_json()).unwrap();
+        assert_eq!(pending_rotation_generations(&back), vec![2]);
+        // ...and a cache written before rotation wraps existed still parses.
+        let old = VaultEntries::from_json(r#"{"mine":[],"recovery":[]}"#).unwrap();
+        assert!(old.rotation.is_empty());
+    }
+
+    #[test]
+    fn rotation_payload_wraps_the_owner_by_passphrase_and_everyone_else_by_code() {
+        let new_dek = Dek::random();
+        let (payload, codes) = rotation_payload(
+            2,
+            &new_dek,
+            (7, "owner-pw"),
+            &[7, 8, 9], // the listing includes the caller
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(payload.generation, 2);
+        assert!(payload.recovery.is_none());
+        assert_eq!(payload.keys.len(), 3, "one row per member, the caller once");
+        let own = payload.keys.iter().find(|k| k.kind == "own").unwrap();
+        assert_eq!(own.user_id, 7);
+        assert_eq!(
+            codes.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            vec![8, 9]
+        );
+
+        // The owner's own row opens with their passphrase...
+        let mine = VaultEntries {
+            mine: vec![MyEntry::try_from(payload.own_entry().unwrap()).unwrap()],
+            recovery: vec![],
+            rotation: vec![],
+        };
+        assert_eq!(
+            unlock_entries_with_passphrase(&mine, "owner-pw").unwrap()[0]
+                .1
+                .expose(),
+            new_dek.expose()
+        );
+        // ...and every other row only with that member's own code.
+        for (user_id, code) in &codes {
+            let k = payload.keys.iter().find(|k| k.user_id == *user_id).unwrap();
+            let wrap = InviteWrap {
+                generation: 2,
+                kdf_params: k.kdf_params.clone(),
+                dek_wrapped: k.dek_wrapped.clone(),
+                dek_check: k.dek_check.clone(),
+            };
+            assert_eq!(
+                open_invite_wrap(&wrap, code).unwrap().expose(),
+                new_dek.expose()
+            );
+            let other = codes.iter().find(|(id, _)| id != user_id).unwrap();
+            assert_eq!(
+                err_of(open_invite_wrap(&wrap, &other.1)),
+                "invalid invite code",
+                "a member's code opens only their own wrap"
+            );
+        }
+    }
+
+    #[test]
+    fn the_creator_rotating_carries_the_recovery_wrap_for_the_new_generation() {
+        let new_dek = Dek::random();
+        let (_e, recovery_key) = creator_entries(&Dek::random(), "owner-pw");
+        let (payload, _codes) =
+            rotation_payload(3, &new_dek, (1, "owner-pw"), &[], Some(&recovery_key)).unwrap();
+        let recovery = payload.recovery.expect("the creator supplies it inline");
+
+        let entries = merge_recovery_entry(&VaultEntries::default(), 3, &recovery).unwrap();
+        let opened = unlock_entries_with_recovery(&entries, &recovery_key).unwrap();
+        assert_eq!(opened[0].0, 3);
+        assert_eq!(opened[0].1.expose(), new_dek.expose());
+        assert_eq!(
+            err_of(unlock_entries_with_recovery(&entries, "AAAAA-BBBBB-CCCCC")),
+            "wrong recovery key"
+        );
+    }
+
+    #[test]
+    fn a_member_redeems_their_code_into_a_wrap_under_their_own_passphrase() {
+        let old_dek = Dek::random();
+        let new_dek = Dek::random();
+        let (code, wrap) = make_invite_wrap(&new_dek, 2);
+        let entries = VaultEntries {
+            mine: vec![MyEntry::try_from(my_entry_for(&old_dek, 1, "member-pw")).unwrap()],
+            recovery: vec![],
+            rotation: vec![MyEntry::try_from(MyEntryWire {
+                generation: 2,
+                kdf_params: wrap.kdf_params.clone(),
+                dek_wrapped: wrap.dek_wrapped.clone(),
+                dek_check: wrap.dek_check.clone(),
+            })
+            .unwrap()],
+        };
+
+        // The passphrase is checked against the newest wrap the member holds.
+        assert!(verify_newest_passphrase(&entries, "member-pw").is_ok());
+        assert_eq!(
+            err_of(verify_newest_passphrase(&entries, "nope")),
+            "wrong passphrase"
+        );
+
+        let redeemed = rotation_redeem_entries(&entries, &code, "member-pw").unwrap();
+        assert_eq!(redeemed.len(), 1);
+        let (generation, dek, own) = &redeemed[0];
+        assert_eq!(*generation, 2);
+        assert_eq!(dek.expose(), new_dek.expose());
+
+        // Caching the member's own wrap spends the rotation entry.
+        let merged = merge_my_entry(&entries, own.clone()).unwrap();
+        assert!(merged.rotation.is_empty());
+        assert!(pending_rotation_generations(&merged).is_empty());
+        let opened = unlock_entries_with_passphrase(&merged, "member-pw").unwrap();
+        assert_eq!(
+            opened.iter().map(|(g, _)| *g).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+    }
+
+    /// A pending rotation wrap for `generation`, as the server parks it.
+    fn rotation_entry(dek: &Dek, generation: u32) -> (String, MyEntry) {
+        let (code, wrap) = make_invite_wrap(dek, generation);
+        let entry = MyEntry::try_from(MyEntryWire {
+            generation,
+            kdf_params: wrap.kdf_params,
+            dek_wrapped: wrap.dek_wrapped,
+            dek_check: wrap.dek_check,
+        })
+        .unwrap();
+        (code, entry)
+    }
+
+    #[test]
+    fn two_rotations_missed_are_redeemed_one_code_at_a_time() {
+        // The member was offline across two removals, so the workspace parked
+        // TWO wraps for them behind two different codes. Neither code opens
+        // the other's wrap — failing the whole redemption on the first
+        // mismatch would make both codes useless.
+        let (d2, d3) = (Dek::random(), Dek::random());
+        let (code2, rot2) = rotation_entry(&d2, 2);
+        let (code3, rot3) = rotation_entry(&d3, 3);
+        let entries = VaultEntries {
+            mine: vec![MyEntry::try_from(my_entry_for(&Dek::random(), 1, "member-pw")).unwrap()],
+            recovery: vec![],
+            rotation: vec![rot2, rot3],
+        };
+        assert_eq!(pending_rotation_generations(&entries), vec![2, 3]);
+
+        // The newer code redeems only generation 3...
+        let redeemed = rotation_redeem_entries(&entries, &code3, "member-pw").unwrap();
+        assert_eq!(redeemed.len(), 1);
+        assert_eq!(redeemed[0].0, 3);
+        assert_eq!(redeemed[0].1.expose(), d3.expose());
+        let after = merge_my_entry(&entries, redeemed[0].2.clone()).unwrap();
+        assert_eq!(
+            pending_rotation_generations(&after),
+            vec![2],
+            "generation 2 stays pending for its own code"
+        );
+
+        // ...and the older code then redeems generation 2 from that state.
+        let redeemed = rotation_redeem_entries(&after, &code2, "member-pw").unwrap();
+        assert_eq!(redeemed.len(), 1);
+        assert_eq!(redeemed[0].0, 2);
+        assert_eq!(redeemed[0].1.expose(), d2.expose());
+        let done = merge_my_entry(&after, redeemed[0].2.clone()).unwrap();
+        assert!(pending_rotation_generations(&done).is_empty());
+        assert_eq!(
+            unlock_entries_with_passphrase(&done, "member-pw")
+                .unwrap()
+                .iter()
+                .map(|(g, _)| *g)
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+    }
+
+    #[test]
+    fn a_code_that_opens_none_of_the_pending_wraps_changes_nothing() {
+        let (_c2, rot2) = rotation_entry(&Dek::random(), 2);
+        let (_c3, rot3) = rotation_entry(&Dek::random(), 3);
+        let entries = VaultEntries {
+            mine: vec![MyEntry::try_from(my_entry_for(&Dek::random(), 1, "member-pw")).unwrap()],
+            recovery: vec![],
+            rotation: vec![rot2, rot3],
+        };
+        assert_eq!(
+            err_of(rotation_redeem_entries(
+                &entries,
+                "AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AA",
+                "member-pw"
+            )),
+            "invalid rotation code"
+        );
+        assert_eq!(
+            pending_rotation_generations(&entries),
+            vec![2, 3],
+            "both stay pending"
+        );
+    }
+
+    #[test]
+    fn a_wrong_rotation_code_is_refused_and_nothing_pending_is_an_error() {
+        let new_dek = Dek::random();
+        let (_code, wrap) = make_invite_wrap(&new_dek, 2);
+        let entries = VaultEntries {
+            mine: vec![MyEntry::try_from(my_entry_for(&Dek::random(), 1, "pw")).unwrap()],
+            recovery: vec![],
+            rotation: vec![MyEntry::try_from(MyEntryWire {
+                generation: 2,
+                kdf_params: wrap.kdf_params,
+                dek_wrapped: wrap.dek_wrapped,
+                dek_check: wrap.dek_check,
+            })
+            .unwrap()],
+        };
+        assert_eq!(
+            err_of(rotation_redeem_entries(
+                &entries,
+                "AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AA",
+                "pw"
+            )),
+            "invalid rotation code"
+        );
+        assert_eq!(
+            err_of(rotation_redeem_entries(
+                &VaultEntries::default(),
+                "AAAA",
+                "pw"
+            )),
+            "no rotation pending"
+        );
+    }
+
+    #[test]
+    fn the_creator_fills_in_the_recovery_wrap_a_foreign_rotation_left_out() {
+        let d1 = Dek::random();
+        let d2 = Dek::random();
+        let (base, recovery_key) = creator_entries(&d1, "owner-pw");
+        // Someone else rotated: generation 2 has a wrap for us, but no
+        // recovery wrap anywhere.
+        let entries = merge_my_entry(&base, my_entry_for(&d2, 2, "owner-pw")).unwrap();
+        assert_eq!(generations_missing_recovery(&entries), vec![2]);
+
+        assert_eq!(
+            err_of(recovery_followup(&entries, &[], "AAAAA-BBBBB-CCCCC")),
+            "wrong recovery key"
+        );
+        // A generation the ring cannot open is skipped rather than failing.
+        assert!(recovery_followup(&entries, &[], &recovery_key)
+            .unwrap()
+            .is_empty());
+
+        let deks = vec![(1, d1.clone()), (2, d2.clone())];
+        let payloads = recovery_followup(&entries, &deks, &recovery_key).unwrap();
+        assert_eq!(payloads.len(), 1);
+        let (generation, payload) = &payloads[0];
+        assert_eq!(*generation, 2);
+
+        let filled = merge_recovery_entry(&entries, *generation, payload).unwrap();
+        assert!(generations_missing_recovery(&filled).is_empty());
+        let opened = unlock_entries_with_recovery(&filled, &recovery_key).unwrap();
+        assert_eq!(
+            opened.iter().map(|(g, _)| *g).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        assert_eq!(opened[1].1.expose(), d2.expose());
+    }
+
+    #[test]
+    fn the_status_flags_surface_a_pending_code_and_a_missing_recovery_wrap() {
+        let s = test_support::store();
+        let d1 = Dek::random();
+        let (base, _rk) = creator_entries(&d1, "owner-pw");
+
+        // The creator, everything in order.
+        s.set_vault_entries(&base.to_json()).unwrap();
+        let flags = vault_status_flags(&s, true).unwrap();
+        assert!(!flags.rotation_code && !flags.recovery_missing);
+
+        // Someone else rotated: our own wrap for generation 2 arrived, its
+        // recovery wrap did not.
+        let with_gen2 = merge_my_entry(&base, my_entry_for(&Dek::random(), 2, "owner-pw")).unwrap();
+        s.set_vault_entries(&with_gen2.to_json()).unwrap();
+        let flags = vault_status_flags(&s, true).unwrap();
+        assert!(flags.recovery_missing && !flags.rotation_code);
+        assert!(
+            !vault_status_flags(&s, false).unwrap().recovery_missing,
+            "a local context has no workspace recovery wraps to fill in"
+        );
+
+        // A member waiting to redeem their rotation code.
+        let s2 = test_support::store();
+        let (_code, wrap) = make_invite_wrap(&Dek::random(), 2);
+        s2.set_vault_entries(
+            &serde_json::json!({
+                "mine": [my_entry_for(&d1, 1, "member-pw")],
+                "recovery": [],
+                "rotation": [{
+                    "generation": 2,
+                    "kdfParams": serde_json::to_value(&wrap.kdf_params).unwrap(),
+                    "dekWrapped": wrap.dek_wrapped,
+                    "dekCheck": wrap.dek_check,
+                }],
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let flags = vault_status_flags(&s2, true).unwrap();
+        assert!(flags.rotation_code && !flags.recovery_missing);
+    }
+
+    #[test]
+    fn reseal_moves_lagging_notes_to_the_newest_generation_in_batches() {
+        let mut s = Store::open_in_memory().unwrap();
+        crate::migrate::run_migrations(&s.conn).unwrap();
+        s.sync_enabled = true;
+        let (d1, d2) = (Dek::random(), Dek::random());
+        let mut vault = VaultState::default();
+        vault.unlock(1, d1.clone());
+        for id in ["a", "b", "c"] {
+            s.save_note(&Note {
+                id: id.into(),
+                content: format!("<p>{id}</p>"),
+                updated_at: 1,
+                ..Default::default()
+            })
+            .unwrap();
+            s.set_note_protected(id, true).unwrap();
+            encrypt_note_in_place(&s, id, &d1, 1).unwrap();
+        }
+        let ts: Vec<_> = s
+            .load_dirty_notes()
+            .unwrap()
+            .iter()
+            .map(|n| (n.id.clone(), n.updated_at))
+            .collect();
+        s.clear_note_dirty(&ts).unwrap();
+        vault.unlock(2, d2.clone());
+        assert_eq!(reseal_lagging_notes(&s, &vault, 2).unwrap(), 2);
+        assert_eq!(reseal_lagging_notes(&s, &vault, 2).unwrap(), 1);
+        assert_eq!(reseal_lagging_notes(&s, &vault, 2).unwrap(), 0);
+        for id in ["a", "b", "c"] {
+            assert_eq!(s.note_key_gen(id).unwrap(), Some(2));
+            assert_eq!(
+                open_note_content(&s, &vault, id).unwrap(),
+                format!("<p>{id}</p>")
+            );
+        }
+        assert_eq!(
+            s.load_dirty_notes().unwrap().len(),
+            3,
+            "resealed notes are pushed"
+        );
+        let mut only_old = VaultState::default();
+        only_old.unlock(1, d1);
+        assert!(
+            open_note_content(&s, &only_old, "a").is_err(),
+            "sealed under the new generation now"
+        );
+    }
+
+    #[test]
+    fn notes_predating_the_generation_column_are_only_stamped_never_re_sealed() {
+        // Schema v15 added `key_gen` without backfilling it, and NULL reads as
+        // generation 1. At newest = 1 those rows are NOT lagging: re-sealing
+        // them would burn a new nonce on the same key, dirty the row and move
+        // its "last edited" date for nothing.
+        let mut s = Store::open_in_memory().unwrap();
+        crate::migrate::run_migrations(&s.conn).unwrap();
+        s.sync_enabled = true;
+        let d1 = Dek::random();
+        let mut vault = VaultState::default();
+        vault.unlock(1, d1.clone());
+        for id in ["a", "b", "c"] {
+            s.save_note(&Note {
+                id: id.into(),
+                content: format!("<p>{id}</p>"),
+                updated_at: 1,
+                ..Default::default()
+            })
+            .unwrap();
+            s.set_note_protected(id, true).unwrap();
+            encrypt_note_in_place(&s, id, &d1, 1).unwrap();
+            s.set_note_key_gen(id, None).unwrap(); // the pre-v15 state
+        }
+        let ts: Vec<_> = s
+            .load_dirty_notes()
+            .unwrap()
+            .iter()
+            .map(|n| (n.id.clone(), n.updated_at))
+            .collect();
+        s.clear_note_dirty(&ts).unwrap();
+        let updated_at_of = |store: &Store, id: &str| -> i64 {
+            store
+                .load_notes()
+                .unwrap()
+                .into_iter()
+                .find(|n| n.id == id)
+                .expect("the note is there")
+                .updated_at
+        };
+        let before: Vec<_> = ["a", "b", "c"]
+            .iter()
+            .map(|id| {
+                (
+                    s.load_note_content(id).unwrap().unwrap(),
+                    updated_at_of(&s, id),
+                )
+            })
+            .collect();
+
+        assert_eq!(reseal_lagging_notes(&s, &vault, 25).unwrap(), 3);
+
+        for (i, id) in ["a", "b", "c"].iter().enumerate() {
+            assert_eq!(s.note_key_gen(id).unwrap(), Some(1), "stamped");
+            assert_eq!(
+                s.load_note_content(id).unwrap().unwrap(),
+                before[i].0,
+                "ciphertext byte-identical — not re-sealed"
+            );
+            assert_eq!(
+                updated_at_of(&s, id),
+                before[i].1,
+                "the note was not edited"
+            );
+            assert_eq!(
+                open_note_content(&s, &vault, id).unwrap(),
+                format!("<p>{id}</p>")
+            );
+        }
+        assert!(
+            s.load_dirty_notes().unwrap().is_empty(),
+            "nothing to push — the sweep changed no content"
+        );
+        // The work list drained, so the next cycle does nothing at all.
+        assert_eq!(reseal_lagging_notes(&s, &vault, 25).unwrap(), 0);
+    }
+
+    #[test]
+    fn reseal_skips_a_locked_vault_and_generations_this_ring_cannot_open() {
+        let s = test_support::store();
+        let d1 = Dek::random();
+        seed(&s, "a", "<p>a</p>");
+        s.set_note_protected("a", true).unwrap();
+        encrypt_note_in_place(&s, "a", &d1, 1).unwrap();
+
+        assert_eq!(
+            reseal_lagging_notes(&s, &VaultState::default(), 10).unwrap(),
+            0,
+            "locked: nothing to seal with"
+        );
+
+        // A member who joined at generation 2 never saw generation 1's DEK.
+        let mut only_new = VaultState::default();
+        only_new.unlock(2, Dek::random());
+        assert_eq!(reseal_lagging_notes(&s, &only_new, 10).unwrap(), 0);
+        assert_eq!(s.note_key_gen("a").unwrap(), Some(1), "left untouched");
+    }
+
+    #[test]
+    fn a_cache_only_device_is_told_to_unlock_rather_than_set_up() {
+        let s = test_support::store();
+        assert!(!server_vault_needs_unlock(&s).unwrap());
+
+        s.set_vault_entries(
+            &serde_json::json!({"mine": [my_entry_for(&Dek::random(), 2, "pw")]}).to_string(),
+        )
+        .unwrap();
+        assert!(server_vault_needs_unlock(&s).unwrap());
+
+        // A device with a record of its own is not in that situation.
+        let s2 = test_support::store();
+        vault_setup(&s2, "pw").unwrap();
+        assert!(!server_vault_needs_unlock(&s2).unwrap());
     }
 }
 

@@ -1104,6 +1104,12 @@ pub async fn run_sync_cycle(app: &AppHandle) -> Result<(), String> {
                 let s = store_state.lock().map_err(|e| e.to_string())?;
                 ops::commit_sync_result(&s, &note_ids, &folder_ids, &pull, now_ms())?;
             }
+            // Lazy re-seal onto the newest key generation. Non-fatal, like
+            // the migration and image phases below: the notes are already
+            // committed, and the work list survives to the next cycle.
+            if let Err(e) = reseal_after_pull(app) {
+                eprintln!("vault re-seal skipped: {e}");
+            }
             broadcast_context_changed(app); // refresh the UI from the updated cache
                                             // A vault set up while this context was local (or offline)
                                             // joins the workspace here. Non-fatal — a network failure is
@@ -1160,6 +1166,39 @@ pub fn notes_search_all(
         ops::registry_contexts(&r)
     };
     Ok(ops::search_all_contexts(&contexts, &query, unlocked))
+}
+
+/// How many lagging notes one sync cycle re-seals. Small on purpose: each one
+/// is an open + a seal under the Store lock, and the rows it dirties are
+/// pushed by the NEXT cycle, so the work spreads over several cycles instead
+/// of stalling one.
+const RESEAL_BATCH: usize = 25;
+
+/// After a successful pull: move a batch of protected notes still sealed under
+/// an older key generation onto the newest one this device has unlocked.
+///
+/// Skipped entirely while the vault is locked (no DEK to seal with) and while
+/// the workspace's generation is AHEAD of the ring — that device has not
+/// redeemed its rotation code yet, so re-sealing to its own older newest
+/// generation would be a step backwards.
+///
+/// Takes the Store lock and then the VaultState lock — the allowed direction,
+/// never the reverse — and no lock is held across an `.await`.
+fn reseal_after_pull(app: &AppHandle) -> Result<(), String> {
+    let store_state = app.state::<Mutex<Store>>();
+    let vault_state = app.state::<Mutex<crate::vault::state::VaultState>>();
+    let store = store_state.lock().map_err(|e| e.to_string())?;
+    let vault = vault_state.lock().map_err(|e| e.to_string())?;
+    if !vault.is_unlocked() {
+        return Ok(());
+    }
+    let server_generation = crate::migrate::get_meta_i64(&store.conn, "vault_generation", 0);
+    let newest = i64::from(vault.newest_generation().unwrap_or(0));
+    if server_generation > newest {
+        return Ok(());
+    }
+    ops::reseal_lagging_notes(&store, &vault, RESEAL_BATCH)?;
+    Ok(())
 }
 
 /// After a successful sync round-trip: put a local-only vault record onto the
@@ -1353,6 +1392,8 @@ pub fn vault_status(
         unlocked,
         conflict: flags.conflict,
         recovery_holder: flags.recovery_holder,
+        rotation_code: flags.rotation_code,
+        recovery_missing: flags.recovery_missing,
         // Biometric unlock is offered only when the device can evaluate Touch
         // ID (`is_available`) AND the user has enrolled a wrapped DEK
         // (`is_enrolled`). `is_enrolled` reads the keychain without prompting.
@@ -1447,6 +1488,15 @@ pub async fn vault_setup(app: AppHandle, passphrase: String) -> Result<Vec<Strin
 
     let (groups, dek, payload) = {
         let store = store_state.lock().map_err(|e| e.to_string())?;
+        // A device that only holds the workspace's wrapped key has no record
+        // of its own, so `ops::vault_setup` would refuse it with the generic
+        // "a vault already exists" — when the actionable truth is that the
+        // vault is on the server and simply needs unlocking.
+        if ops::server_vault_needs_unlock(&store)? {
+            return Err(
+                "vault: already set up on the server — unlock with your passphrase".to_string(),
+            );
+        }
         let (groups, dek) = ops::vault_setup(&store, &passphrase)?;
         let payload = match target.is_some() {
             true => Some(ops::migration_payload(&ops::load_vault_record(&store)?)?),
@@ -1777,6 +1827,243 @@ pub async fn vault_invite_accept(
     // The vault this context just gained is invisible to the frontend
     // otherwise: `App` only re-reads `vault_status` on this event, and a stale
     // `exists: false` would route the next "protect" into vault SETUP.
+    broadcast_context_changed(&app);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Vault key rotation
+//
+// After a member is removed the workspace's key has to change. Only a client
+// can do that — the server never sees a DEK — so the owner mints a new one
+// here, wraps it for every remaining member under a one-time ROTATION code,
+// and reads those codes out. Members redeem theirs with their own
+// passphrase; older ciphertext moves over lazily in the sync cycle
+// (`ops::reseal_lagging_notes`).
+//
+// Nothing secret is logged or persisted: the codes exist only in the value
+// this command returns, the DEK only in `VaultState`.
+// ---------------------------------------------------------------------------
+
+/// The active server context's vault endpoint, or an error explaining why
+/// rotation does not apply here — a key generation belongs to a workspace.
+fn vault_rotation_target(
+    app: &AppHandle,
+) -> Result<(crate::profiles::ContextEntry, String), String> {
+    vault_server_target(app)?.ok_or_else(|| "vault: rotation needs a server workspace".to_string())
+}
+
+/// One remaining member and the one-time code that opens their new wrap.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RotationCode {
+    pub user_id: u64,
+    pub code: String,
+}
+
+/// Rotates the workspace vault key: a fresh DEK, wrapped for the caller under
+/// `passphrase` and for every other member under a freshly generated one-time
+/// code, plus the recovery wrap when the caller holds the recovery key (which
+/// only the vault's creator does — for everyone else the creator adds it
+/// afterwards, see [`vault_recovery_followup`]).
+///
+/// Requires the vault unlocked and the workspace actually asking for a
+/// rotation (meta `vault_rotation_pending`, set by the pull after a member was
+/// removed). Both secrets are verified against the cached wraps BEFORE
+/// anything is minted, so a typo cannot strand the workspace on a generation
+/// this device cannot open.
+///
+/// The returned codes are the only copy that will ever exist — they are never
+/// stored, logged, or sent anywhere.
+#[tauri::command]
+pub async fn vault_rotate(
+    app: AppHandle,
+    passphrase: String,
+    recovery_key: Option<String>,
+) -> Result<Vec<RotationCode>, String> {
+    let (ctx, token) = vault_rotation_target(&app)?;
+    let store_state = app.state::<Mutex<Store>>();
+    let vault_state = app.state::<Mutex<crate::vault::state::VaultState>>();
+
+    if !vault_state.lock().map_err(|e| e.to_string())?.is_unlocked() {
+        return Err("vault locked".to_string());
+    }
+
+    let (entries, generation) = {
+        let store = store_state.lock().map_err(|e| e.to_string())?;
+        if crate::migrate::get_meta_i64(&store.conn, "vault_rotation_pending", 0) == 0 {
+            return Err("no rotation pending".to_string());
+        }
+        let entries = ops::cached_vault_entries(&store)?
+            .ok_or_else(|| "vault: no workspace keys".to_string())?;
+        let generation = u32::try_from(crate::migrate::get_meta_i64(
+            &store.conn,
+            "vault_generation",
+            0,
+        ))
+        .unwrap_or(0);
+        (entries, generation)
+    };
+
+    ops::verify_newest_passphrase(&entries, &passphrase)?;
+    // Only the creator holds recovery wraps; when they rotate, the new
+    // generation gets its recovery wrap in the same request.
+    let recovery = match entries.recovery.is_empty() {
+        true => None,
+        false => {
+            let key = recovery_key.ok_or_else(|| "vault: recovery key required".to_string())?;
+            ops::verify_recovery_key(&entries, &key)?;
+            Some(key)
+        }
+    };
+
+    let me = crate::sync::fetch_me(&ctx.server_url, &token)
+        .await
+        .map_err(|e| e.to_string())?;
+    let members = crate::sync::fetch_members(&ctx.server_url, &token, &ctx.workspace_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    let others: Vec<u64> = members
+        .iter()
+        .map(|(id, _)| *id)
+        .filter(|id| *id != me)
+        .collect();
+
+    let new_generation = generation.saturating_add(1);
+    let new_dek = crate::vault::aead::Dek::random();
+    let (payload, codes) = ops::rotation_payload(
+        new_generation,
+        &new_dek,
+        (me, &passphrase),
+        &others,
+        recovery.as_deref(),
+    )?;
+    let own_entry = payload
+        .own_entry()
+        .ok_or_else(|| "vault: rotation payload has no own key".to_string())?;
+
+    crate::sync::vault_rotate(&ctx.server_url, &token, &ctx.workspace_id, &payload)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    {
+        let store = store_state.lock().map_err(|e| e.to_string())?;
+        let cached = ops::cached_vault_entries(&store)?.unwrap_or_default();
+        let merged = ops::merge_my_entry(&cached, own_entry)?;
+        let merged = match &payload.recovery {
+            Some(r) => ops::merge_recovery_entry(&merged, new_generation, r)?,
+            None => merged,
+        };
+        store
+            .set_vault_entries(&merged.to_json())
+            .map_err(|e| e.to_string())?;
+        crate::migrate::set_meta_i64(&store.conn, "vault_generation", i64::from(new_generation))
+            .map_err(|e| e.to_string())?;
+        crate::migrate::delete_meta(&store.conn, "vault_rotation_pending")
+            .map_err(|e| e.to_string())?;
+    }
+    vault_state
+        .lock()
+        .map_err(|e| e.to_string())?
+        .unlock(new_generation, new_dek);
+    broadcast_context_changed(&app);
+
+    Ok(codes
+        .into_iter()
+        .map(|(user_id, code)| RotationCode { user_id, code })
+        .collect())
+}
+
+/// Redeems the one-time rotation code a rotating owner handed this member:
+/// opens every wrap parked for them, immediately re-wraps each DEK under
+/// their own `passphrase`, and hands that to the server — which turns the
+/// rotation wrap into their key row and deletes it, spending the code.
+///
+/// Nothing is cached before the server accepted the member's own wrap, so a
+/// failure leaves this device exactly as it was.
+#[tauri::command]
+pub async fn vault_rotation_redeem(
+    app: AppHandle,
+    code: String,
+    passphrase: String,
+) -> Result<(), String> {
+    let (ctx, token) = vault_rotation_target(&app)?;
+    let store_state = app.state::<Mutex<Store>>();
+    let vault_state = app.state::<Mutex<crate::vault::state::VaultState>>();
+
+    if !vault_state.lock().map_err(|e| e.to_string())?.is_unlocked() {
+        return Err("vault locked".to_string());
+    }
+    let entries = {
+        let store = store_state.lock().map_err(|e| e.to_string())?;
+        ops::cached_vault_entries(&store)?.ok_or_else(|| "vault: no workspace keys".to_string())?
+    };
+    ops::verify_newest_passphrase(&entries, &passphrase)?;
+
+    for (generation, dek, entry) in ops::rotation_redeem_entries(&entries, &code, &passphrase)? {
+        crate::sync::vault_put_my_key(&ctx.server_url, &token, &ctx.workspace_id, &entry)
+            .await
+            .map_err(|e| e.to_string())?;
+        {
+            let store = store_state.lock().map_err(|e| e.to_string())?;
+            let cached = ops::cached_vault_entries(&store)?.unwrap_or_default();
+            store
+                .set_vault_entries(&ops::merge_my_entry(&cached, entry)?.to_json())
+                .map_err(|e| e.to_string())?;
+        }
+        vault_state
+            .lock()
+            .map_err(|e| e.to_string())?
+            .unlock(generation, dek);
+    }
+    broadcast_context_changed(&app);
+    Ok(())
+}
+
+/// The creator's follow-up after somebody else rotated: wrap every generation
+/// that still has no recovery wrap under the workspace's recovery key, so the
+/// recovery path keeps opening the whole ring.
+///
+/// Requires the vault unlocked — the DEKs come from the live ring, never from
+/// the recovery key itself — and verifies the key against the cached
+/// generation-1 recovery wrap first.
+#[tauri::command]
+pub async fn vault_recovery_followup(app: AppHandle, recovery_key: String) -> Result<(), String> {
+    let (ctx, token) = vault_rotation_target(&app)?;
+    let store_state = app.state::<Mutex<Store>>();
+    let vault_state = app.state::<Mutex<crate::vault::state::VaultState>>();
+
+    let deks: Vec<(u32, crate::vault::aead::Dek)> = {
+        let v = vault_state.lock().map_err(|e| e.to_string())?;
+        if !v.is_unlocked() {
+            return Err("vault locked".to_string());
+        }
+        v.generations()
+            .into_iter()
+            .filter_map(|g| v.dek_for(Some(g)).map(|d| (g, d.clone())))
+            .collect()
+    };
+    let entries = {
+        let store = store_state.lock().map_err(|e| e.to_string())?;
+        ops::cached_vault_entries(&store)?.ok_or_else(|| "vault: no workspace keys".to_string())?
+    };
+
+    for (generation, payload) in ops::recovery_followup(&entries, &deks, &recovery_key)? {
+        crate::sync::vault_post_recovery(
+            &ctx.server_url,
+            &token,
+            &ctx.workspace_id,
+            generation,
+            &payload,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        let store = store_state.lock().map_err(|e| e.to_string())?;
+        let cached = ops::cached_vault_entries(&store)?.unwrap_or_default();
+        store
+            .set_vault_entries(&ops::merge_recovery_entry(&cached, generation, &payload)?.to_json())
+            .map_err(|e| e.to_string())?;
+    }
     broadcast_context_changed(&app);
     Ok(())
 }

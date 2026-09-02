@@ -3,7 +3,7 @@ import { api } from '../api';
 import type { VaultStatus } from '../types';
 
 export function useVault() {
-  const [status, setStatus] = useState<VaultStatus>({ exists: false, unlocked: false, biometric: false, conflict: false, recoveryHolder: true });
+  const [status, setStatus] = useState<VaultStatus>({ exists: false, unlocked: false, biometric: false, conflict: false, recoveryHolder: true, rotationCode: false, recoveryMissing: false });
 
   const refresh = useCallback(async () => {
     setStatus(await api.vault.status());
@@ -56,5 +56,23 @@ export function useVault() {
     [refresh],
   );
 
-  return { status, refresh, setup, unlock, unlockRecovery, unlockBiometric, lock, changePassphrase };
+  /** Redeem the one-time rotation code the workspace owner handed out. */
+  const redeemRotation = useCallback(
+    async (code: string, passphrase: string) => {
+      await api.vault.rotationRedeem(code, passphrase);
+      await refresh();
+    },
+    [refresh],
+  );
+
+  /** Creator-only: add the recovery wrap for a generation someone else rotated. */
+  const recoveryFollowup = useCallback(
+    async (recoveryKey: string) => {
+      await api.vault.recoveryFollowup(recoveryKey);
+      await refresh();
+    },
+    [refresh],
+  );
+
+  return { status, refresh, setup, unlock, unlockRecovery, unlockBiometric, lock, changePassphrase, redeemRotation, recoveryFollowup };
 }

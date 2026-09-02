@@ -106,6 +106,9 @@ vi.mock("./api", () => ({
       unlockBiometric: vi.fn(() => Promise.resolve()),
       lock: vi.fn(() => Promise.resolve()),
       changePassphrase: vi.fn(() => Promise.resolve()),
+      rotate: vi.fn(() => Promise.resolve([])),
+      rotationRedeem: vi.fn(() => Promise.resolve()),
+      recoveryFollowup: vi.fn(() => Promise.resolve()),
       biometricAvailable: vi.fn(() => Promise.resolve(false)),
       biometricEnable: vi.fn(() => Promise.resolve()),
       biometricDisable: vi.fn(() => Promise.resolve()),
@@ -736,6 +739,51 @@ describe("App — vault dialogs complete the pending protect action", () => {
     fireEvent.click(screen.getByText("Abbrechen"));
     expect(screen.queryByText("Tresor entsperren")).not.toBeInTheDocument();
     expect(api.vault.protectNote).not.toHaveBeenCalled();
+  });
+});
+
+describe("App — rotation code after a Touch ID unlock", () => {
+  // Touch ID types no passphrase, so the unlock dialog cannot redeem the
+  // waiting code itself — App has to take that step over, or the member's
+  // re-sealed notes stay unreadable with no way back in.
+  const locked = {
+    exists: true, unlocked: false, biometric: true, conflict: false,
+    recoveryHolder: true, rotationCode: true, recoveryMissing: false,
+  };
+
+  afterEach(() => {
+    vi.mocked(api.vault.status).mockResolvedValue({ exists: false, unlocked: false, biometric: false });
+  });
+
+  const unlockViaTouchId = async () => {
+    render(<App />);
+    await waitFor(() => screen.getByTitle("Neue Notiz"));
+    fireEvent.click(screen.getByTitle("Neue Notiz"));
+    await waitFor(() => expect(screen.getByText("Ohne Titel")).toBeInTheDocument());
+    fireEvent.contextMenu(screen.getByText("Ohne Titel"));
+    fireEvent.click(screen.getByText("Notiz sperren"));
+    await waitFor(() => expect(api.vault.unlockBiometric).toHaveBeenCalled());
+  };
+
+  it("prompts for the code and redeems it with the passphrase", async () => {
+    vi.mocked(api.vault.status).mockResolvedValue(locked);
+    await unlockViaTouchId();
+
+    expect(await screen.findByText("Wechsel-Code eingeben")).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText("Wechsel-Code"), { target: { value: "AAAA-BBBB" } });
+    fireEvent.change(screen.getByPlaceholderText("Passwort"), { target: { value: "member-pw" } });
+    fireEvent.click(screen.getByText("Schlüssel wechseln"));
+
+    await waitFor(() => expect(api.vault.rotationRedeem).toHaveBeenCalledWith("AAAA-BBBB", "member-pw"));
+    await waitFor(() => expect(screen.queryByText("Wechsel-Code eingeben")).not.toBeInTheDocument());
+  });
+
+  it("does not prompt when no code is waiting", async () => {
+    vi.mocked(api.vault.status).mockResolvedValue({ ...locked, rotationCode: false });
+    await unlockViaTouchId();
+
+    await waitFor(() => expect(api.vault.protectNote).toHaveBeenCalledWith(expect.any(String), true));
+    expect(screen.queryByText("Wechsel-Code eingeben")).not.toBeInTheDocument();
   });
 });
 

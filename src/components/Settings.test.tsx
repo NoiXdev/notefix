@@ -16,6 +16,9 @@ const {
   mockVaultUnlockBiometric,
   mockVaultLock,
   mockVaultChangePassphrase,
+  mockVaultRotate,
+  mockRotationRedeem,
+  mockRecoveryFollowup,
   mockBiometricAvailable,
   mockBiometricEnable,
   mockBiometricDisable,
@@ -49,6 +52,10 @@ const {
   mockVaultUnlockBiometric: vi.fn(() => Promise.resolve()),
   mockVaultLock: vi.fn(() => Promise.resolve()),
   mockVaultChangePassphrase: vi.fn(() => Promise.resolve()),
+  mockVaultRotate: vi.fn((_passphrase: string, _recoveryKey?: string) =>
+    Promise.resolve([{ userId: 2, code: "AAAAA-BBBBB" }, { userId: 3, code: "CCCCC-DDDDD" }])),
+  mockRotationRedeem: vi.fn((_code: string, _passphrase: string) => Promise.resolve()),
+  mockRecoveryFollowup: vi.fn((_recoveryKey: string) => Promise.resolve()),
   mockBiometricAvailable: vi.fn(() => Promise.resolve(false)),
   mockBiometricEnable: vi.fn(() => Promise.resolve()),
   mockBiometricDisable: vi.fn(() => Promise.resolve()),
@@ -92,6 +99,9 @@ vi.mock("../api", () => ({
       unlockBiometric: mockVaultUnlockBiometric,
       lock: mockVaultLock,
       changePassphrase: mockVaultChangePassphrase,
+      rotate: mockVaultRotate,
+      rotationRedeem: mockRotationRedeem,
+      recoveryFollowup: mockRecoveryFollowup,
       biometricAvailable: mockBiometricAvailable,
       biometricEnable: mockBiometricEnable,
       biometricDisable: mockBiometricDisable,
@@ -136,6 +146,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockUseIsMobile.mockReturnValue(false);
   platformState.isMobilePlatform = false;
+  // The full status shape, so a test only has to spell out what it varies.
+  mockVaultStatus.mockResolvedValue({
+    exists: false, unlocked: false, biometric: false, conflict: false,
+    recoveryHolder: true, rotationCode: false, recoveryMissing: false,
+  });
 });
 
 /** Every AppSettings field at its default (mirrors useSettings.ts DEFAULTS), so new tests don't need to hand-roll the whole shape. */
@@ -385,6 +400,100 @@ describe("Settings — Security", () => {
     fireEvent.click(screen.getByText("Sicherheit"));
     await waitFor(() => expect(screen.getByText("Entsperrt")).toBeInTheDocument());
     expect(screen.queryByText(/hatte bereits einen Tresor/)).not.toBeInTheDocument();
+  });
+
+  it("keeps a waiting rotation code reachable from the security page", async () => {
+    // The one surface that survives a Touch ID unlock and a postponed step.
+    mockVaultStatus.mockResolvedValue({
+      exists: true, unlocked: true, biometric: false, conflict: false,
+      recoveryHolder: false, rotationCode: true, recoveryMissing: false,
+    });
+    render(<Settings onClose={vi.fn()} settings={full} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Sicherheit"));
+    await waitFor(() => expect(screen.getByText(/Der Tresorschlüssel hat sich geändert/)).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Wechsel-Code eingeben" }));
+    fireEvent.change(screen.getByPlaceholderText("Wechsel-Code"), { target: { value: "AAAA-BBBB" } });
+    fireEvent.change(screen.getByPlaceholderText("Passwort"), { target: { value: "member-pw" } });
+    fireEvent.click(screen.getByRole("button", { name: "Schlüssel wechseln" }));
+
+    await waitFor(() => expect(mockRotationRedeem).toHaveBeenCalledWith("AAAA-BBBB", "member-pw"));
+    await waitFor(() => expect(screen.queryByPlaceholderText("Wechsel-Code")).not.toBeInTheDocument());
+  });
+
+  it("does not offer to redeem a rotation code while the vault is locked", async () => {
+    // Redeeming re-wraps the new key under the passphrase, so the backend
+    // refuses with "vault locked" — offering the button there would report a
+    // perfectly good one-time code as burnt.
+    mockVaultStatus.mockResolvedValue({
+      exists: true, unlocked: false, biometric: false, conflict: false,
+      recoveryHolder: false, rotationCode: true, recoveryMissing: false,
+    });
+    render(<Settings onClose={vi.fn()} settings={full} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Sicherheit"));
+    await waitFor(() => expect(screen.getByText(/Der Tresorschlüssel hat sich geändert/)).toBeInTheDocument());
+
+    expect(screen.getByText(/Entsperre zuerst den Tresor/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Wechsel-Code eingeben" })).not.toBeInTheDocument();
+    expect(mockRotationRedeem).not.toHaveBeenCalled();
+  });
+
+  it("shows no rotation-code banner when nothing is waiting", async () => {
+    mockVaultStatus.mockResolvedValue({
+      exists: true, unlocked: true, biometric: false, conflict: false,
+      recoveryHolder: true, rotationCode: false, recoveryMissing: false,
+    });
+    render(<Settings onClose={vi.fn()} settings={full} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Sicherheit"));
+    await waitFor(() => expect(screen.getByText("Entsperrt")).toBeInTheDocument());
+    expect(screen.queryByText(/Der Tresorschlüssel hat sich geändert/)).not.toBeInTheDocument();
+  });
+
+  it("lets the recovery-key holder fill in the wrap a foreign key change left out", async () => {
+    mockVaultStatus.mockResolvedValue({
+      exists: true, unlocked: true, biometric: false, conflict: false,
+      recoveryHolder: true, rotationCode: false, recoveryMissing: true,
+    });
+    render(<Settings onClose={vi.fn()} settings={full} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Sicherheit"));
+    await waitFor(() => expect(screen.getByText(/fehlt noch die Hinterlegung/)).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Wiederherstellungsschlüssel ergänzen" }));
+    const keyField = screen.getByPlaceholderText("Wiederherstellungs-Schlüssel");
+    fireEvent.change(keyField, { target: { value: "AAAAA-BBBBB-CCCCC" } });
+    fireEvent.keyDown(keyField, { key: "Enter" });
+
+    await waitFor(() => expect(mockRecoveryFollowup).toHaveBeenCalledWith("AAAAA-BBBBB-CCCCC"));
+    expect(await screen.findByText("Wiederherstellungsschlüssel aktualisiert")).toBeInTheDocument();
+  });
+
+  it("reports a rejected recovery key without claiming anything changed", async () => {
+    mockVaultStatus.mockResolvedValue({
+      exists: true, unlocked: true, biometric: false, conflict: false,
+      recoveryHolder: true, rotationCode: false, recoveryMissing: true,
+    });
+    mockRecoveryFollowup.mockRejectedValueOnce(new Error("wrong recovery key"));
+    render(<Settings onClose={vi.fn()} settings={full} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Sicherheit"));
+    await waitFor(() => expect(screen.getByText(/fehlt noch die Hinterlegung/)).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Wiederherstellungsschlüssel ergänzen" }));
+    const keyField = screen.getByPlaceholderText("Wiederherstellungs-Schlüssel");
+    fireEvent.change(keyField, { target: { value: "nope" } });
+    fireEvent.keyDown(keyField, { key: "Enter" });
+
+    expect(await screen.findByText(/konnte nicht ergänzt werden/)).toBeInTheDocument();
+  });
+
+  it("shows no recovery-wrap hint when every generation has one", async () => {
+    mockVaultStatus.mockResolvedValue({
+      exists: true, unlocked: true, biometric: false, conflict: false,
+      recoveryHolder: true, rotationCode: false, recoveryMissing: false,
+    });
+    render(<Settings onClose={vi.fn()} settings={full} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Sicherheit"));
+    await waitFor(() => expect(screen.getByText("Entsperrt")).toBeInTheDocument());
+    expect(screen.queryByText(/fehlt noch die Hinterlegung/)).not.toBeInTheDocument();
   });
 
   it("offers the recovery key only to a recovery holder", async () => {
@@ -955,6 +1064,78 @@ describe("Settings — Contexts page", () => {
     // Exactly one row (the active server one) gets each action; the local row gets neither.
     expect(screen.getAllByRole("button", { name: "Tresor freigeben" })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Einladungs-Code eingeben" })).toHaveLength(1);
+  });
+
+  it("offers the key change only on the active workspace context with an unlocked vault", async () => {
+    mockContextsList.mockResolvedValue(serverActive);
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Kontexte"));
+    await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+
+    // Locked (the beforeEach default): the new key would have nowhere to go.
+    expect(screen.queryByRole("button", { name: "Schlüssel jetzt wechseln" })).not.toBeInTheDocument();
+  });
+
+  it("rotates the key and shows one one-time code per remaining member", async () => {
+    mockVaultStatus.mockResolvedValue({
+      exists: true, unlocked: true, biometric: false, conflict: false,
+      recoveryHolder: false, rotationCode: false, recoveryMissing: false,
+    });
+    mockContextsList.mockResolvedValue(serverActive);
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Kontexte"));
+    await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+
+    fireEvent.click(await screen.findByRole("button", { name: "Schlüssel jetzt wechseln" }));
+    // No recovery key field for a member who does not hold one.
+    expect(screen.queryByPlaceholderText("Wiederherstellungs-Schlüssel")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText("Passwort"), { target: { value: "owner-pw" } });
+    fireEvent.click(screen.getByRole("button", { name: "Schlüssel wechseln" }));
+
+    await waitFor(() => expect(mockVaultRotate).toHaveBeenCalledWith("owner-pw", undefined));
+    expect(await screen.findByText("AAAAA-BBBBB")).toBeInTheDocument();
+    expect(screen.getByText("CCCCC-DDDDD")).toBeInTheDocument();
+    expect(screen.getByText("Mitglied 2")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Fertig" }));
+    await waitFor(() => expect(screen.queryByText("AAAAA-BBBBB")).not.toBeInTheDocument());
+  });
+
+  it("asks the recovery-key holder for it so the new key stays recoverable", async () => {
+    mockVaultStatus.mockResolvedValue({
+      exists: true, unlocked: true, biometric: false, conflict: false,
+      recoveryHolder: true, rotationCode: false, recoveryMissing: false,
+    });
+    mockContextsList.mockResolvedValue(serverActive);
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Kontexte"));
+    await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+
+    fireEvent.click(await screen.findByRole("button", { name: "Schlüssel jetzt wechseln" }));
+    fireEvent.change(screen.getByPlaceholderText("Passwort"), { target: { value: "owner-pw" } });
+    fireEvent.change(screen.getByPlaceholderText("Wiederherstellungs-Schlüssel"), { target: { value: "AAAAA-BBBBB-CCCCC" } });
+    fireEvent.click(screen.getByRole("button", { name: "Schlüssel wechseln" }));
+
+    await waitFor(() => expect(mockVaultRotate).toHaveBeenCalledWith("owner-pw", "AAAAA-BBBBB-CCCCC"));
+  });
+
+  it("reports a wrong passphrase from the key change without minting anything", async () => {
+    mockVaultStatus.mockResolvedValue({
+      exists: true, unlocked: true, biometric: false, conflict: false,
+      recoveryHolder: false, rotationCode: false, recoveryMissing: false,
+    });
+    mockContextsList.mockResolvedValue(serverActive);
+    mockVaultRotate.mockRejectedValueOnce(new Error("wrong passphrase"));
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Kontexte"));
+    await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+
+    fireEvent.click(await screen.findByRole("button", { name: "Schlüssel jetzt wechseln" }));
+    fireEvent.change(screen.getByPlaceholderText("Passwort"), { target: { value: "nope" } });
+    fireEvent.click(screen.getByRole("button", { name: "Schlüssel wechseln" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Falsches Passwort");
+    expect(screen.queryByText("AAAAA-BBBBB")).not.toBeInTheDocument();
   });
 
   it("hides the invite actions when no server context is active", async () => {

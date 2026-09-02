@@ -130,6 +130,18 @@ export const api = {
     lock: (): Promise<void> => invoke("vault_lock"),
     changePassphrase: (current: string, next: string): Promise<void> =>
       invoke("vault_change_passphrase", { current, next }),
+    /**
+     * Rotate the workspace key after a member was removed. Returns one
+     * one-time code per remaining member — shown once, stored nowhere.
+     */
+    rotate: (passphrase: string, recoveryKey?: string): Promise<import("./types").RotationCode[]> =>
+      invoke("vault_rotate", { passphrase, recoveryKey: recoveryKey ?? null }),
+    /** Redeem the rotation code the owner handed out, under one's own passphrase. */
+    rotationRedeem: (code: string, passphrase: string): Promise<void> =>
+      invoke("vault_rotation_redeem", { code, passphrase }),
+    /** Creator-only: add the recovery wrap for a generation someone else rotated. */
+    recoveryFollowup: (recoveryKey: string): Promise<void> =>
+      invoke("vault_recovery_followup", { recoveryKey }),
     biometricAvailable: (): Promise<boolean> => invoke("vault_biometric_available"),
     biometricEnable: (): Promise<void> => invoke("vault_biometric_enable"),
     biometricDisable: (): Promise<void> => invoke("vault_biometric_disable"),

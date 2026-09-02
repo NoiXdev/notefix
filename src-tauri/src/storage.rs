@@ -893,9 +893,15 @@ impl Store {
         Ok(())
     }
 
-    /// Protected notes sealed under an older generation than `gen` (or an
-    /// unknown one), oldest first — the lazy re-seal work list.
-    #[allow(dead_code)] // wired into vault/rotation commands by a later task
+    /// Protected notes sealed under an older generation than `gen`, oldest
+    /// first — the lazy re-seal work list (`ops::reseal_lagging_notes`,
+    /// driven by the sync cycle).
+    ///
+    /// A NULL `key_gen` is listed too: schema v15 added the column without
+    /// backfilling it. Such a row is NOT necessarily lagging — NULL reads as
+    /// generation 1 everywhere — so it is listed to be STAMPED, and
+    /// `reseal_lagging_notes` re-seals it only when generation 1 really is
+    /// behind the ring's newest.
     pub fn notes_with_key_gen_below(
         &self,
         gen: u32,

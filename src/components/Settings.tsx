@@ -7,7 +7,7 @@ import { faAndroid, faApple, faGooglePlay } from "@fortawesome/free-brands-svg-i
 import { api, type AppInfo, type UpdateInfo, type ReleaseInfo } from "../api";
 import type { ContextInfo } from "../contexts";
 import { startServerAuth } from "../serverAuth";
-import type { Stats } from "../types";
+import type { Stats, RotationCode } from "../types";
 import type { DateFormat } from "../dates";
 import type { AppSettings } from "../hooks/useSettings";
 import { useVault } from "../hooks/useVault";
@@ -20,6 +20,9 @@ import VaultSetup from "./VaultSetup";
 import VaultUnlock from "./VaultUnlock";
 import VaultInviteCodeDialog from "./VaultInviteCodeDialog";
 import VaultAcceptInviteDialog from "./VaultAcceptInviteDialog";
+import VaultRotateDialog from "./VaultRotateDialog";
+import VaultRotationCodesDialog from "./VaultRotationCodesDialog";
+import VaultRotationRedeemDialog from "./VaultRotationRedeemDialog";
 import WhatsNew from "./WhatsNew";
 import { runSystemChecks } from "../systemChecks";
 import { OSS_LIBS } from "../licenses";
@@ -250,6 +253,9 @@ function SecurityPage({ settings, onSetSetting }: {
   const [showUnlockForBiometric, setShowUnlockForBiometric] = useState(false);
   const [showChangePass, setShowChangePass] = useState(false);
   const [activeContextLabel, setActiveContextLabel] = useState<string | null>(null);
+  const [showRecoveryFollowup, setShowRecoveryFollowup] = useState(false);
+  const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null);
+  const [showRotationRedeem, setShowRotationRedeem] = useState(false);
 
   useEffect(() => {
     api.vault.biometricAvailable().then(setBiometricAvailable);
@@ -309,6 +315,57 @@ function SecurityPage({ settings, onSetSetting }: {
         >
           {t("vault.conflict.hint")}
         </div>
+      )}
+
+      {/* The one surface that survives every way in: a member who unlocked
+          with Touch ID (which types no passphrase) or postponed the step
+          during the unlock still finds their rotation code here.
+
+          Redeeming re-wraps the new key under the passphrase and needs the
+          vault open, so a locked vault gets the hint instead of the button —
+          the backend would refuse with "vault locked", and a one-time code
+          the user hand-carried must never be reported as burnt. */}
+      {vault.status.rotationCode && (
+        <div
+          role="status"
+          className="mb-6 rounded border px-3 py-2 text-sm flex flex-wrap items-center gap-3"
+          style={{ borderColor: "#d97706", background: "#fffbeb", color: "#7c2d12" }}
+        >
+          <span>{t("vault.rotation.codeBanner")}</span>
+          {vault.status.unlocked ? (
+            <button
+              onClick={() => setShowRotationRedeem(true)}
+              className="px-3 py-1 rounded text-xs font-medium border"
+              style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}
+            >
+              {t("vault.rotation.enterCode")}
+            </button>
+          ) : (
+            <span className="text-xs">{t("vault.rotation.lockedHint")}</span>
+          )}
+        </div>
+      )}
+
+      {/* Somebody else rotated the key: only the holder of the recovery key
+          can carry it over to the new generation, so only they see this. */}
+      {vault.status.recoveryMissing && (
+        <div
+          role="status"
+          className="mb-6 rounded border px-3 py-2 text-sm flex flex-wrap items-center gap-3"
+          style={{ borderColor: "#d97706", background: "#fffbeb", color: "#7c2d12" }}
+        >
+          <span>{t("vault.recovery.missing")}</span>
+          <button
+            onClick={() => { setRecoveryNotice(null); setShowRecoveryFollowup(true); }}
+            className="px-3 py-1 rounded text-xs font-medium border"
+            style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}
+          >
+            {t("vault.recovery.submit")}
+          </button>
+        </div>
+      )}
+      {recoveryNotice && (
+        <div role="status" className="mb-6 text-sm text-gray-600">{recoveryNotice}</div>
       )}
 
       <SettingsTabs tabs={tabs} active={tab} onChange={id => setTab(id as "vault" | "autoLock")} />
@@ -414,6 +471,30 @@ function SecurityPage({ settings, onSetSetting }: {
         <ChangePassphraseDialog
           onSubmit={(current, next) => vault.changePassphrase(current, next)}
           onClose={() => setShowChangePass(false)}
+        />
+      )}
+      {showRotationRedeem && (
+        <VaultRotationRedeemDialog
+          redeem={vault.redeemRotation}
+          onSuccess={() => setShowRotationRedeem(false)}
+          onCancel={() => setShowRotationRedeem(false)}
+        />
+      )}
+      {showRecoveryFollowup && (
+        <PromptDialog
+          title={t("vault.recovery.submit")}
+          confirmLabel={t("vault.recovery.submit")}
+          placeholder={t("vault.recoveryKey")}
+          onSubmit={async key => {
+            setShowRecoveryFollowup(false);
+            try {
+              await vault.recoveryFollowup(key);
+              setRecoveryNotice(t("vault.recovery.added"));
+            } catch (e) {
+              setRecoveryNotice(t("vault.recovery.failed", { error: e instanceof Error ? e.message : String(e) }));
+            }
+          }}
+          onCancel={() => setShowRecoveryFollowup(false)}
         />
       )}
     </div>
@@ -971,21 +1052,31 @@ type CtxDialog =
   | { mode: "vault"; c: ContextInfo }
   | { mode: "inviteShare"; c: ContextInfo }
   | { mode: "inviteAccept"; c: ContextInfo }
+  | { mode: "rotate"; c: ContextInfo }
   | null;
 
 function ContextsPage() {
   const { t } = useTranslation();
+  const vault = useVault();
   const [ctx, setCtx] = useState<ContextInfo[]>([]);
   const [dialog, setDialog] = useState<CtxDialog>(null);
   const [deleteFile, setDeleteFile] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [inviteCode, setInviteCode] = useState<string | null>(null);
+  const [rotationCodes, setRotationCodes] = useState<RotationCode[] | null>(null);
 
   // The invite commands act on the ACTIVE server context (they resolve their
   // workspace and tokens from it), so they are only offered on that row —
   // never on some other context the backend would not be talking to.
   const canInvite = (c: ContextInfo) => c.active && c.kind === "server" && c.workspaceId !== "";
+
+  /**
+   * Rotating needs the same active server context as an invite, plus a vault
+   * that is actually open: the new key is minted here and installed into the
+   * live ring, which a locked vault has no place for.
+   */
+  const canRotate = (c: ContextInfo) => canInvite(c) && c.vaultExists && vault.status.unlocked;
 
   /**
    * Resolve whatever was pasted into an invitation id, then attach the key.
@@ -1082,6 +1173,11 @@ function ContextsPage() {
               {canInvite(c) && c.vaultExists && (
                 <button onClick={() => { setError(null); setDialog({ mode: "inviteShare", c }); }} className="px-3 py-1 rounded text-xs font-medium border" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>{t("vault.invite.share")}</button>
               )}
+              {/* Rotation mints a new DEK from the live one, so the vault has
+                  to be unlocked — and it always acts on the active context. */}
+              {canRotate(c) && (
+                <button onClick={() => { setError(null); setDialog({ mode: "rotate", c }); }} className="px-3 py-1 rounded text-xs font-medium border" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>{t("vault.rotation.run")}</button>
+              )}
               {canInvite(c) && (
                 <button onClick={() => { setError(null); setDialog({ mode: "inviteAccept", c }); }} className="px-3 py-1 rounded text-xs font-medium border" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>{t("vault.invite.enter")}</button>
               )}
@@ -1136,6 +1232,17 @@ function ContextsPage() {
         />
       )}
       {inviteCode && <VaultInviteCodeDialog code={inviteCode} onClose={() => setInviteCode(null)} />}
+      {dialog?.mode === "rotate" && (
+        <VaultRotateDialog
+          recoveryHolder={vault.status.recoveryHolder}
+          rotate={(passphrase, recoveryKey) => api.vault.rotate(passphrase, recoveryKey)}
+          onSuccess={codes => { close(); setRotationCodes(codes); void api.contexts.list().then(setCtx); }}
+          onCancel={close}
+        />
+      )}
+      {rotationCodes && (
+        <VaultRotationCodesDialog codes={rotationCodes} onClose={() => setRotationCodes(null)} />
+      )}
       {dialog?.mode === "inviteAccept" && (
         <VaultAcceptInviteDialog
           resolve={api.contexts.vaultInviteResolve}

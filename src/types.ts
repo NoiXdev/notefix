@@ -75,4 +75,23 @@ export interface VaultStatus {
    * would be a dead end for them.
    */
   recoveryHolder: boolean;
+  /**
+   * The workspace rotated its key and parked this member's new wrap under a
+   * one-time rotation code — the unlock flow asks for it.
+   */
+  rotationCode: boolean;
+  /**
+   * This user holds the recovery key and some key generation has no recovery
+   * wrap yet (somebody else rotated). Only they can add the missing one.
+   */
+  recoveryMissing: boolean;
+}
+
+/**
+ * One remaining member and the one-time code that opens their new wrap after
+ * a key rotation. Shown once, to be handed over out of band — never stored.
+ */
+export interface RotationCode {
+  userId: number;
+  code: string;
 }

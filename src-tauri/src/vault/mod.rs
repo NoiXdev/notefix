@@ -194,6 +194,28 @@ pub fn recovery_only_record(
     }
 }
 
+/// One key generation's recovery half: `(salt, wrapped DEK, DEK check)`.
+pub(crate) type RecoveryWrap = ([u8; 16], Vec<u8>, Vec<u8>);
+
+/// Wraps `dek` under an EXISTING recovery key, exactly the way [`setup`]
+/// builds a vault's recovery half: a fresh random salt, the recovery KDF
+/// params derived from it, and the normalized key as the secret.
+///
+/// Used wherever a new key generation has to gain the workspace's single
+/// recovery wrap after the fact — the rotation payload and the creator's
+/// recovery follow-up (`ops::rotation_payload` / `ops::recovery_followup`).
+pub(crate) fn wrap_under_recovery(
+    dek: &Dek,
+    recovery_key: &str,
+) -> Result<RecoveryWrap, VaultError> {
+    let mut recovery_salt = [0u8; 16];
+    rand::rng().fill_bytes(&mut recovery_salt);
+    let recovery_params = recovery_kdf_params(recovery_salt);
+    let normalized = RecoveryKey::normalize(recovery_key);
+    let wrapped = wrap_dek(&derive_kek(&normalized, &recovery_params)?, dek);
+    Ok((recovery_salt, wrapped, make_dek_check(dek)))
+}
+
 /// Creates a brand-new vault: generates a random DEK, wraps it under both
 /// the given passphrase and a freshly generated recovery key, and returns
 /// the resulting record alongside the one-time recovery key and the DEK
@@ -207,18 +229,15 @@ pub fn setup(passphrase: &str) -> Result<(VaultRecord, RecoveryKey, Dek), VaultE
     let dek_wrapped_pass = wrap_dek(&derive_kek(passphrase, &kdf_params)?, &dek);
 
     let recovery_key = RecoveryKey::generate();
-    let mut recovery_salt = [0u8; 16];
-    rand::rng().fill_bytes(&mut recovery_salt);
-    let recovery_params = recovery_kdf_params(recovery_salt);
-    let normalized_recovery = RecoveryKey::normalize(recovery_key.as_str());
-    let dek_wrapped_recovery = wrap_dek(&derive_kek(&normalized_recovery, &recovery_params)?, &dek);
+    let (recovery_salt, dek_wrapped_recovery, dek_check) =
+        wrap_under_recovery(&dek, recovery_key.as_str())?;
 
     let record = VaultRecord {
         kdf_params,
         dek_wrapped_pass,
         recovery_salt,
         dek_wrapped_recovery,
-        dek_check: Some(make_dek_check(&dek)),
+        dek_check: Some(dek_check),
     };
     Ok((record, recovery_key, dek))
 }

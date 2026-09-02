@@ -25,6 +25,7 @@ import SearchModal from './components/SearchModal';
 import ConfettiEasterEgg from './components/ConfettiEasterEgg';
 import VaultSetup from './components/VaultSetup';
 import VaultUnlock from './components/VaultUnlock';
+import VaultRotationRedeemDialog from './components/VaultRotationRedeemDialog';
 import ConfirmDialog from './components/ConfirmDialog';
 import WhatsNew from './components/WhatsNew';
 import { shouldShowUpdateBanner } from './updateCheck';
@@ -71,6 +72,9 @@ export default function App() {
   const vault = useVault();
   const [pendingProtect, setPendingProtect] = useState<{ kind: 'note' | 'folder'; id: string; next: boolean } | null>(null);
   const [vaultDialog, setVaultDialog] = useState<'setup' | 'unlock' | null>(null);
+  // A Touch ID unlock types no passphrase, so the unlock dialog cannot redeem
+  // a waiting rotation code itself — it hands that back and we prompt here.
+  const [rotationRedeem, setRotationRedeem] = useState(false);
   // A protect that is waiting on the one-time "images stay unencrypted" hint.
   const [imagesHint, setImagesHint] = useState<{ kind: 'note' | 'folder'; id: string; next: boolean } | null>(null);
   // 'perNote' lock scope: notes unlocked this session, so re-locking the note
@@ -702,8 +706,19 @@ export default function App() {
           unlock={vault.unlock}
           unlockRecovery={vault.unlockRecovery}
           unlockBiometric={vault.unlockBiometric}
-          onSuccess={afterUnlockOrSetup}
+          // Read fresh rather than from `vault.status`: the unlock that just
+          // succeeded is what makes the pending code visible in the first place.
+          rotationPending={() => api.vault.status().then(s => s.rotationCode)}
+          redeemRotation={vault.redeemRotation}
+          onSuccess={needsRotationCode => { afterUnlockOrSetup(); if (needsRotationCode) setRotationRedeem(true); }}
           onCancel={cancelVaultDialog}
+        />
+      )}
+      {rotationRedeem && (
+        <VaultRotationRedeemDialog
+          redeem={vault.redeemRotation}
+          onSuccess={() => setRotationRedeem(false)}
+          onCancel={() => setRotationRedeem(false)}
         />
       )}
     </>

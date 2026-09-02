@@ -565,6 +565,42 @@ describe('api.vault', () => {
     );
   });
 
+  it('rotate(passphrase, recoveryKey) calls vault_rotate and returns the one-time codes', async () => {
+    await expectInvoke(
+      () => api.vault.rotate('pw', 'AAAAA-BBBBB'),
+      'vault_rotate',
+      { passphrase: 'pw', recoveryKey: 'AAAAA-BBBBB' },
+      [{ userId: 2, code: 'CCCCC-DDDDD' }],
+    );
+  });
+
+  it('rotate() without a recovery key sends an explicit null', async () => {
+    await expectInvoke(
+      () => api.vault.rotate('pw'),
+      'vault_rotate',
+      { passphrase: 'pw', recoveryKey: null },
+      [],
+    );
+  });
+
+  it('rotationRedeem(code, passphrase) calls vault_rotation_redeem with the exact args', async () => {
+    await expectInvoke(
+      () => api.vault.rotationRedeem('AAAA-BBBB', 'pw'),
+      'vault_rotation_redeem',
+      { code: 'AAAA-BBBB', passphrase: 'pw' },
+      undefined,
+    );
+  });
+
+  it('recoveryFollowup(recoveryKey) calls vault_recovery_followup with { recoveryKey }', async () => {
+    await expectInvoke(
+      () => api.vault.recoveryFollowup('AAAAA-BBBBB'),
+      'vault_recovery_followup',
+      { recoveryKey: 'AAAAA-BBBBB' },
+      undefined,
+    );
+  });
+
   it('biometricAvailable() calls vault_biometric_available with no args', async () => {
     await expectInvoke(() => api.vault.biometricAvailable(), 'vault_biometric_available', undefined, true);
   });

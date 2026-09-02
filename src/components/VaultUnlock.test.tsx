@@ -153,4 +153,82 @@ describe('VaultUnlock — auto-trigger Touch ID on mount', () => {
     await new Promise(r => setTimeout(r, 0));
     expect(unlockBiometric).toHaveBeenCalledOnce();
   });
+  it('asks for the rotation code after unlocking when one is waiting, and redeems it with the same passphrase', async () => {
+    const redeemRotation = vi.fn<(code: string, passphrase: string) => Promise<void>>().mockResolvedValue(undefined);
+    const { onSuccess } = renderUnlock({ rotationPending: () => Promise.resolve(true), redeemRotation });
+
+    fireEvent.change(screen.getByPlaceholderText('Passwort'), { target: { value: 'my-pass' } });
+    fireEvent.click(screen.getByText('Entsperren'));
+
+    expect(await screen.findByText('Wechsel-Code eingeben')).toBeInTheDocument();
+    expect(onSuccess).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByPlaceholderText('Wechsel-Code'), { target: { value: 'AAAA-BBBB' } });
+    fireEvent.click(screen.getByText('Schlüssel wechseln'));
+    await waitFor(() => expect(redeemRotation).toHaveBeenCalledWith('AAAA-BBBB', 'my-pass'));
+    await waitFor(() => expect(onSuccess).toHaveBeenCalledOnce());
+  });
+
+  it('reports a rejected rotation code and keeps the step open', async () => {
+    const redeemRotation = vi.fn<(code: string, passphrase: string) => Promise<void>>()
+      .mockRejectedValue(new Error('invalid rotation code'));
+    const { onSuccess } = renderUnlock({ rotationPending: () => Promise.resolve(true), redeemRotation });
+
+    fireEvent.change(screen.getByPlaceholderText('Passwort'), { target: { value: 'my-pass' } });
+    fireEvent.click(screen.getByText('Entsperren'));
+    fireEvent.change(await screen.findByPlaceholderText('Wechsel-Code'), { target: { value: 'nope' } });
+    fireEvent.click(screen.getByText('Schlüssel wechseln'));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Code ist ungültig oder schon eingelöst');
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(screen.getByText('Wechsel-Code eingeben')).toBeInTheDocument();
+  });
+
+  it('lets the member postpone the rotation code — the vault is already unlocked', async () => {
+    const redeemRotation = vi.fn<(code: string, passphrase: string) => Promise<void>>().mockResolvedValue(undefined);
+    const { onSuccess, onCancel } = renderUnlock({ rotationPending: () => Promise.resolve(true), redeemRotation });
+
+    fireEvent.change(screen.getByPlaceholderText('Passwort'), { target: { value: 'my-pass' } });
+    fireEvent.click(screen.getByText('Entsperren'));
+    fireEvent.click(await screen.findByText('Später'));
+
+    expect(onSuccess).toHaveBeenCalledOnce();
+    expect(onCancel).not.toHaveBeenCalled();
+    expect(redeemRotation).not.toHaveBeenCalled();
+  });
+
+  it('closes straight away when no rotation code is waiting', async () => {
+    const rotationPending = vi.fn<() => Promise<boolean>>().mockResolvedValue(false);
+    const { onSuccess } = renderUnlock({ rotationPending, redeemRotation: vi.fn() });
+    fireEvent.change(screen.getByPlaceholderText('Passwort'), { target: { value: 'my-pass' } });
+    fireEvent.click(screen.getByText('Entsperren'));
+    await waitFor(() => expect(onSuccess).toHaveBeenCalledOnce());
+    expect(rotationPending).toHaveBeenCalledOnce();
+    expect(screen.queryByText('Wechsel-Code eingeben')).not.toBeInTheDocument();
+  });
+  it('hands a waiting rotation code back to the caller after a Touch ID unlock', async () => {
+    // Touch ID types no passphrase, so the in-dialog step cannot re-wrap
+    // anything — the caller prompts for code AND passphrase instead.
+    const rotationPending = vi.fn<() => Promise<boolean>>().mockResolvedValue(true);
+    const redeemRotation = vi.fn<(code: string, passphrase: string) => Promise<void>>().mockResolvedValue(undefined);
+    const { onSuccess } = renderUnlock({ biometricAvailable: true, rotationPending, redeemRotation });
+
+    await waitFor(() => expect(onSuccess).toHaveBeenCalledWith(true));
+    expect(screen.queryByPlaceholderText('Wechsel-Code')).not.toBeInTheDocument();
+    expect(redeemRotation).not.toHaveBeenCalled();
+  });
+
+  it('reports no rotation code back after a Touch ID unlock when none is waiting', async () => {
+    const rotationPending = vi.fn<() => Promise<boolean>>().mockResolvedValue(false);
+    const { onSuccess } = renderUnlock({ biometricAvailable: true, rotationPending, redeemRotation: vi.fn() });
+    await waitFor(() => expect(onSuccess).toHaveBeenCalledWith(false));
+  });
+
+  it('postponing the rotation step reports no pending code, so the caller does not re-ask', async () => {
+    const redeemRotation = vi.fn<(code: string, passphrase: string) => Promise<void>>().mockResolvedValue(undefined);
+    const { onSuccess } = renderUnlock({ rotationPending: () => Promise.resolve(true), redeemRotation });
+    fireEvent.change(screen.getByPlaceholderText('Passwort'), { target: { value: 'my-pass' } });
+    fireEvent.click(screen.getByText('Entsperren'));
+    fireEvent.click(await screen.findByText('Später'));
+    expect(onSuccess).toHaveBeenCalledWith();
+  });
 });
