@@ -84,6 +84,10 @@ pub fn note_from_wire(v: &Value) -> Note {
         // here, and `upsert_note_from_server_conn` deliberately never writes
         // this column, so a pull can't clobber whatever was set locally.
         mcp_hidden: false,
+        // `key_gen` (see `storage::Note::key_gen`) isn't on the wire yet —
+        // wiring it into the sync protocol is a later task. Always `None`
+        // here for now.
+        key_gen: None,
     }
 }
 
@@ -360,6 +364,7 @@ mod tests {
             protected_known: false,
             title: "My Title".into(),
             mcp_hidden: false,
+            key_gen: None,
         };
         let back = note_from_wire(&note_to_wire(&n));
         assert_eq!(back.id, "n1");

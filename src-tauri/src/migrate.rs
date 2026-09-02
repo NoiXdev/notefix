@@ -161,6 +161,16 @@ pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
         set_meta(conn, "schema_version", "14")?;
     }
 
+    if version < 15 {
+        // Workspace vault keys: which key generation sealed a protected note,
+        // and a cache of the caller's own wrapped entries from the server.
+        conn.execute_batch(
+            "ALTER TABLE notes ADD COLUMN key_gen INTEGER;
+             ALTER TABLE vault ADD COLUMN entries TEXT;",
+        )?;
+        set_meta(conn, "schema_version", "15")?;
+    }
+
     Ok(())
 }
 
@@ -238,7 +248,7 @@ mod tests {
         let s = store();
         assert_eq!(
             get_meta(&s.conn, "schema_version").unwrap().as_deref(),
-            Some("14")
+            Some("15")
         );
     }
 
@@ -248,7 +258,7 @@ mod tests {
         run_migrations(&s.conn).unwrap();
         assert_eq!(
             get_meta(&s.conn, "schema_version").unwrap().as_deref(),
-            Some("14")
+            Some("15")
         );
     }
 
@@ -269,6 +279,28 @@ mod tests {
         s.set_folder_mcp_hidden("f", true).unwrap();
         assert!(s.note_mcp_hidden("n").unwrap());
         assert!(s.folder_mcp_hidden("f").unwrap());
+    }
+
+    #[test]
+    fn migration_v15_adds_key_gen_and_vault_entries() {
+        let s = Store::open_in_memory().unwrap();
+        run_migrations(&s.conn).unwrap();
+        assert_eq!(
+            get_meta(&s.conn, "schema_version").unwrap().as_deref(),
+            Some("15")
+        );
+        s.conn
+            .execute(
+                "INSERT INTO notes (id, content, updated_at, key_gen) VALUES ('a','x',1,2)",
+                [],
+            )
+            .unwrap();
+        s.conn
+            .execute(
+                "INSERT INTO vault (id, record, entries, created_at, updated_at) VALUES (1,'{}','{\"mine\":[]}',0,0)",
+                [],
+            )
+            .unwrap();
     }
 
     #[test]
@@ -293,10 +325,17 @@ mod tests {
                  dirty      INTEGER NOT NULL DEFAULT 0,
                  protected  INTEGER NOT NULL DEFAULT 0
              );
-             -- Minimal stand-in so the v14 step below (`ALTER TABLE folders
-             -- ADD COLUMN mcp_hidden`), which now also runs from this
-             -- synthetic v12 baseline, has a table to alter.
-             CREATE TABLE folders (id TEXT PRIMARY KEY);",
+             -- Minimal stand-ins so the v14/v15 steps below (`ALTER TABLE
+             -- folders ADD COLUMN mcp_hidden`, `ALTER TABLE vault ADD COLUMN
+             -- entries`), which now also run from this synthetic v12
+             -- baseline, have tables to alter.
+             CREATE TABLE folders (id TEXT PRIMARY KEY);
+             CREATE TABLE vault (
+                 id         INTEGER PRIMARY KEY CHECK (id = 1),
+                 record     TEXT NOT NULL,
+                 created_at INTEGER NOT NULL,
+                 updated_at INTEGER NOT NULL
+             );",
         )
         .unwrap();
         set_meta(&conn, "schema_version", "12").unwrap();
@@ -315,7 +354,7 @@ mod tests {
 
         assert_eq!(
             get_meta(&conn, "schema_version").unwrap().as_deref(),
-            Some("14")
+            Some("15")
         );
         let title_of = |id: &str| -> String {
             conn.query_row("SELECT title FROM notes WHERE id = ?1", [id], |r| r.get(0))

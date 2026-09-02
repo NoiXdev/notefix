@@ -63,6 +63,7 @@ mod tests {
             protected_known: false,
             title: String::new(),
             mcp_hidden: false,
+            key_gen: None,
         }
     }
 

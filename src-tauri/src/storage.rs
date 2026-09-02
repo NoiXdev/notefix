@@ -51,6 +51,12 @@ pub struct Note {
     /// wire (a device's local hide preference isn't shared data).
     #[serde(default)]
     pub mcp_hidden: bool,
+    /// Which workspace-vault key generation sealed this note's ciphertext
+    /// (schema v15), or `None` if it's never been sealed / predates
+    /// generation tracking. Drives the lazy re-seal work list — see
+    /// `Store::notes_with_key_gen_below`.
+    #[serde(default)]
+    pub key_gen: Option<u32>,
 }
 
 pub struct Store {
@@ -65,7 +71,9 @@ pub struct Store {
 // the preview/task counts for ciphertext rows, `title` and `mcp_hidden`
 // passed through unchanged. Every query built from `COLS` implicitly carries
 // all three — including `search_notes`, which also calls `row_to_meta`.
-const COLS: &str = "id, content, updated_at, pinned, archived, color, due_at, folder_id, position, deleted_at, dirty, protected, title, mcp_hidden";
+// `key_gen` is appended at index 14 (schema v15) — read by `row_to_note`
+// only; `row_to_meta` doesn't need it and stops at index 13.
+const COLS: &str = "id, content, updated_at, pinned, archived, color, due_at, folder_id, position, deleted_at, dirty, protected, title, mcp_hidden, key_gen";
 
 fn now_ms() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -95,6 +103,7 @@ fn row_to_note(r: &rusqlite::Row) -> rusqlite::Result<Note> {
         protected_known: false,
         title: r.get(12)?,
         mcp_hidden: r.get(13)?,
+        key_gen: r.get(14)?,
     })
 }
 
@@ -412,10 +421,10 @@ impl Store {
             (note.updated_at, 0)
         };
         self.conn.execute(
-            "INSERT INTO notes (id, content, updated_at, pinned, archived, color, due_at, folder_id, position, dirty)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-             ON CONFLICT(id) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at, dirty = excluded.dirty",
-            (&note.id, &note.content, updated_at, note.pinned, note.archived, &note.color, note.due_at, &note.folder_id, note.position, dirty),
+            "INSERT INTO notes (id, content, updated_at, pinned, archived, color, due_at, folder_id, position, dirty, key_gen)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+             ON CONFLICT(id) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at, dirty = excluded.dirty, key_gen = excluded.key_gen",
+            (&note.id, &note.content, updated_at, note.pinned, note.archived, &note.color, note.due_at, &note.folder_id, note.position, dirty, note.key_gen),
         )?;
         Ok(())
     }
@@ -584,12 +593,16 @@ impl Store {
     // keeps `#[allow(dead_code)]` per the Task 1/2 precedent in `vault/`.
 
     /// The stored vault record (opaque JSON blob managed by the crypto layer),
-    /// or `None` if no vault has been set up yet.
+    /// or `None` if no vault has been set up yet. An empty string — the
+    /// placeholder `set_vault_entries` inserts when caching entries before
+    /// any record exists — also reads back as `None`, not a real record.
     pub fn vault_record(&self) -> rusqlite::Result<Option<String>> {
         use rusqlite::OptionalExtension;
-        self.conn
+        let rec: Option<String> = self
+            .conn
             .query_row("SELECT record FROM vault WHERE id = 1", [], |r| r.get(0))
-            .optional()
+            .optional()?;
+        Ok(rec.filter(|r| !r.is_empty()))
     }
 
     /// Create or overwrite the single vault record row.
@@ -607,6 +620,34 @@ impl Store {
     #[allow(dead_code)]
     pub fn clear_vault_record(&self) -> rusqlite::Result<()> {
         self.conn.execute("DELETE FROM vault WHERE id = 1", [])?;
+        Ok(())
+    }
+
+    /// The cached JSON of the caller's own wrapped entries from the server
+    /// (schema v15) — `{"mine":[...],"recovery":[...]}`, camelCase, matching
+    /// the wire shape. `None` if nothing has been cached yet.
+    #[allow(dead_code)] // wired into vault commands by a later task
+    pub fn vault_entries(&self) -> rusqlite::Result<Option<String>> {
+        use rusqlite::OptionalExtension;
+        self.conn
+            .query_row("SELECT entries FROM vault WHERE id = 1", [], |r| r.get(0))
+            .optional()
+            .map(Option::flatten)
+    }
+
+    /// Create or overwrite the cached vault entries JSON. Like
+    /// `set_vault_record`, this upserts the single `id = 1` row — if no
+    /// vault record exists yet, `record` is seeded with `''` as a
+    /// placeholder (the column is `NOT NULL`); `vault_record()` treats an
+    /// empty string as "no record" so this doesn't fabricate one.
+    #[allow(dead_code)] // wired into vault commands by a later task
+    pub fn set_vault_entries(&self, json: &str) -> rusqlite::Result<()> {
+        let now = now_ms();
+        self.conn.execute(
+            "INSERT INTO vault (id, record, entries, created_at, updated_at) VALUES (1, '', ?1, ?2, ?2)
+             ON CONFLICT(id) DO UPDATE SET entries = excluded.entries, updated_at = excluded.updated_at",
+            (json, now),
+        )?;
         Ok(())
     }
 
@@ -835,6 +876,41 @@ impl Store {
         }
         self.folder_chain_has_mcp_hidden(folder_id.as_deref())
     }
+
+    // Workspace vault keys (schema v15) — which key generation sealed a
+    // protected note's ciphertext, feeding the lazy re-seal work list after
+    // a key rotation. See `Note::key_gen`.
+
+    #[allow(dead_code)] // wired into vault/rotation commands by a later task
+    pub fn note_key_gen(&self, id: &str) -> rusqlite::Result<Option<u32>> {
+        self.conn
+            .query_row("SELECT key_gen FROM notes WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+    }
+
+    #[allow(dead_code)] // wired into vault/rotation commands by a later task
+    pub fn set_note_key_gen(&self, id: &str, gen: Option<u32>) -> rusqlite::Result<()> {
+        self.conn
+            .execute("UPDATE notes SET key_gen = ?2 WHERE id = ?1", (id, gen))?;
+        Ok(())
+    }
+
+    /// Protected notes sealed under an older generation than `gen` (or an
+    /// unknown one), oldest first — the lazy re-seal work list.
+    #[allow(dead_code)] // wired into vault/rotation commands by a later task
+    pub fn notes_with_key_gen_below(
+        &self,
+        gen: u32,
+        limit: usize,
+    ) -> rusqlite::Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id FROM notes WHERE protected = 1 AND deleted_at IS NULL
+               AND (key_gen IS NULL OR key_gen < ?1) ORDER BY updated_at ASC LIMIT ?2",
+        )?;
+        let rows = stmt.query_map((gen, limit as i64), |r| r.get::<_, String>(0))?;
+        rows.collect()
+    }
 }
 
 /// Upsert a server note against an arbitrary connection (used inside a tx).
@@ -844,13 +920,17 @@ impl Store {
 /// pushed on the next cycle.
 pub fn upsert_note_from_server_conn(conn: &rusqlite::Connection, n: &Note) -> rusqlite::Result<()> {
     conn.execute(
-        "INSERT INTO notes (id, content, updated_at, pinned, archived, color, due_at, folder_id, position, deleted_at, dirty, protected, title)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, ?11, ?12)
+        "INSERT INTO notes (id, content, updated_at, pinned, archived, color, due_at, folder_id, position, deleted_at, dirty, protected, title, key_gen)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, ?11, ?12, ?14)
          ON CONFLICT(id) DO UPDATE SET
             content=excluded.content, updated_at=excluded.updated_at, pinned=excluded.pinned,
             archived=excluded.archived, color=excluded.color, due_at=excluded.due_at,
             folder_id=excluded.folder_id, position=excluded.position, deleted_at=excluded.deleted_at, dirty=0,
-            protected = CASE WHEN ?13 THEN excluded.protected ELSE notes.protected END, title=excluded.title
+            protected = CASE WHEN ?13 THEN excluded.protected ELSE notes.protected END, title=excluded.title,
+            -- A pull from a server that doesn't know the vault flags yet
+            -- (protected_known = false) must not null out a locally known
+            -- key generation either — same guard as `protected` above.
+            key_gen = CASE WHEN ?13 THEN excluded.key_gen ELSE notes.key_gen END
          WHERE excluded.updated_at >= notes.updated_at",
         (
             &n.id,
@@ -866,6 +946,7 @@ pub fn upsert_note_from_server_conn(conn: &rusqlite::Connection, n: &Note) -> ru
             n.protected,
             &n.title,
             n.protected_known,
+            n.key_gen,
         ),
     )?;
     Ok(())
@@ -905,6 +986,7 @@ mod tests {
             protected_known: false,
             title: String::new(),
             mcp_hidden: false,
+            key_gen: None,
         }
     }
 
@@ -1581,6 +1663,32 @@ mod tests {
         );
         s.clear_vault_record().unwrap();
         assert_eq!(s.vault_record().unwrap(), None);
+    }
+
+    #[test]
+    fn key_gen_helpers_and_lagging_notes() {
+        let s = store();
+        for (id, gen) in [("a", Some(1)), ("b", Some(2)), ("c", None)] {
+            s.save_note(&note(id, "cipher==", 1)).unwrap();
+            s.set_note_protected(id, true).unwrap();
+            s.set_note_key_gen(id, gen).unwrap();
+        }
+        s.save_note(&note("plain", "<p>x</p>", 1)).unwrap(); // unprotected, never listed
+        assert_eq!(s.note_key_gen("b").unwrap(), Some(2));
+        let mut lagging = s.notes_with_key_gen_below(2, 10).unwrap();
+        lagging.sort();
+        assert_eq!(lagging, vec!["a".to_string(), "c".to_string()]);
+    }
+
+    #[test]
+    fn vault_entries_roundtrip() {
+        let s = store();
+        assert_eq!(s.vault_entries().unwrap(), None);
+        s.set_vault_entries(r#"{"mine":[],"recovery":[]}"#).unwrap();
+        assert_eq!(
+            s.vault_entries().unwrap().as_deref(),
+            Some(r#"{"mine":[],"recovery":[]}"#)
+        );
     }
 
     #[test]
