@@ -10,6 +10,7 @@ mod linkmeta;
 mod mcp;
 mod mdconv;
 mod migrate;
+mod ops;
 mod profiles;
 mod releases;
 mod revisions;
