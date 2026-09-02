@@ -48,6 +48,9 @@ codesign --force --options runtime --timestamp=none \
 
 echo "==> 5/5 verify"
 codesign --verify --deep --strict --verbose=2 "$APP"
+# Same guard the release CI applies: hollow appex / wrong app group / broken
+# signature fail here instead of surfacing as an empty widget later.
+bash "$ROOT/scripts/verify-macos-bundle.sh" "$APP"
 echo "--- app entitlements ---"
 codesign -d --entitlements - "$APP" 2>/dev/null | grep -A2 application-groups || true
 echo "--- widget entitlements ---"

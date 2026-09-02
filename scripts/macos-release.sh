@@ -63,7 +63,12 @@ rm -rf "$APP/Contents/PlugIns/NotefixWidget.appex"
 cp -R "$APPEX" "$APP/Contents/PlugIns/"
 
 if [ -z "$SIGN" ]; then
-  echo "==> No signing identity — producing an UNSIGNED build"
+  # No Developer ID in the environment (a fork, or missing secrets). Still
+  # produce an artifact so the workflow can be exercised, but make it
+  # impossible to mistake for a release build: loud warning + UNSIGNED name.
+  # An unsigned app cannot load the widget and prompts for container access.
+  echo "::warning::No signing identity — producing an UNSIGNED build (widget will not work)"
+  DMG="$APP_DIR/Notefix_${VERSION}_universal_UNSIGNED.dmg"
   hdiutil create -volname "Notefix" -srcfolder "$APP" -ov -format UDZO "$DMG"
   echo "DMG=$DMG"
   exit 0
@@ -76,6 +81,9 @@ codesign --force --options runtime --timestamp \
 codesign --force --options runtime --timestamp \
   --entitlements "$APP_ENT" --sign "$SIGN" "$APP"
 codesign --verify --strict --verbose=2 "$APP"
+# Fail here, before notarization, if the widget is hollow, mis-entitled or
+# the signature is broken — this is what previously shipped silently.
+bash "$ROOT/scripts/verify-macos-bundle.sh" "$APP"
 
 echo "==> 5/6 Notarize the app, then staple"
 APP_ZIP="$TMP/Notefix.zip"
