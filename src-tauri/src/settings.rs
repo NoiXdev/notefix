@@ -112,4 +112,31 @@ mod tests {
         set_setting(&s.conn, "closeAction", "quit").unwrap();
         assert_eq!(get_string(&s.conn, "closeAction", "ask"), "quit");
     }
+
+    #[test]
+    fn get_int_reads_value_or_falls_back_to_default() {
+        let s = conn();
+        assert_eq!(get_int(&s.conn, "purgeDays", 30), 30); // missing => default
+        set_setting(&s.conn, "purgeDays", "14").unwrap();
+        assert_eq!(get_int(&s.conn, "purgeDays", 30), 14);
+    }
+
+    #[test]
+    fn get_int_falls_back_to_default_on_unparsable_value() {
+        let s = conn();
+        set_setting(&s.conn, "purgeDays", "not-a-number").unwrap();
+        assert_eq!(get_int(&s.conn, "purgeDays", 30), 30);
+    }
+
+    #[test]
+    fn get_bool_default_reads_true_false_and_missing() {
+        let s = conn();
+        // missing => the caller-supplied default, not `false`.
+        assert!(get_bool_default(&s.conn, "closeToTray", true));
+        assert!(!get_bool_default(&s.conn, "otherMissingKey", false));
+        set_setting(&s.conn, "closeToTray", "false").unwrap();
+        assert!(!get_bool_default(&s.conn, "closeToTray", true));
+        set_setting(&s.conn, "closeToTray", "true").unwrap();
+        assert!(get_bool_default(&s.conn, "closeToTray", false));
+    }
 }
