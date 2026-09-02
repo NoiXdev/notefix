@@ -23,7 +23,7 @@ IDENTITY="$(security find-identity -v -p codesigning | awk -v m="$SIGN_MATCH" 'i
 echo "Signing with $IDENTITY"
 
 echo "==> 1/5 tauri build"
-( cd "$ROOT" && npm run tauri build )
+( cd "$ROOT" && npm run tauri build -- --bundles app )
 
 echo "==> 2/5 build widget extension"
 ( cd "$WIDGET_DIR"
