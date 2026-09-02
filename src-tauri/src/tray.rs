@@ -6,7 +6,7 @@ use tauri::{
     AppHandle, Emitter, Manager,
 };
 
-use crate::storage::Store;
+use crate::storage::{Note, Store};
 
 pub const TRAY_ID: &str = "main-tray";
 
@@ -47,6 +47,16 @@ pub(crate) fn note_title(html: &str) -> String {
     }
 }
 
+/// The tray menu-item id and display label for each recent note, in order.
+/// Pulled out of `build_menu` so this menu-model construction logic is
+/// testable without a running Tauri app.
+fn recent_menu_entries(notes: Vec<Note>) -> Vec<(String, String)> {
+    notes
+        .into_iter()
+        .map(|n| (format!("tray_open:{}", n.id), note_title(&n.content)))
+        .collect()
+}
+
 fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let new = MenuItem::with_id(app, "tray_new", "Neue Notiz", true, None::<&str>)?;
     let open_last = MenuItem::with_id(
@@ -64,7 +74,8 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .ok()
         .and_then(|s| s.recent_notes(5).ok())
         .unwrap_or_default();
-    if notes.is_empty() {
+    let entries = recent_menu_entries(notes);
+    if entries.is_empty() {
         let empty = MenuItem::with_id(
             app,
             "tray_recent_empty",
@@ -74,14 +85,8 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         )?;
         recent.append(&empty)?;
     } else {
-        for n in notes {
-            let item = MenuItem::with_id(
-                app,
-                format!("tray_open:{}", n.id),
-                note_title(&n.content),
-                true,
-                None::<&str>,
-            )?;
+        for (id, label) in entries {
+            let item = MenuItem::with_id(app, id, label, true, None::<&str>)?;
             recent.append(&item)?;
         }
     }
@@ -111,28 +116,61 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     )
 }
 
+/// Pick the id of the first (most recent) note. Pulled out of
+/// [`last_note_id`] so this bookkeeping is testable without a Tauri app/DB.
+fn first_note_id(notes: Vec<Note>) -> Option<String> {
+    notes.into_iter().next().map(|n| n.id)
+}
+
 fn last_note_id(app: &AppHandle) -> Option<String> {
     app.state::<Mutex<Store>>()
         .lock()
         .ok()
         .and_then(|s| s.recent_notes(1).ok())
-        .and_then(|v| v.into_iter().next())
-        .map(|n| n.id)
+        .and_then(first_note_id)
+}
+
+/// The semantic action for a tray menu-item id. Pulled out of
+/// [`handle_menu_event`] so the id -> action mapping is testable without a
+/// running Tauri app.
+#[derive(Debug, PartialEq, Eq)]
+enum MenuAction {
+    NewNote,
+    OpenLast,
+    Toggle,
+    OpenSettings,
+    Quit,
+    OpenNote(String),
+    Unknown,
+}
+
+fn classify_menu_event(id: &str) -> MenuAction {
+    match id {
+        "tray_new" => MenuAction::NewNote,
+        "tray_open_last" => MenuAction::OpenLast,
+        "tray_toggle" => MenuAction::Toggle,
+        "tray_settings" => MenuAction::OpenSettings,
+        "tray_quit" => MenuAction::Quit,
+        other => match other.strip_prefix("tray_open:") {
+            Some(note_id) => MenuAction::OpenNote(note_id.to_string()),
+            None => MenuAction::Unknown,
+        },
+    }
 }
 
 fn handle_menu_event(app: &AppHandle, id: &str) {
-    match id {
-        "tray_new" => {
+    match classify_menu_event(id) {
+        MenuAction::NewNote => {
             show_main(app);
             let _ = app.emit("tray://new-note", ());
         }
-        "tray_open_last" => {
+        MenuAction::OpenLast => {
             show_main(app);
             if let Some(id) = last_note_id(app) {
                 let _ = app.emit("tray://open-note", id);
             }
         }
-        "tray_toggle" => {
+        MenuAction::Toggle => {
             if let Some(w) = app.get_webview_window("main") {
                 if w.is_visible().unwrap_or(false) {
                     let _ = w.hide();
@@ -141,17 +179,16 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
                 }
             }
         }
-        "tray_settings" => {
+        MenuAction::OpenSettings => {
             show_main(app);
             let _ = app.emit("tray://open-settings", ());
         }
-        "tray_quit" => app.exit(0),
-        other => {
-            if let Some(note_id) = other.strip_prefix("tray_open:") {
-                show_main(app);
-                let _ = app.emit("tray://open-note", note_id.to_string());
-            }
+        MenuAction::Quit => app.exit(0),
+        MenuAction::OpenNote(note_id) => {
+            show_main(app);
+            let _ = app.emit("tray://open-note", note_id);
         }
+        MenuAction::Unknown => {}
     }
 }
 
@@ -186,7 +223,7 @@ pub fn rebuild_menu(app: &AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::note_title;
+    use super::*;
 
     #[test]
     fn note_title_strips_html_and_separates_elements() {
@@ -204,5 +241,75 @@ mod tests {
         let t = note_title(&long);
         assert!(t.ends_with('…'));
         assert_eq!(t.chars().count(), 41);
+    }
+
+    #[test]
+    fn recent_menu_entries_builds_id_and_title_pairs_in_order() {
+        let notes = vec![
+            Note {
+                id: "n1".into(),
+                content: "<p>Hello</p>".into(),
+                ..Default::default()
+            },
+            Note {
+                id: "n2".into(),
+                content: "<p>World</p>".into(),
+                ..Default::default()
+            },
+        ];
+        assert_eq!(
+            recent_menu_entries(notes),
+            vec![
+                ("tray_open:n1".to_string(), "Hello".to_string()),
+                ("tray_open:n2".to_string(), "World".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn recent_menu_entries_empty_when_no_notes() {
+        assert!(recent_menu_entries(vec![]).is_empty());
+    }
+
+    #[test]
+    fn first_note_id_returns_first_or_none() {
+        assert_eq!(first_note_id(vec![]), None);
+        let notes = vec![
+            Note {
+                id: "n1".into(),
+                ..Default::default()
+            },
+            Note {
+                id: "n2".into(),
+                ..Default::default()
+            },
+        ];
+        assert_eq!(first_note_id(notes), Some("n1".to_string()));
+    }
+
+    #[test]
+    fn classify_menu_event_maps_known_ids() {
+        assert_eq!(classify_menu_event("tray_new"), MenuAction::NewNote);
+        assert_eq!(classify_menu_event("tray_open_last"), MenuAction::OpenLast);
+        assert_eq!(classify_menu_event("tray_toggle"), MenuAction::Toggle);
+        assert_eq!(
+            classify_menu_event("tray_settings"),
+            MenuAction::OpenSettings
+        );
+        assert_eq!(classify_menu_event("tray_quit"), MenuAction::Quit);
+    }
+
+    #[test]
+    fn classify_menu_event_extracts_open_note_id() {
+        assert_eq!(
+            classify_menu_event("tray_open:abc123"),
+            MenuAction::OpenNote("abc123".to_string())
+        );
+    }
+
+    #[test]
+    fn classify_menu_event_unknown_id_is_unknown() {
+        assert_eq!(classify_menu_event("something_else"), MenuAction::Unknown);
+        assert_eq!(classify_menu_event(""), MenuAction::Unknown);
     }
 }

@@ -4,7 +4,7 @@
 // WidgetKit extension can render it (create-new-note + pinned/recent lists).
 // Best-effort; never fatal.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
@@ -14,8 +14,15 @@ const APP_GROUP: &str = "group.dev.noix.notefix";
 const MAX_PINNED: usize = 6;
 const MAX_RECENT: usize = 8;
 
+/// The App Group container directory given a home directory. Pulled out of
+/// [`container_dir`] so the path-joining logic is testable without depending
+/// on the real home directory.
+fn container_dir_in(home: &Path) -> PathBuf {
+    home.join("Library/Group Containers").join(APP_GROUP)
+}
+
 fn container_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join("Library/Group Containers").join(APP_GROUP))
+    dirs::home_dir().map(|h| container_dir_in(&h))
 }
 
 #[derive(Serialize)]
@@ -88,6 +95,16 @@ pub fn reload_widgets() {
     }
 }
 
+/// Serialize the snapshot and write it to `dir/widget.json`, creating `dir` if
+/// needed. Pulled out of [`publish`] so the file/serialization logic is
+/// testable against a temp directory, independent of Tauri app state.
+fn write_snapshot(dir: &Path, snap: &WidgetSnapshot) -> std::io::Result<()> {
+    let json = serde_json::to_string(snap)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    std::fs::create_dir_all(dir)?;
+    std::fs::write(dir.join("widget.json"), json)
+}
+
 /// Build the snapshot from the app's active store + context label, write it into
 /// the App Group container, and ask WidgetKit to reload. Best-effort; never fatal.
 pub fn publish(app: &tauri::AppHandle) {
@@ -111,9 +128,8 @@ pub fn publish(app: &tauri::AppHandle) {
     };
 
     let snap = build_snapshot(&label, &notes);
-    if let (Some(dir), Ok(json)) = (container_dir(), serde_json::to_string(&snap)) {
-        let _ = std::fs::create_dir_all(&dir);
-        let _ = std::fs::write(dir.join("widget.json"), json);
+    if let Some(dir) = container_dir() {
+        let _ = write_snapshot(&dir, &snap);
     }
     reload_widgets();
 }
@@ -195,5 +211,38 @@ mod tests {
     #[test]
     fn empty_label_falls_back_to_lokal() {
         assert_eq!(build_snapshot("", &[]).context, "Lokal");
+    }
+
+    #[test]
+    fn container_dir_in_joins_app_group_path() {
+        let home = PathBuf::from("/Users/someone");
+        assert_eq!(
+            container_dir_in(&home),
+            PathBuf::from("/Users/someone/Library/Group Containers/group.dev.noix.notefix")
+        );
+    }
+
+    #[test]
+    fn write_snapshot_creates_dir_and_writes_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("nested/app-group");
+        let snap = build_snapshot("Lokal", &[note("x", "<p>Hi</p>", true, false, 1)]);
+
+        write_snapshot(&dir, &snap).unwrap();
+
+        let written = std::fs::read_to_string(dir.join("widget.json")).unwrap();
+        assert!(written.contains("\"context\":\"Lokal\""), "{written}");
+        assert!(written.contains("\"id\":\"x\""), "{written}");
+    }
+
+    #[test]
+    fn write_snapshot_overwrites_an_existing_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
+        write_snapshot(&dir, &build_snapshot("First", &[])).unwrap();
+        write_snapshot(&dir, &build_snapshot("Second", &[])).unwrap();
+
+        let written = std::fs::read_to_string(dir.join("widget.json")).unwrap();
+        assert!(written.contains("\"context\":\"Second\""), "{written}");
     }
 }
