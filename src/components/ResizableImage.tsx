@@ -6,9 +6,9 @@ import {
   type NodeViewProps,
 } from '@tiptap/react';
 
-const MIN_WIDTH = 60;
+export const MIN_WIDTH = 60;
 
-function ImageNodeView({ node, updateAttributes, selected, editor }: NodeViewProps) {
+export function ImageNodeView({ node, updateAttributes, selected, editor }: NodeViewProps) {
   const imgRef = useRef<HTMLImageElement>(null);
 
   const startResize = (e: React.PointerEvent) => {
