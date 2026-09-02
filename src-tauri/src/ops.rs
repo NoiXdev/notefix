@@ -87,7 +87,13 @@ pub struct VaultStatus {
 /// Seals a note's plaintext HTML into a base64-encoded AEAD blob for storage
 /// in the `notes.content` column. The note id is bound in as associated data
 /// so a sealed blob can't be silently reattached to a different note's row.
-pub(crate) fn seal_content(dek: &Dek, note_id: &str, html: &str) -> String {
+///
+/// Deliberately private: this produces ciphertext WITHOUT touching the
+/// `protected` flag, so calling it on its own would break the
+/// "`content` is ciphertext iff `protected = 1`" invariant. Every caller goes
+/// through a transition op ([`encrypt_note_in_place`] or [`save_note`]) that
+/// sets the flag in the same breath.
+fn seal_content(dek: &Dek, note_id: &str, html: &str) -> String {
     base64::engine::general_purpose::STANDARD.encode(crate::vault::aead::seal(
         dek,
         note_id.as_bytes(),
@@ -115,7 +121,7 @@ pub(crate) fn open_content(dek: &Dek, note_id: &str, stored: &str) -> Result<Str
 /// `protected` flag — see `Store::is_effectively_protected` for that) is
 /// `locked`. Cycle-safe via a visited set, mirroring the walk in
 /// `Store::is_effectively_protected`.
-pub(crate) fn has_locked_ancestor_folder(store: &Store, note_id: &str) -> Result<bool, String> {
+fn has_locked_ancestor_folder(store: &Store, note_id: &str) -> Result<bool, String> {
     use rusqlite::OptionalExtension;
 
     let folder_id: Option<String> = store
@@ -137,10 +143,7 @@ pub(crate) fn has_locked_ancestor_folder(store: &Store, note_id: &str) -> Result
 /// [`reconcile_reorder`] (start from a move's *destination* `folder_id`,
 /// checked before the move is performed). Thin `String`-error wrapper over
 /// `Store::folder_chain_has_lock`.
-pub(crate) fn folder_chain_has_lock(
-    store: &Store,
-    starting_folder_id: Option<&str>,
-) -> Result<bool, String> {
+fn folder_chain_has_lock(store: &Store, starting_folder_id: Option<&str>) -> Result<bool, String> {
     store
         .folder_chain_has_lock(starting_folder_id)
         .map_err(|e| e.to_string())
@@ -575,16 +578,23 @@ pub fn vault_setup(store: &Store, passphrase: &str) -> Result<(Vec<String>, Dek)
 }
 
 /// `vault_unlock`: derive the KEK from `passphrase` and unwrap the DEK.
-pub fn vault_unlock_passphrase(store: &Store, passphrase: &str) -> Result<Dek, String> {
-    let record = load_vault_record(store)?;
-    crate::vault::unlock_passphrase(&record, passphrase).map_err(String::from)
+///
+/// Takes an already-loaded record rather than the `Store`: these two unlock
+/// paths are read-only, so — unlike [`vault_setup`] and
+/// [`vault_change_passphrase`] — there is no check-then-write to make atomic,
+/// and the caller must NOT hold the store lock across the (~0.5 s) Argon2
+/// derivation. Doing so would stall autosave, the sync cycle and the MCP
+/// server for the duration.
+pub fn vault_unlock_passphrase(record: &VaultRecord, passphrase: &str) -> Result<Dek, String> {
+    crate::vault::unlock_passphrase(record, passphrase).map_err(String::from)
 }
 
 /// `vault_unlock_recovery`: same, but via the one-time recovery key (accepts
-/// any formatting the user typed — separators and case are normalized).
-pub fn vault_unlock_recovery(store: &Store, recovery: &str) -> Result<Dek, String> {
-    let record = load_vault_record(store)?;
-    crate::vault::unlock_recovery(&record, recovery).map_err(String::from)
+/// any formatting the user typed — separators and case are normalized). Takes
+/// an already-loaded record for the same reason as
+/// [`vault_unlock_passphrase`].
+pub fn vault_unlock_recovery(record: &VaultRecord, recovery: &str) -> Result<Dek, String> {
+    crate::vault::unlock_recovery(record, recovery).map_err(String::from)
 }
 
 /// `vault_change_passphrase`: unlock with `current`, re-wrap the SAME DEK
@@ -1029,21 +1039,24 @@ fn read_image(images_root: &Path, rel: &str) -> Option<(String, Vec<u8>)> {
 }
 
 /// `export_notes`: plain JSON export (images stay as `noteimg://` URLs).
-pub fn export_notes_json(store: &Store, path: &Path, ids: &[String]) -> Result<(), String> {
-    let notes = store.load_notes().map_err(|e| e.to_string())?;
-    let json = crate::export::notes_to_json(&notes, ids).map_err(|e| e.to_string())?;
+///
+/// Takes the already-loaded notes rather than the `Store`, so the caller can
+/// release the store lock before this writes to disk — a slow or unreachable
+/// destination must not pin the database (and with it autosave, sync and the
+/// MCP server). Same reason for the three ops below.
+pub fn export_notes_json(notes: &[Note], path: &Path, ids: &[String]) -> Result<(), String> {
+    let json = crate::export::notes_to_json(notes, ids).map_err(|e| e.to_string())?;
     std::fs::write(path, json).map_err(|e| e.to_string())
 }
 
 /// `export_notes_base64`: JSON export with every referenced image inlined as a
 /// `data:` URL, so the file is self-contained.
 pub fn export_notes_inlined(
-    store: &Store,
+    notes: Vec<Note>,
     images_root: &Path,
     path: &Path,
     ids: &[String],
 ) -> Result<(), String> {
-    let notes = store.load_notes().map_err(|e| e.to_string())?;
     let out: Vec<Note> = select_notes(notes, ids)
         .into_iter()
         .map(|mut n| {
@@ -1057,13 +1070,13 @@ pub fn export_notes_inlined(
 }
 
 /// `note_inlined_html`: one note's HTML with its images inlined as `data:`
-/// URLs (used for print/PDF). Looks in ALL notes, trashed ones included.
+/// URLs (used for print/PDF). `notes` is expected to be `load_all_notes()`, so
+/// a note that was just trashed in another window can still be printed.
 pub fn note_inlined_html(
-    store: &Store,
+    notes: Vec<Note>,
     images_root: &Path,
     note_id: &str,
 ) -> Result<String, String> {
-    let notes = store.load_all_notes().map_err(|e| e.to_string())?;
     let note = notes
         .into_iter()
         .find(|n| n.id == note_id)
@@ -1111,12 +1124,11 @@ pub fn export_md_bundle(
 /// `export_notes_bundle`: `notes.json` plus an `images/` folder, with every
 /// `noteimg://` URL rewritten to a bundle-relative `images/…` path.
 pub fn export_notes_bundle(
-    store: &Store,
+    notes: Vec<Note>,
     images_root: &Path,
     dest: &Path,
     ids: &[String],
 ) -> Result<(), String> {
-    let notes = store.load_notes().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(dest.join("images")).map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for mut n in select_notes(notes, ids) {
@@ -1293,6 +1305,12 @@ mod test_support {
     /// `Result::unwrap_err` needs `T: Debug`, which `Dek`/`VaultRecord`
     /// deliberately do not implement (a Debug impl on key material is exactly
     /// what must never exist). This gets at the error without that bound.
+    /// The persisted vault record, as the commands load it before running the
+    /// KDF outside the store lock.
+    pub fn record(s: &Store) -> crate::vault::VaultRecord {
+        super::load_vault_record(s).unwrap()
+    }
+
     pub fn err_of<T>(r: Result<T, String>) -> String {
         match r {
             Ok(_) => panic!("expected an error, got Ok"),
@@ -2687,7 +2705,7 @@ mod vault_setup_tests {
 
         assert!(vault_setup(&s, "second").is_err());
 
-        let reloaded = vault_unlock_passphrase(&s, "first").unwrap();
+        let reloaded = vault_unlock_passphrase(&record(&s), "first").unwrap();
         assert_eq!(
             open_content(&reloaded, "n1", &content_of(&s, "n1")).unwrap(),
             "<p>irreplaceable</p>"
@@ -2706,7 +2724,7 @@ mod vault_unlock_tests {
         let (_g, dek) = vault_setup(&s, "hunter2").unwrap();
         let sealed = seal_content(&dek, "n1", "<p>secret</p>");
 
-        let unlocked = vault_unlock_passphrase(&s, "hunter2").unwrap();
+        let unlocked = vault_unlock_passphrase(&record(&s), "hunter2").unwrap();
 
         assert_eq!(
             open_content(&unlocked, "n1", &sealed).unwrap(),
@@ -2719,7 +2737,7 @@ mod vault_unlock_tests {
         let s = store();
         vault_setup(&s, "hunter2").unwrap();
 
-        let err = err_of(vault_unlock_passphrase(&s, "hunter3"));
+        let err = err_of(vault_unlock_passphrase(&record(&s), "hunter3"));
         assert!(!err.is_empty());
         assert!(
             !err.contains("hunter"),
@@ -2729,12 +2747,10 @@ mod vault_unlock_tests {
 
     #[test]
     fn unlocking_without_a_vault_reports_not_set_up() {
+        // Both unlock commands load the record before deriving, so this is the
+        // error the frontend sees when no vault exists.
         let s = store();
-        assert_eq!(
-            err_of(vault_unlock_passphrase(&s, "x")),
-            "vault: not set up"
-        );
-        assert_eq!(err_of(vault_unlock_recovery(&s, "x")), "vault: not set up");
+        assert_eq!(err_of(load_vault_record(&s)), "vault: not set up");
     }
 
     #[test]
@@ -2744,7 +2760,7 @@ mod vault_unlock_tests {
         let recovery = groups.join("-");
         let sealed = seal_content(&dek, "n1", "<p>secret</p>");
 
-        let unlocked = vault_unlock_recovery(&s, &recovery).unwrap();
+        let unlocked = vault_unlock_recovery(&record(&s), &recovery).unwrap();
 
         assert_eq!(
             open_content(&unlocked, "n1", &sealed).unwrap(),
@@ -2760,7 +2776,7 @@ mod vault_unlock_tests {
         // The user types it lowercase with spaces instead of dashes.
         let typed = groups.join(" ").to_lowercase();
 
-        let unlocked = vault_unlock_recovery(&s, &typed).unwrap();
+        let unlocked = vault_unlock_recovery(&record(&s), &typed).unwrap();
 
         assert_eq!(
             open_content(&unlocked, "n1", &sealed).unwrap(),
@@ -2772,7 +2788,7 @@ mod vault_unlock_tests {
     fn a_wrong_recovery_key_is_rejected() {
         let s = store();
         vault_setup(&s, "hunter2").unwrap();
-        assert!(vault_unlock_recovery(&s, "AAAA-BBBB-CCCC-DDDD").is_err());
+        assert!(vault_unlock_recovery(&record(&s), "AAAA-BBBB-CCCC-DDDD").is_err());
     }
 }
 
@@ -2788,8 +2804,8 @@ mod vault_change_passphrase_tests {
 
         vault_change_passphrase(&s, "old", "new").unwrap();
 
-        assert!(vault_unlock_passphrase(&s, "old").is_err());
-        assert!(vault_unlock_passphrase(&s, "new").is_ok());
+        assert!(vault_unlock_passphrase(&record(&s), "old").is_err());
+        assert!(vault_unlock_passphrase(&record(&s), "new").is_ok());
     }
 
     #[test]
@@ -2815,7 +2831,7 @@ mod vault_change_passphrase_tests {
 
         vault_change_passphrase(&s, "old", "new").unwrap();
 
-        assert!(vault_unlock_recovery(&s, &recovery).is_ok());
+        assert!(vault_unlock_recovery(&record(&s), &recovery).is_ok());
     }
 
     #[test]
@@ -2827,7 +2843,7 @@ mod vault_change_passphrase_tests {
         assert!(vault_change_passphrase(&s, "wrong", "new").is_err());
 
         assert_eq!(s.vault_record().unwrap().unwrap(), before);
-        assert!(vault_unlock_passphrase(&s, "old").is_ok());
+        assert!(vault_unlock_passphrase(&record(&s), "old").is_ok());
     }
 
     #[test]
@@ -3692,7 +3708,7 @@ mod export_tests {
         seed(&s, "b", "<p>beta</p>");
         let out = dir.path().join("notes.json");
 
-        export_notes_json(&s, &out, &[]).unwrap();
+        export_notes_json(&s.load_notes().unwrap(), &out, &[]).unwrap();
 
         let json = std::fs::read_to_string(&out).unwrap();
         assert!(json.contains("alpha") && json.contains("beta"));
@@ -3707,7 +3723,7 @@ mod export_tests {
         seed(&s, "b", "<p>beta</p>");
         let out = dir.path().join("notes.json");
 
-        export_notes_json(&s, &out, &["b".into()]).unwrap();
+        export_notes_json(&s.load_notes().unwrap(), &out, &["b".into()]).unwrap();
 
         let json = std::fs::read_to_string(&out).unwrap();
         assert!(json.contains("beta"));
@@ -3717,7 +3733,12 @@ mod export_tests {
     #[test]
     fn export_notes_json_reports_an_unwritable_target() {
         let s = store();
-        let err = export_notes_json(&s, Path::new("/no/such/dir/notes.json"), &[]).unwrap_err();
+        let err = export_notes_json(
+            &s.load_notes().unwrap(),
+            Path::new("/no/such/dir/notes.json"),
+            &[],
+        )
+        .unwrap_err();
         assert!(!err.is_empty());
     }
 
@@ -3729,7 +3750,7 @@ mod export_tests {
         seed(&s, "a", "<img src=\"noteimg://localhost/a/b/pic.png\">");
         let out = dir.path().join("notes.json");
 
-        export_notes_inlined(&s, &root, &out, &[]).unwrap();
+        export_notes_inlined(s.load_notes().unwrap(), &root, &out, &[]).unwrap();
 
         let json = std::fs::read_to_string(&out).unwrap();
         assert!(json.contains("data:image/png;base64,"));
@@ -3745,7 +3766,7 @@ mod export_tests {
         seed(&s, "a", "<img src=\"noteimg://localhost/gone.png\">");
         let out = dir.path().join("notes.json");
 
-        export_notes_inlined(&s, &root, &out, &[]).unwrap();
+        export_notes_inlined(s.load_notes().unwrap(), &root, &out, &[]).unwrap();
 
         let json = std::fs::read_to_string(&out).unwrap();
         assert!(json.contains("noteimg://localhost/gone.png"));
@@ -3762,7 +3783,7 @@ mod export_tests {
             "<p>hi</p><img src=\"noteimg://localhost/a/b/pic.png\">",
         );
 
-        let html = note_inlined_html(&s, &root, "a").unwrap();
+        let html = note_inlined_html(s.load_all_notes().unwrap(), &root, "a").unwrap();
 
         assert!(html.starts_with("<p>hi</p>"));
         assert!(html.contains("data:image/png;base64,"));
@@ -3773,7 +3794,7 @@ mod export_tests {
         let dir = tempfile::tempdir().unwrap();
         let s = store();
         assert_eq!(
-            note_inlined_html(&s, dir.path(), "ghost").unwrap_err(),
+            note_inlined_html(s.load_all_notes().unwrap(), dir.path(), "ghost").unwrap_err(),
             "note not found"
         );
     }
@@ -3788,7 +3809,7 @@ mod export_tests {
         s.trash_note("a", 1).unwrap();
 
         assert_eq!(
-            note_inlined_html(&s, dir.path(), "a").unwrap(),
+            note_inlined_html(s.load_all_notes().unwrap(), dir.path(), "a").unwrap(),
             "<p>trashed</p>"
         );
     }
@@ -3847,7 +3868,7 @@ mod export_tests {
         seed(&s, "a", "<img src=\"noteimg://localhost/a/b/pic.png\">");
         seed(&s, "b", "<p>no images</p>");
 
-        export_notes_bundle(&s, &root, &dest, &[]).unwrap();
+        export_notes_bundle(s.load_notes().unwrap(), &root, &dest, &[]).unwrap();
 
         let json = std::fs::read_to_string(dest.join("notes.json")).unwrap();
         assert!(json.contains("images/a/b/pic.png"));
@@ -3864,7 +3885,7 @@ mod export_tests {
         seed(&s, "a", "<p>alpha</p>");
         seed(&s, "b", "<p>beta</p>");
 
-        export_notes_bundle(&s, dir.path(), &dest, &["a".into()]).unwrap();
+        export_notes_bundle(s.load_notes().unwrap(), dir.path(), &dest, &["a".into()]).unwrap();
 
         let json = std::fs::read_to_string(dest.join("notes.json")).unwrap();
         assert!(json.contains("alpha"));
@@ -3882,7 +3903,7 @@ mod export_tests {
         encrypt_note_in_place(&s, "a", &Dek::random()).unwrap();
         let out = dir.path().join("notes.json");
 
-        export_notes_json(&s, &out, &[]).unwrap();
+        export_notes_json(&s.load_notes().unwrap(), &out, &[]).unwrap();
 
         let json = std::fs::read_to_string(&out).unwrap();
         assert!(
@@ -4315,13 +4336,20 @@ mod database_error_tests {
     }
 
     #[test]
-    fn exports_report_the_failure() {
-        let dir = tempfile::tempdir().unwrap();
-        let s = store_without_notes();
-        assert!(export_notes_json(&s, &dir.path().join("a.json"), &[]).is_err());
-        assert!(export_notes_inlined(&s, dir.path(), &dir.path().join("b.json"), &[]).is_err());
-        assert!(export_notes_bundle(&s, dir.path(), &dir.path().join("bundle"), &[]).is_err());
-        assert!(note_inlined_html(&s, dir.path(), "n1").is_err());
+    fn exports_report_an_unreachable_destination() {
+        // The export ops take already-loaded notes (so the caller can release
+        // the store lock first), which leaves the write itself as their error
+        // path.
+        let s = store();
+        seed(&s, "n1", "<p>x</p>");
+        let notes = s.load_notes().unwrap();
+        let nowhere = Path::new("/no/such/dir");
+        assert!(export_notes_json(&notes, &nowhere.join("a.json"), &[]).is_err());
+        assert!(
+            export_notes_inlined(notes.clone(), nowhere, &nowhere.join("b.json"), &[]).is_err()
+        );
+        assert!(export_notes_bundle(notes, nowhere, &nowhere.join("bundle"), &[]).is_err());
+        assert!(export_md_bundle(nowhere, &nowhere.join("md"), "# x", "n").is_err());
     }
 
     #[test]
@@ -4354,7 +4382,7 @@ mod database_error_tests {
         s.conn.execute_batch("DROP TABLE vault;").unwrap();
         assert!(load_vault_record(&s).is_err());
         assert!(vault_setup(&s, "x").is_err());
-        assert!(!err_of(vault_unlock_passphrase(&s, "x")).is_empty());
+        assert!(vault_change_passphrase(&s, "a", "b").is_err());
     }
 
     #[test]

@@ -95,7 +95,17 @@ pub fn notes_load_one(
     id: String,
 ) -> Result<String, String> {
     let store = store.lock().map_err(|e| e.to_string())?;
-    let vault = vault.lock().map_err(|e| e.to_string())?;
+    // Recover from a poisoned `VaultState` instead of propagating the poison,
+    // the way `swap_store_to` does. `VaultState` is an `Option<Dek>` plus a
+    // timestamp, mutated only by whole-field assignments, so a panic elsewhere
+    // cannot leave it half-updated. Without this, a single panic anywhere
+    // holding that mutex would break reads of UNPROTECTED notes too — this is
+    // the one read on the hot path, and its guard is taken unconditionally.
+    // The protected path is unchanged: a locked vault still yields
+    // `Err("vault locked")` from `ops::load_note_content`.
+    let vault = vault
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     ops::load_note_content(&store, vault.dek(), &id)
 }
 
@@ -316,8 +326,12 @@ pub fn export_notes(
     path: String,
     ids: Vec<String>,
 ) -> Result<(), String> {
-    let store = store.lock().map_err(|e| e.to_string())?;
-    ops::export_notes_json(&store, std::path::Path::new(&path), &ids)
+    // Load under the lock, then release it before writing to disk.
+    let notes = {
+        let s = store.lock().map_err(|e| e.to_string())?;
+        s.load_notes().map_err(|e| e.to_string())?
+    };
+    ops::export_notes_json(&notes, std::path::Path::new(&path), &ids)
 }
 
 #[tauri::command]
@@ -710,7 +724,23 @@ pub async fn server_auth_complete(
     Ok(infos)
 }
 
-// Lock convention: never hold the Store and Registry locks simultaneously; if ever needed, lock Store before Registry.
+// Lock convention (three managed mutexes: Registry, Store, VaultState).
+//
+// When two are held at once, the order is always:
+//
+//     Registry -> Store -> VaultState
+//
+// and never the reverse. Registry -> Store is nested by `sync_status` and by
+// `widgetshare::publish`; Store -> VaultState is nested by `notes_load_one`,
+// `notes_save`, `notes_set_folder`, `notes_reorder`, `note_set_protected`,
+// `folder_set_locked` and `mcp::StoreAccess::write_protected`. Nothing takes
+// Store before Registry, or VaultState before Store, while holding the other.
+//
+// `swap_store_to` below is the one place VaultState is touched before the
+// Store — but it takes and DROPS that guard in its own block first, so the two
+// are never held simultaneously and the convention still holds. Everything
+// else that needs both simply scopes the first guard so it is released before
+// the second is taken.
 fn swap_store_to(
     app: &AppHandle,
     store: &State<'_, Mutex<Store>>,
@@ -871,8 +901,11 @@ pub fn export_notes_base64(
     ids: Vec<String>,
 ) -> Result<(), String> {
     let root = crate::images::images_dir(&app);
-    let store = store.lock().map_err(|e| e.to_string())?;
-    ops::export_notes_inlined(&store, &root, std::path::Path::new(&path), &ids)
+    let notes = {
+        let s = store.lock().map_err(|e| e.to_string())?;
+        s.load_notes().map_err(|e| e.to_string())?
+    };
+    ops::export_notes_inlined(notes, &root, std::path::Path::new(&path), &ids)
 }
 
 #[tauri::command]
@@ -882,8 +915,11 @@ pub fn note_inlined_html(
     note_id: String,
 ) -> Result<String, String> {
     let root = crate::images::images_dir(&app);
-    let store = store.lock().map_err(|e| e.to_string())?;
-    ops::note_inlined_html(&store, &root, &note_id)
+    let notes = {
+        let s = store.lock().map_err(|e| e.to_string())?;
+        s.load_all_notes().map_err(|e| e.to_string())?
+    };
+    ops::note_inlined_html(notes, &root, &note_id)
 }
 
 #[tauri::command]
@@ -914,8 +950,11 @@ pub fn export_notes_bundle(
     ids: Vec<String>,
 ) -> Result<(), String> {
     let root = crate::images::images_dir(&app);
-    let store = store.lock().map_err(|e| e.to_string())?;
-    ops::export_notes_bundle(&store, &root, std::path::Path::new(&dir), &ids)
+    let notes = {
+        let s = store.lock().map_err(|e| e.to_string())?;
+        s.load_notes().map_err(|e| e.to_string())?
+    };
+    ops::export_notes_bundle(notes, &root, std::path::Path::new(&dir), &ids)
 }
 
 // ---------------------------------------------------------------------------
@@ -1270,10 +1309,13 @@ pub fn vault_unlock(
     vault: VaultStateHandle<'_>,
     passphrase: String,
 ) -> Result<(), String> {
-    let dek = {
+    // The store lock is held only for the record read — never across the
+    // Argon2 derivation below, which would stall every other store consumer.
+    let record = {
         let store = store.lock().map_err(|e| e.to_string())?;
-        ops::vault_unlock_passphrase(&store, &passphrase)?
+        ops::load_vault_record(&store)?
     };
+    let dek = ops::vault_unlock_passphrase(&record, &passphrase)?;
     let backfill_dek = dek.clone();
     vault.lock().map_err(|e| e.to_string())?.unlock(dek);
     if let Ok(store) = store.lock() {
@@ -1288,10 +1330,12 @@ pub fn vault_unlock_recovery(
     vault: VaultStateHandle<'_>,
     recovery: String,
 ) -> Result<(), String> {
-    let dek = {
+    // Store lock scoped to the record read only — see `vault_unlock`.
+    let record = {
         let store = store.lock().map_err(|e| e.to_string())?;
-        ops::vault_unlock_recovery(&store, &recovery)?
+        ops::load_vault_record(&store)?
     };
+    let dek = ops::vault_unlock_recovery(&record, &recovery)?;
     let backfill_dek = dek.clone();
     vault.lock().map_err(|e| e.to_string())?.unlock(dek);
     if let Ok(store) = store.lock() {
