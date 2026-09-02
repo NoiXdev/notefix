@@ -8,3 +8,6 @@ playwright-report/
 test-results/
 /blob-report/
 .playwright/
+
+# vitest / llvm-cov reports
+coverage/

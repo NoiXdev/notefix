@@ -21,6 +21,7 @@
     "tauri": "tauri",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
     "changelog": "conventional-changelog -n ./.github/changelog-preset.mjs -i CHANGELOG.md -s -r 0"
   },
@@ -76,6 +77,7 @@
     "@types/react-dom": "^19.1.6",
     "@types/turndown": "^5.0.6",
     "@vitejs/plugin-react": "^6.0.3",
+    "@vitest/coverage-v8": "^4.1.11",
     "conventional-changelog-cli": "^5.0.0",
     "conventional-changelog-conventionalcommits": "^10.2.0",
     "jsdom": "^29.1.1",

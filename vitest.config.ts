@@ -11,5 +11,15 @@ export default defineConfig({
     // .claude/ can hold agent worktrees (full repo checkouts) whose duplicate
     // test files would otherwise be collected and run against a stale state.
     exclude: [...configDefaults.exclude, "e2e/**", ".claude/**"],
+    // `npm run test:coverage`. Every src file is reported, tested or not, so
+    // the numbers reflect the whole frontend rather than only imported files.
+    // main.tsx is the React mount point (no logic) and is deliberately left out.
+    coverage: {
+      provider: "v8",
+      include: ["src/**/*.{ts,tsx}"],
+      exclude: ["src/**/*.test.{ts,tsx}", "src/test/**", "src/main.tsx", "src/**/*.d.ts"],
+      reporter: ["text-summary", "text", "html"],
+      reportsDirectory: "coverage",
+    },
   },
 });
