@@ -1,7 +1,7 @@
 use crate::vault::VaultError;
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
-use rand::RngCore;
+use rand::Rng;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 // The items below are not yet called from app code — they're consumed
@@ -37,7 +37,7 @@ pub fn seal(dek: &Dek, aad: &[u8], plaintext: &[u8]) -> Vec<u8> {
     rand::rng().fill_bytes(&mut nonce);
     let ct = cipher
         .encrypt(
-            XNonce::from_slice(&nonce),
+            &XNonce::from(nonce),
             Payload {
                 msg: plaintext,
                 aad,
@@ -56,9 +56,12 @@ pub fn open(dek: &Dek, aad: &[u8], blob: &[u8]) -> Result<Vec<u8>, VaultError> {
         return Err(VaultError::Corrupt);
     }
     let (nonce, ct) = blob.split_at(NONCE_LEN);
+    // Length is guaranteed by the split above; TryFrom replaces the deprecated
+    // (panicking) from_slice and keeps the corrupt-blob path explicit.
+    let nonce = XNonce::try_from(nonce).map_err(|_| VaultError::Corrupt)?;
     let cipher = XChaCha20Poly1305::new(dek.expose().into());
     cipher
-        .decrypt(XNonce::from_slice(nonce), Payload { msg: ct, aad })
+        .decrypt(&nonce, Payload { msg: ct, aad })
         .map_err(|_| VaultError::WrongKey)
 }
 

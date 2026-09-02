@@ -25,12 +25,12 @@ pub struct Pkce {
 }
 
 fn random_b64url(n_bytes: usize) -> String {
-    // rand 0.9: OsRng can fail, so it implements TryRngCore rather than RngCore.
-    use rand::TryRngCore;
+    // rand 0.10: `rand::rng()` is the OS-seeded, periodically reseeded CSPRNG
+    // (the same generator the vault uses for keys, nonces and salts); OsRng is
+    // no longer re-exported from `rand::rngs`.
+    use rand::Rng;
     let mut bytes = vec![0u8; n_bytes];
-    rand::rngs::OsRng
-        .try_fill_bytes(&mut bytes)
-        .expect("OS random number generator unavailable");
+    rand::rng().fill_bytes(&mut bytes);
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&bytes)
 }
 

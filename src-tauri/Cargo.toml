@@ -29,7 +29,7 @@ tauri-plugin-single-instance = { version = "2.4.2", features = ["deep-link"] }
 tauri-plugin-dialog = "2.7.1"
 tauri-plugin-process = "2.3.1"
 tauri-plugin-deep-link = "2"
-base64 = "0.22"
+base64 = "0.23"
 regex = "1"
 uuid = { version = "1", features = ["v4"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "charset", "http2", "json", "multipart", "query"] }
@@ -38,13 +38,13 @@ tokio = { version = "1", default-features = false, features = ["net", "sync", "t
 # Auth bridge (A1): PKCE + OS keychain token storage.
 keyring = { version = "3", features = ["apple-native"] }
 sha2 = "0.11"
-rand = "0.9"
+rand = "0.10"
 url = "2"
 time = { version = "0.3", features = ["parsing", "formatting"] }
 comrak = "0.54.0"
 htmd = "0.5.5"
-argon2 = "0.5"
-chacha20poly1305 = "0.10"
+argon2 = "0.6"
+chacha20poly1305 = "0.11"
 zeroize = { version = "1", features = ["derive"] }
 
 # Biometric vault unlock (Task 8) — desktop macOS Touch ID via LAContext.

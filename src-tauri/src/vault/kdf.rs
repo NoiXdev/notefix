@@ -1,7 +1,7 @@
 use crate::vault::aead::{open, seal, Dek};
 use crate::vault::VaultError;
 use argon2::{Algorithm, Argon2, Params, Version};
-use rand::RngCore;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 

@@ -3,7 +3,7 @@
 //! a later task — so items carry `#[allow(dead_code)]` per the Task 1/2
 //! precedent in this module tree.
 
-use rand::RngCore;
+use rand::Rng;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// Crockford base32 alphabet: no `I`, `L`, `O`, `U`, to avoid visual

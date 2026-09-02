@@ -8,7 +8,7 @@ use aead::Dek;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use kdf::{derive_kek, unwrap_dek, wrap_dek, KdfParams};
-use rand::RngCore;
+use rand::Rng;
 use recovery::RecoveryKey;
 use serde::{Deserialize, Serialize};
 
