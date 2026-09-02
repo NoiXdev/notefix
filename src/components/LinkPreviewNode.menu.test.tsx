@@ -22,4 +22,29 @@ describe('LinkPreviewView context menu', () => {
     fireEvent.click(screen.getByText('Link öffnen'));
     expect(api.openExternal).toHaveBeenCalledWith('https://ex.com/a');
   });
+
+  it('the display submenu sets url/inline/card via updateAttributes', () => {
+    const p = props();
+    render(<LinkPreviewCtx.Provider value={{ enabled: true, mode: 'card' }}><LinkPreviewView {...p} /></LinkPreviewCtx.Provider>);
+    fireEvent.contextMenu(screen.getByText('Titel'));
+    fireEvent.mouseEnter(screen.getByText('Darstellung'));
+    fireEvent.click(screen.getByText('Link'));
+    expect((p as unknown as { updateAttributes: ReturnType<typeof vi.fn> }).updateAttributes).toHaveBeenCalledWith({ display: 'url' });
+  });
+
+  it('"remove" calls deleteNode', () => {
+    const p = props();
+    render(<LinkPreviewCtx.Provider value={{ enabled: true, mode: 'card' }}><LinkPreviewView {...p} /></LinkPreviewCtx.Provider>);
+    fireEvent.contextMenu(screen.getByText('Titel'));
+    fireEvent.click(screen.getByText('Entfernen'));
+    expect((p as unknown as { deleteNode: ReturnType<typeof vi.fn> }).deleteNode).toHaveBeenCalledOnce();
+  });
+
+  it('closes the menu on Escape', () => {
+    render(<LinkPreviewCtx.Provider value={{ enabled: true, mode: 'card' }}><LinkPreviewView {...props()} /></LinkPreviewCtx.Provider>);
+    fireEvent.contextMenu(screen.getByText('Titel'));
+    expect(screen.getByText('Link öffnen')).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByText('Link öffnen')).not.toBeInTheDocument();
+  });
 });
