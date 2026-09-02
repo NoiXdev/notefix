@@ -60,22 +60,28 @@ fn decode_dek(b64: &str) -> Result<Dek, VaultError> {
     Ok(dek)
 }
 
+/// Map the result of a keychain `set_password` call to our domain error.
+/// Pulled out of [`store_dek`] so this bookkeeping is testable without a real
+/// keychain write.
+fn map_store_result(res: Result<(), keyring::Error>) -> Result<(), VaultError> {
+    res.map_err(|e| VaultError::Io(e.to_string()))
+}
+
 /// Writes the base64-encoded DEK to the `vault-dek` keychain entry.
 pub fn store_dek(dek: &Dek) -> Result<(), VaultError> {
     let entry = biometric_entry()?;
     let mut b64 = encode_dek(dek);
-    let res = entry
-        .set_password(&b64)
-        .map_err(|e| VaultError::Io(e.to_string()));
+    let res = map_store_result(entry.set_password(&b64));
     b64.zeroize();
     res
 }
 
-/// Reads and base64-decodes the `vault-dek` keychain entry. Returns
-/// `Ok(None)` when no entry exists (biometric unlock not enrolled).
-pub fn load_dek() -> Result<Option<Dek>, VaultError> {
-    let entry = biometric_entry()?;
-    let mut b64 = match entry.get_password() {
+/// Map the result of a keychain `get_password` call to the `load_dek`
+/// outcome: no entry ⇒ `Ok(None)`, other keychain error ⇒ `Err(Io)`, entry
+/// found ⇒ base64-decode it. Pulled out of [`load_dek`] so this mapping and
+/// decoding logic is testable without a real keychain read.
+fn map_load_result(res: Result<String, keyring::Error>) -> Result<Option<Dek>, VaultError> {
+    let mut b64 = match res {
         Ok(s) => s,
         Err(keyring::Error::NoEntry) => return Ok(None),
         Err(e) => return Err(VaultError::Io(e.to_string())),
@@ -85,12 +91,40 @@ pub fn load_dek() -> Result<Option<Dek>, VaultError> {
     dek.map(Some)
 }
 
+/// Reads and base64-decodes the `vault-dek` keychain entry. Returns
+/// `Ok(None)` when no entry exists (biometric unlock not enrolled).
+pub fn load_dek() -> Result<Option<Dek>, VaultError> {
+    let entry = biometric_entry()?;
+    map_load_result(entry.get_password())
+}
+
+/// Map the result of a keychain `delete_credential` call: success or a
+/// missing entry both count as success (disabling an already-disabled
+/// biometric unlock is a no-op). Pulled out of [`clear`] so this bookkeeping
+/// is testable without a real keychain delete.
+fn map_clear_result(res: Result<(), keyring::Error>) -> Result<(), VaultError> {
+    match res {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(VaultError::Io(e.to_string())),
+    }
+}
+
 /// Deletes the `vault-dek` keychain entry. A missing entry is treated as
 /// success (disabling an already-disabled biometric unlock is a no-op).
 pub fn clear() -> Result<(), VaultError> {
-    match biometric_entry()?.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(VaultError::Io(e.to_string())),
+    map_clear_result(biometric_entry()?.delete_credential())
+}
+
+/// Map the result of a keychain `get_password` call to an enrollment flag,
+/// zeroizing the secret either way. Pulled out of [`is_enrolled`] so this
+/// bookkeeping is testable without a real keychain read.
+fn map_enrolled_result(res: Result<String, keyring::Error>) -> bool {
+    match res {
+        Ok(mut secret) => {
+            secret.zeroize();
+            true
+        }
+        Err(_) => false,
     }
 }
 
@@ -100,13 +134,7 @@ pub fn clear() -> Result<(), VaultError> {
 /// base64 secret is zeroized and dropped immediately.
 pub fn is_enrolled() -> bool {
     match biometric_entry() {
-        Ok(entry) => match entry.get_password() {
-            Ok(mut secret) => {
-                secret.zeroize();
-                true
-            }
-            Err(_) => false,
-        },
+        Ok(entry) => map_enrolled_result(entry.get_password()),
         Err(_) => false,
     }
 }
@@ -224,6 +252,63 @@ mod tests {
             decode_dek("not valid base64 !!!"),
             Err(VaultError::Crypto(_))
         ));
+    }
+
+    #[test]
+    fn map_store_result_passes_through_ok_and_maps_err() {
+        assert!(map_store_result(Ok(())).is_ok());
+        assert!(matches!(
+            map_store_result(Err(keyring::Error::NoEntry)),
+            Err(VaultError::Io(_))
+        ));
+    }
+
+    #[test]
+    fn map_load_result_decodes_the_found_entry() {
+        let dek = Dek::random();
+        let encoded = encode_dek(&dek);
+        let out = map_load_result(Ok(encoded)).unwrap();
+        assert_eq!(out.unwrap().expose(), dek.expose());
+    }
+
+    #[test]
+    fn map_load_result_no_entry_is_ok_none() {
+        assert!(map_load_result(Err(keyring::Error::NoEntry))
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn map_load_result_other_keychain_error_maps_to_io() {
+        let err = keyring::Error::Invalid("account".into(), "bad".into());
+        assert!(matches!(map_load_result(Err(err)), Err(VaultError::Io(_))));
+    }
+
+    #[test]
+    fn map_load_result_propagates_decode_errors() {
+        let short = STANDARD.encode([0u8; 16]);
+        assert!(matches!(
+            map_load_result(Ok(short)),
+            Err(VaultError::Corrupt)
+        ));
+    }
+
+    #[test]
+    fn map_clear_result_treats_ok_and_no_entry_as_success() {
+        assert!(map_clear_result(Ok(())).is_ok());
+        assert!(map_clear_result(Err(keyring::Error::NoEntry)).is_ok());
+    }
+
+    #[test]
+    fn map_clear_result_other_error_maps_to_io() {
+        let err = keyring::Error::Invalid("account".into(), "bad".into());
+        assert!(matches!(map_clear_result(Err(err)), Err(VaultError::Io(_))));
+    }
+
+    #[test]
+    fn map_enrolled_result_true_on_found_false_on_error() {
+        assert!(map_enrolled_result(Ok("dGVzdA==".to_string())));
+        assert!(!map_enrolled_result(Err(keyring::Error::NoEntry)));
     }
 
     // On any non-macOS target the biometric prompt is unsupported. (This does
