@@ -510,6 +510,12 @@ export const en = {
     remove: 'Remove',
     removeFile: 'Also delete the database file',
     active: 'active',
+    vault: {
+      none: 'No vault',
+      set: 'Vault set',
+      touchId: 'Touch ID',
+      changePassphrase: 'Change passphrase',
+    },
   },
   sync: {
     pickWorkspace: 'Choose workspace',
@@ -571,6 +577,8 @@ export const en = {
     },
     title: 'Security',
     subtitle: 'Protect notes behind a passphrase vault.',
+    forContext: 'For {{name}}',
+    otherContextsHint: "Other contexts' vaults are managed under Contexts.",
     notSetUp: 'No vault set up',
     setUp: 'Set up vault',
     locked: 'Locked',

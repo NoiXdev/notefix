@@ -395,6 +395,7 @@ describe('api.contexts', () => {
   const ctx = {
     id: 'c1', label: 'Local', kind: 'local' as const, path: '/db',
     serverUrl: '', workspaceId: '', active: true,
+    vaultExists: false, vaultBiometric: false,
   };
 
   it('list() calls contexts_list with no args', async () => {
@@ -473,6 +474,15 @@ describe('api.contexts', () => {
       'sync_status',
       undefined,
       { state: 'synced', lastSyncedAt: 42, pending: 0 },
+    );
+  });
+
+  it('vaultChangePassphrase(id, current, next) calls context_vault_change_passphrase with the exact args', async () => {
+    await expectInvoke(
+      () => api.contexts.vaultChangePassphrase('c1', 'old', 'new'),
+      'context_vault_change_passphrase',
+      { id: 'c1', current: 'old', next: 'new' },
+      undefined,
     );
   });
 });

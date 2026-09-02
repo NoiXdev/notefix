@@ -510,6 +510,12 @@ export const fr = {
     remove: 'Supprimer',
     removeFile: 'Supprimer aussi le fichier',
     active: 'actif',
+    vault: {
+      none: 'Aucun coffre',
+      set: 'Coffre configuré',
+      touchId: 'Touch ID',
+      changePassphrase: 'Changer le mot de passe',
+    },
   },
   sync: {
     pickWorkspace: 'Choisir un espace',
@@ -571,6 +577,8 @@ export const fr = {
     },
     title: 'Sécurité',
     subtitle: 'Protégez vos notes avec un coffre à mot de passe.',
+    forContext: 'Pour {{name}}',
+    otherContextsHint: 'Les coffres des autres contextes se gèrent depuis Contextes.',
     notSetUp: 'Aucun coffre configuré',
     setUp: 'Configurer le coffre',
     locked: 'Verrouillé',

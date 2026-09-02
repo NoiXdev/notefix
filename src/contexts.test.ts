@@ -3,6 +3,7 @@ import { nextContextId, type ContextInfo } from './contexts';
 
 const ctx = (id: string, active = false): ContextInfo => ({
   id, label: id, kind: 'local', path: '', serverUrl: '', workspaceId: '', active,
+  vaultExists: false, vaultBiometric: false,
 });
 
 describe('nextContextId', () => {

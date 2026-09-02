@@ -107,6 +107,9 @@ export const api = {
       invoke("context_bind_workspace", { id, workspaceId, label }),
     syncNow: (): Promise<void> => invoke("sync_now"),
     syncStatus: (): Promise<import("./syncStatus").SyncStatus> => invoke("sync_status"),
+    /** Change a context's vault passphrase without switching into it. */
+    vaultChangePassphrase: (id: string, current: string, next: string): Promise<void> =>
+      invoke("context_vault_change_passphrase", { id, current, next }),
   },
 
   vault: {

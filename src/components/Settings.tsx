@@ -155,8 +155,18 @@ function AppsPage() {
   );
 }
 
-/** In-app "change the vault passphrase" dialog: current + new + confirm-new. */
-function ChangePassphraseDialog({ vault, onClose }: { vault: ReturnType<typeof useVault>; onClose: () => void }) {
+/**
+ * In-app "change a vault passphrase" dialog: current + new + confirm-new.
+ * Generalized over `onSubmit` so it can rewrap either the active context's
+ * vault (Security page, via `vault.changePassphrase`) or a specific,
+ * possibly non-active, context's vault (Contexts page, via
+ * `api.contexts.vaultChangePassphrase`).
+ */
+function ChangePassphraseDialog({ onSubmit, onClose, title }: {
+  onSubmit: (current: string, next: string) => Promise<void>;
+  onClose: () => void;
+  title?: string;
+}) {
   const { t } = useTranslation();
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
@@ -170,7 +180,7 @@ function ChangePassphraseDialog({ vault, onClose }: { vault: ReturnType<typeof u
     }
     setError(null);
     try {
-      await vault.changePassphrase(current, next);
+      await onSubmit(current, next);
       onClose();
     } catch {
       setError(t("security.wrongCurrent"));
@@ -180,7 +190,7 @@ function ChangePassphraseDialog({ vault, onClose }: { vault: ReturnType<typeof u
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.45)" }} onClick={onClose}>
       <div className="w-96 rounded-lg bg-gray-900 border border-gray-700 p-5" onClick={e => e.stopPropagation()}>
-        <h2 className="text-gray-100 text-base font-semibold mb-3">{t("security.changePassphrase")}</h2>
+        <h2 className="text-gray-100 text-base font-semibold mb-3">{title ?? t("security.changePassphrase")}</h2>
         <input
           type="password"
           autoFocus
@@ -237,9 +247,21 @@ function SecurityPage({ settings, onSetSetting }: {
   const [showSetup, setShowSetup] = useState(false);
   const [showUnlockForBiometric, setShowUnlockForBiometric] = useState(false);
   const [showChangePass, setShowChangePass] = useState(false);
+  const [activeContextLabel, setActiveContextLabel] = useState<string | null>(null);
 
   useEffect(() => {
     api.vault.biometricAvailable().then(setBiometricAvailable);
+  }, []);
+
+  // The vault this page manages is always the ACTIVE context's — name it
+  // explicitly, since every other context's vault now lives under Contexts.
+  useEffect(() => {
+    void api.contexts.list().then(list => {
+      const active = list.find(c => c.active);
+      if (!active) return;
+      setActiveContextLabel(active.label || (active.kind === "server" ? active.serverUrl : t("contexts.localDefault")));
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const enableBiometric = async () => {
@@ -271,7 +293,11 @@ function SecurityPage({ settings, onSetSetting }: {
   return (
     <div>
       <h1 className="text-2xl font-bold text-gray-900 mb-1">{t("security.title")}</h1>
-      <p className="text-sm text-gray-500 mb-6">{t("security.subtitle")}</p>
+      <p className="text-sm text-gray-500 mb-1">{t("security.subtitle")}</p>
+      {activeContextLabel && (
+        <p className="text-sm text-gray-600">{t("security.forContext", { name: activeContextLabel })}</p>
+      )}
+      <p className="text-xs text-gray-500 mb-6">{t("security.otherContextsHint")}</p>
 
       <SettingsTabs tabs={tabs} active={tab} onChange={id => setTab(id as "vault" | "autoLock")} />
 
@@ -371,7 +397,12 @@ function SecurityPage({ settings, onSetSetting }: {
           onCancel={() => setShowUnlockForBiometric(false)}
         />
       )}
-      {showChangePass && <ChangePassphraseDialog vault={vault} onClose={() => setShowChangePass(false)} />}
+      {showChangePass && (
+        <ChangePassphraseDialog
+          onSubmit={(current, next) => vault.changePassphrase(current, next)}
+          onClose={() => setShowChangePass(false)}
+        />
+      )}
     </div>
   );
 }
@@ -924,6 +955,7 @@ type CtxDialog =
   | { mode: "addServer" }
   | { mode: "rename"; c: ContextInfo }
   | { mode: "remove"; c: ContextInfo }
+  | { mode: "vault"; c: ContextInfo }
   | null;
 
 function ContextsPage() {
@@ -977,8 +1009,21 @@ function ContextsPage() {
                 )}
               </div>
               <div className="text-xs text-gray-500 break-all font-mono">{c.kind === "server" ? c.serverUrl : c.path}</div>
+              <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                <span className="rounded px-1.5 py-0.5 text-[10px] font-medium" style={{ background: "var(--line-muted)", color: "#1c1917" }}>
+                  {c.vaultExists ? t("contexts.vault.set") : t("contexts.vault.none")}
+                </span>
+                {c.vaultExists && c.vaultBiometric && (
+                  <span className="rounded px-1.5 py-0.5 text-[10px] font-medium" style={{ background: "var(--line-muted)", color: "#1c1917" }}>
+                    {t("contexts.vault.touchId")}
+                  </span>
+                )}
+              </div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
+              {c.vaultExists && (
+                <button onClick={() => setDialog({ mode: "vault", c })} className="px-3 py-1 rounded text-xs font-medium border" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>{t("contexts.vault.changePassphrase")}</button>
+              )}
               <button onClick={() => setDialog({ mode: "rename", c })} className="px-3 py-1 rounded text-xs font-medium border" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>{t("contexts.rename")}</button>
               <button onClick={() => setDialog({ mode: "remove", c })} disabled={c.active} className="px-3 py-1 rounded text-xs font-medium border disabled:opacity-40 disabled:cursor-not-allowed" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>{t("contexts.remove")}</button>
             </div>
@@ -1018,6 +1063,13 @@ function ContextsPage() {
           placeholder={t("contexts.addPrompt")}
           onSubmit={async name => { setCtx(await api.contexts.rename(dialog.c.id, name)); close(); }}
           onCancel={close}
+        />
+      )}
+      {dialog?.mode === "vault" && (
+        <ChangePassphraseDialog
+          title={t("contexts.vault.changePassphrase")}
+          onSubmit={(current, next) => api.contexts.vaultChangePassphrase(dialog.c.id, current, next)}
+          onClose={() => { close(); void api.contexts.list().then(setCtx); }}
         />
       )}
       {dialog?.mode === "remove" && (

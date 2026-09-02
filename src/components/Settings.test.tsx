@@ -26,6 +26,7 @@ const {
   mockContextsAdd,
   mockContextsRename,
   mockContextsRemove,
+  mockContextsVaultChangePassphrase,
   mockServerAuthBegin,
   mockOnContextChanged,
   mockOpenExternal,
@@ -55,6 +56,7 @@ const {
   mockContextsAdd: vi.fn(() => Promise.resolve([])),
   mockContextsRename: vi.fn(() => Promise.resolve([])),
   mockContextsRemove: vi.fn(() => Promise.resolve([])),
+  mockContextsVaultChangePassphrase: vi.fn(() => Promise.resolve()),
   mockServerAuthBegin: vi.fn(() => Promise.resolve("https://server.example.com/authorize")),
   mockOnContextChanged: vi.fn(() => () => {}),
   mockOpenExternal: vi.fn(),
@@ -93,6 +95,7 @@ vi.mock("../api", () => ({
       add: mockContextsAdd,
       rename: mockContextsRename,
       remove: mockContextsRemove,
+      vaultChangePassphrase: mockContextsVaultChangePassphrase,
       serverAuthBegin: mockServerAuthBegin,
     },
   },
@@ -356,6 +359,17 @@ describe("Settings — Security", () => {
     render(<Settings onClose={vi.fn()} settings={full} onSetSetting={vi.fn()} onExport={vi.fn()} />);
     fireEvent.click(screen.getByText("Sicherheit"));
     await waitFor(() => expect(screen.getByText("Mit Touch ID entsperren")).toBeInTheDocument());
+  });
+
+  it("names the active context this page manages, and hints that other contexts live under Contexts", async () => {
+    mockContextsList.mockResolvedValueOnce([
+      { id: "c-local", label: "", kind: "local" as const, path: "/local.db", serverUrl: "", workspaceId: "", active: false, vaultExists: false, vaultBiometric: false },
+      { id: "c-server", label: "Team", kind: "server" as const, path: "", serverUrl: "https://s.example.com", workspaceId: "w1", active: true, vaultExists: true, vaultBiometric: false },
+    ]);
+    render(<Settings onClose={vi.fn()} settings={full} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Sicherheit"));
+    await waitFor(() => expect(screen.getByText("Für Team")).toBeInTheDocument());
+    expect(screen.getByText("Tresore anderer Kontexte werden unter Kontexte verwaltet.")).toBeInTheDocument();
   });
 });
 
@@ -755,8 +769,8 @@ describe("Settings — Appearance (editor tab)", () => {
 
 describe("Settings — Contexts page", () => {
   const contexts = [
-    { id: "c-local", label: "", kind: "local" as const, path: "/local.db", serverUrl: "", workspaceId: "", active: true },
-    { id: "c-server", label: "Team", kind: "server" as const, path: "", serverUrl: "https://s.example.com", workspaceId: "w1", active: false },
+    { id: "c-local", label: "", kind: "local" as const, path: "/local.db", serverUrl: "", workspaceId: "", active: true, vaultExists: false, vaultBiometric: false },
+    { id: "c-server", label: "Team", kind: "server" as const, path: "", serverUrl: "https://s.example.com", workspaceId: "w1", active: false, vaultExists: true, vaultBiometric: true },
   ];
 
   it("lists local and server contexts with the active badge", async () => {
@@ -849,6 +863,38 @@ describe("Settings — Contexts page", () => {
     fireEvent.click(confirmButtons[confirmButtons.length - 1]);
 
     await waitFor(() => expect(mockContextsRemove).toHaveBeenCalledWith("c-server", true));
+  });
+
+  it("shows a vault badge per context, and the change-passphrase button only where a vault exists", async () => {
+    mockContextsList.mockResolvedValueOnce(contexts);
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Kontexte"));
+    await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+
+    // c-local has no vault: "Kein Tresor" badge, no Touch ID badge, no button.
+    expect(screen.getByText("Kein Tresor")).toBeInTheDocument();
+    // c-server has a vault with Touch ID enrolled: "Tresor eingerichtet" + "Touch ID" badges.
+    expect(screen.getByText("Tresor eingerichtet")).toBeInTheDocument();
+    expect(screen.getByText("Touch ID")).toBeInTheDocument();
+    // Only one row (c-server) gets the change-passphrase button.
+    expect(screen.getAllByRole("button", { name: "Passwort ändern" })).toHaveLength(1);
+  });
+
+  it("changes a non-active context's vault passphrase without switching into it", async () => {
+    mockContextsList.mockResolvedValueOnce(contexts);
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Kontexte"));
+    await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Passwort ändern" }));
+    fireEvent.change(screen.getByPlaceholderText("Aktuelles Passwort"), { target: { value: "old" } });
+    fireEvent.change(screen.getByPlaceholderText("Neues Passwort"), { target: { value: "new123" } });
+    fireEvent.change(screen.getByPlaceholderText("Neues Passwort bestätigen"), { target: { value: "new123" } });
+    fireEvent.click(screen.getByRole("button", { name: "Ändern" }));
+
+    await waitFor(() => expect(mockContextsVaultChangePassphrase).toHaveBeenCalledWith("c-server", "old", "new123"));
+    expect(mockVaultChangePassphrase).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByPlaceholderText("Aktuelles Passwort")).not.toBeInTheDocument());
   });
 });
 

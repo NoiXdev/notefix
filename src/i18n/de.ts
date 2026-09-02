@@ -510,6 +510,12 @@ export const de = {
     remove: 'Entfernen',
     removeFile: 'Datenbankdatei mitlöschen',
     active: 'aktiv',
+    vault: {
+      none: 'Kein Tresor',
+      set: 'Tresor eingerichtet',
+      touchId: 'Touch ID',
+      changePassphrase: 'Passwort ändern',
+    },
   },
   sync: {
     pickWorkspace: 'Workspace wählen',
@@ -571,6 +577,8 @@ export const de = {
     },
     title: 'Sicherheit',
     subtitle: 'Notizen mit einem Passwort-Tresor schützen.',
+    forContext: 'Für {{name}}',
+    otherContextsHint: 'Tresore anderer Kontexte werden unter Kontexte verwaltet.',
     notSetUp: 'Kein Tresor eingerichtet',
     setUp: 'Tresor einrichten',
     locked: 'Gesperrt',

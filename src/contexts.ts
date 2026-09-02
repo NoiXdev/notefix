@@ -8,6 +8,10 @@ export interface ContextInfo {
   /** Bound server workspace id; empty until a workspace is picked. */
   workspaceId: string;
   active: boolean;
+  /** Whether this context's own DB has a vault record set up. */
+  vaultExists: boolean;
+  /** Whether this context has a Touch ID keychain item enrolled. */
+  vaultBiometric: boolean;
 }
 
 /**
