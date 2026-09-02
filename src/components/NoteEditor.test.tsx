@@ -369,6 +369,21 @@ describe("NoteEditor — markdown view toggle", () => {
     fireEvent.mouseDown(screen.getByTitle("Markdown"));
     expect(fakeEditor.commands.setContent).toHaveBeenLastCalledWith("<p>Hello</p>\n");
   });
+
+  // Regression: react-simple-code-editor is CJS-only. Under Vite's browser
+  // CJS interop its bare default import once resolved to the module namespace
+  // object instead of the component, so React threw "Element type is invalid …
+  // got: object" the moment the markdown view mounted — while the test suite
+  // stayed green because vitest interops differently. The real (unmocked)
+  // code editor must mount its textarea with the converted markdown.
+  it("mounts the real code editor textarea with the note's markdown", () => {
+    fakeEditor.getHTML.mockImplementation(() => "<h2>Title</h2><p>Body</p>");
+    const { container } = render(<NoteEditor note={mockNote} onChange={onChange} />);
+    fireEvent.mouseDown(screen.getByTitle("Markdown"));
+    const textarea = container.querySelector(".md-code-editor textarea") as HTMLTextAreaElement | null;
+    expect(textarea).not.toBeNull();
+    expect(textarea!.value).toBe("## Title\n\nBody");
+  });
 });
 
 describe("NoteEditor — autosave debounce", () => {
