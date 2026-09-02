@@ -27,8 +27,14 @@ export default function VaultUnlock({ biometricAvailable, unlock, unlockRecovery
     try {
       await unlockBiometric();
       onSuccess();
-    } catch {
-      setError(t('vault.biometricFailed'));
+    } catch (e) {
+      // The backend refuses a keychain DEK that doesn't belong to this
+      // context's vault, and one whose vault predates the ownership check;
+      // both need a different action than "try Touch ID again".
+      const msg = e instanceof Error ? e.message : String(e ?? '');
+      if (msg.includes('different context')) setError(t('vault.biometricOtherContext'));
+      else if (msg.includes('upgrading this vault')) setError(t('vault.biometricNeedsPassphrase'));
+      else setError(t('vault.biometricFailed'));
     }
   };
 

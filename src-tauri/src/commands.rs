@@ -1216,11 +1216,21 @@ pub async fn run_image_phase(
 
 type VaultStateHandle<'r> = State<'r, Mutex<crate::vault::state::VaultState>>;
 
+/// The active context's id — the scope of its biometric keychain item.
+fn active_context_id(reg: &State<'_, Mutex<crate::profiles::Registry>>) -> Result<String, String> {
+    let reg = reg.lock().map_err(|e| e.to_string())?;
+    reg.active()
+        .map(|c| c.id.clone())
+        .ok_or_else(|| "no active context".to_string())
+}
+
 #[tauri::command]
 pub fn vault_status(
     store: State<'_, Mutex<Store>>,
     vault: VaultStateHandle<'_>,
+    reg: State<'_, Mutex<crate::profiles::Registry>>,
 ) -> Result<VaultStatus, String> {
+    let context_id = active_context_id(&reg)?;
     let exists = {
         let store = store.lock().map_err(|e| e.to_string())?;
         store.vault_record().map_err(|e| e.to_string())?.is_some()
@@ -1233,7 +1243,7 @@ pub fn vault_status(
         // ID (`is_available`) AND the user has enrolled a wrapped DEK
         // (`is_enrolled`). `is_enrolled` reads the keychain without prompting.
         biometric: crate::vault::biometric::is_available()
-            && crate::vault::biometric::is_enrolled(),
+            && crate::vault::biometric::is_enrolled(&context_id),
     })
 }
 
@@ -1248,16 +1258,23 @@ pub fn vault_biometric_available() -> bool {
 /// so it can later be released after a Touch ID prompt. Requires the vault to
 /// be unlocked — the DEK is taken from the live `VaultState`, never re-derived.
 #[tauri::command]
-pub fn vault_biometric_enable(vault: VaultStateHandle<'_>) -> Result<(), String> {
+pub fn vault_biometric_enable(
+    vault: VaultStateHandle<'_>,
+    reg: State<'_, Mutex<crate::profiles::Registry>>,
+) -> Result<(), String> {
+    let context_id = active_context_id(&reg)?;
     let vault = vault.lock().map_err(|e| e.to_string())?;
     let dek = vault.dek().ok_or_else(|| "vault locked".to_string())?;
-    crate::vault::biometric::store_dek(dek).map_err(String::from)
+    crate::vault::biometric::store_dek(&context_id, dek).map_err(String::from)
 }
 
 /// Disables biometric unlock by deleting the keychain-stored DEK. Idempotent.
 #[tauri::command]
-pub fn vault_biometric_disable() -> Result<(), String> {
-    crate::vault::biometric::clear().map_err(String::from)
+pub fn vault_biometric_disable(
+    reg: State<'_, Mutex<crate::profiles::Registry>>,
+) -> Result<(), String> {
+    let context_id = active_context_id(&reg)?;
+    crate::vault::biometric::clear(&context_id).map_err(String::from)
 }
 
 /// Unlocks the vault via biometrics: prompt Touch ID, then release the
@@ -1268,16 +1285,24 @@ pub fn vault_biometric_disable() -> Result<(), String> {
 pub async fn vault_unlock_biometric(
     store: State<'_, Mutex<Store>>,
     vault: VaultStateHandle<'_>,
+    reg: State<'_, Mutex<crate::profiles::Registry>>,
 ) -> Result<(), String> {
+    let context_id = active_context_id(&reg)?;
     tauri::async_runtime::spawn_blocking(|| {
         crate::vault::biometric::authenticate("Unlock your protected notes")
     })
     .await
     .map_err(|e| e.to_string())?
     .map_err(String::from)?;
-    let dek = crate::vault::biometric::load_dek()
+    let dek = crate::vault::biometric::load_dek(&context_id)
         .map_err(String::from)?
         .ok_or_else(|| "vault: biometric unlock is not set up".to_string())?;
+    // The keychain item carries no proof of ownership: prove the DEK opens
+    // THIS context's vault before it can seal anything (see verify_dek).
+    {
+        let store = store.lock().map_err(|e| e.to_string())?;
+        ops::verify_dek_for_store(&store, &dek)?;
+    }
     let backfill_dek = dek.clone();
     vault.lock().map_err(|e| e.to_string())?.unlock(dek);
     if let Ok(store) = store.lock() {
@@ -1319,6 +1344,7 @@ pub fn vault_unlock(
     let backfill_dek = dek.clone();
     vault.lock().map_err(|e| e.to_string())?.unlock(dek);
     if let Ok(store) = store.lock() {
+        ops::ensure_dek_check(&store, &record, &backfill_dek);
         ops::backfill_protected_titles(&store, &backfill_dek);
     }
     Ok(())
@@ -1339,6 +1365,7 @@ pub fn vault_unlock_recovery(
     let backfill_dek = dek.clone();
     vault.lock().map_err(|e| e.to_string())?.unlock(dek);
     if let Ok(store) = store.lock() {
+        ops::ensure_dek_check(&store, &record, &backfill_dek);
         ops::backfill_protected_titles(&store, &backfill_dek);
     }
     Ok(())

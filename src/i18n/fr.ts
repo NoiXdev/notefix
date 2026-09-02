@@ -548,6 +548,8 @@ export const fr = {
     unlock: 'Déverrouiller',
     wrongPassphrase: 'Mot de passe incorrect',
     biometricFailed: 'Échec de Touch ID — saisissez votre mot de passe',
+    biometricOtherContext: 'Touch ID est configuré pour un autre contexte — saisissez votre mot de passe et réactivez Touch ID ici',
+    biometricNeedsPassphrase: 'Déverrouillez une fois avec votre mot de passe pour mettre à jour ce coffre, puis réactivez Touch ID',
     cancel: 'Annuler',
     protected: 'Protégée',
     noteLocked: 'Cette note est protégée',

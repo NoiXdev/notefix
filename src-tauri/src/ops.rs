@@ -604,6 +604,41 @@ pub fn vault_unlock_recovery(record: &VaultRecord, recovery: &str) -> Result<Dek
 /// Returns the (unchanged) DEK so the caller can re-arm the session: `current`
 /// was just cryptographically re-verified, so that is safe rather than forcing
 /// a redundant unlock.
+/// Self-heal: a record written before the DEK check existed gains one the
+/// first time its owner proves possession of the DEK via passphrase or
+/// recovery key. Best-effort — a failed write only means the next unlock
+/// tries again; it never fails the unlock itself.
+pub fn ensure_dek_check(store: &Store, record: &VaultRecord, dek: &Dek) {
+    if record.dek_check.is_some() {
+        return;
+    }
+    let upgraded = VaultRecord {
+        kdf_params: record.kdf_params.clone(),
+        dek_wrapped_pass: record.dek_wrapped_pass.clone(),
+        recovery_salt: record.recovery_salt,
+        dek_wrapped_recovery: record.dek_wrapped_recovery.clone(),
+        dek_check: Some(crate::vault::make_dek_check(dek)),
+    };
+    let _ = store.set_vault_record(&upgraded.to_json());
+}
+
+/// Gate for DEKs that arrive WITHOUT a proof of ownership — today the
+/// biometric keychain item. Refuses a DEK that doesn't open this vault's
+/// check (a key from another context), and refuses to guess when the record
+/// has no check yet: that record must first be unlocked with its passphrase
+/// or recovery key once, which writes the check (`ensure_dek_check`).
+pub fn verify_dek_for_store(store: &Store, dek: &Dek) -> Result<(), String> {
+    let record = load_vault_record(store)?;
+    match crate::vault::verify_dek(&record, dek) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(
+            "vault: unlock with your passphrase once to finish upgrading this vault, then re-enable biometric unlock"
+                .to_string(),
+        ),
+        Err(_) => Err("vault: biometric key belongs to a different context".to_string()),
+    }
+}
+
 pub fn vault_change_passphrase(store: &Store, current: &str, next: &str) -> Result<Dek, String> {
     let record = load_vault_record(store)?;
     let dek = crate::vault::unlock_passphrase(&record, current).map_err(String::from)?;

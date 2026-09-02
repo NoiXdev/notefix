@@ -209,6 +209,9 @@ pub fn run() {
             // Protected-notes vault: unlocked DEK lives only here, in memory,
             // for the lifetime of the process — never persisted.
             app.manage(Mutex::new(vault::state::VaultState::default()));
+            // Biometric DEKs are keyed per context now; the old app-wide item
+            // can't be attributed to one and must never be picked up again.
+            let _ = vault::biometric::clear_legacy();
             // In-memory store of in-flight browser auth flows (A1).
             app.manage(commands::PendingAuthMap::default());
             // Notify the background sync loop (Task 7) when an edit or manual

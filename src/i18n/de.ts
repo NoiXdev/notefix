@@ -548,6 +548,8 @@ export const de = {
     unlock: 'Entsperren',
     wrongPassphrase: 'Falsches Passwort',
     biometricFailed: 'Touch ID fehlgeschlagen — bitte Passwort eingeben',
+    biometricOtherContext: 'Touch ID ist für einen anderen Kontext eingerichtet — bitte Passwort eingeben und Touch ID hier neu aktivieren',
+    biometricNeedsPassphrase: 'Bitte einmal mit Passwort entsperren, um den Tresor zu aktualisieren — danach Touch ID neu aktivieren',
     cancel: 'Abbrechen',
     protected: 'Geschützt',
     noteLocked: 'Diese Notiz ist geschützt',

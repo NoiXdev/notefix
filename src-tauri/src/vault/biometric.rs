@@ -26,12 +26,32 @@ use zeroize::Zeroize;
 
 /// Keychain service string — shared with `auth.rs` (`KEYCHAIN_SERVICE`).
 const KEYCHAIN_SERVICE: &str = "dev.noix.notefix";
-/// Keychain account holding the base64-encoded biometric-wrapped DEK.
-const BIOMETRIC_ACCOUNT: &str = "vault-dek";
+/// Keychain account prefix for the biometric-wrapped DEK. The item is scoped
+/// PER CONTEXT (`vault-dek:<context id>`): every context is its own vault
+/// with its own DEK, so a single app-wide item would hand context B the DEK
+/// of context A — reported as "enrolled" everywhere, and able to seal notes
+/// under a key B's record can never unwrap.
+const BIOMETRIC_ACCOUNT_PREFIX: &str = "vault-dek";
+/// The pre-per-context item name. Never read as an enrollment any more —
+/// it can't be attributed to a context — and deleted once at startup.
+const LEGACY_BIOMETRIC_ACCOUNT: &str = "vault-dek";
 
-fn biometric_entry() -> Result<keyring::Entry, VaultError> {
-    keyring::Entry::new(KEYCHAIN_SERVICE, BIOMETRIC_ACCOUNT)
+/// Keychain account name for a context's biometric DEK.
+pub fn account_for(context_id: &str) -> String {
+    format!("{BIOMETRIC_ACCOUNT_PREFIX}:{context_id}")
+}
+
+fn biometric_entry(context_id: &str) -> Result<keyring::Entry, VaultError> {
+    keyring::Entry::new(KEYCHAIN_SERVICE, &account_for(context_id))
         .map_err(|e| VaultError::Io(e.to_string()))
+}
+
+/// Deletes the legacy app-wide `vault-dek` item (idempotent). Called once at
+/// startup so a stale, context-less DEK can never be picked up again.
+pub fn clear_legacy() -> Result<(), VaultError> {
+    let entry = keyring::Entry::new(KEYCHAIN_SERVICE, LEGACY_BIOMETRIC_ACCOUNT)
+        .map_err(|e| VaultError::Io(e.to_string()))?;
+    map_clear_result(entry.delete_credential())
 }
 
 /// Base64-encode a DEK for keychain storage. The returned `String` holds key
@@ -68,8 +88,8 @@ fn map_store_result(res: Result<(), keyring::Error>) -> Result<(), VaultError> {
 }
 
 /// Writes the base64-encoded DEK to the `vault-dek` keychain entry.
-pub fn store_dek(dek: &Dek) -> Result<(), VaultError> {
-    let entry = biometric_entry()?;
+pub fn store_dek(context_id: &str, dek: &Dek) -> Result<(), VaultError> {
+    let entry = biometric_entry(context_id)?;
     let mut b64 = encode_dek(dek);
     let res = map_store_result(entry.set_password(&b64));
     b64.zeroize();
@@ -93,8 +113,8 @@ fn map_load_result(res: Result<String, keyring::Error>) -> Result<Option<Dek>, V
 
 /// Reads and base64-decodes the `vault-dek` keychain entry. Returns
 /// `Ok(None)` when no entry exists (biometric unlock not enrolled).
-pub fn load_dek() -> Result<Option<Dek>, VaultError> {
-    let entry = biometric_entry()?;
+pub fn load_dek(context_id: &str) -> Result<Option<Dek>, VaultError> {
+    let entry = biometric_entry(context_id)?;
     map_load_result(entry.get_password())
 }
 
@@ -111,8 +131,8 @@ fn map_clear_result(res: Result<(), keyring::Error>) -> Result<(), VaultError> {
 
 /// Deletes the `vault-dek` keychain entry. A missing entry is treated as
 /// success (disabling an already-disabled biometric unlock is a no-op).
-pub fn clear() -> Result<(), VaultError> {
-    map_clear_result(biometric_entry()?.delete_credential())
+pub fn clear(context_id: &str) -> Result<(), VaultError> {
+    map_clear_result(biometric_entry(context_id)?.delete_credential())
 }
 
 /// Map the result of a keychain `get_password` call to an enrollment flag,
@@ -132,8 +152,8 @@ fn map_enrolled_result(res: Result<String, keyring::Error>) -> bool {
 /// enrollment **without** prompting for Touch ID or exposing the DEK: reading
 /// the entry does not prompt (no biometric ACL is set on it), and the fetched
 /// base64 secret is zeroized and dropped immediately.
-pub fn is_enrolled() -> bool {
-    match biometric_entry() {
+pub fn is_enrolled(context_id: &str) -> bool {
+    match biometric_entry(context_id) {
         Ok(entry) => map_enrolled_result(entry.get_password()),
         Err(_) => false,
     }
@@ -291,6 +311,13 @@ mod tests {
             map_load_result(Ok(short)),
             Err(VaultError::Corrupt)
         ));
+    }
+
+    #[test]
+    fn keychain_account_is_scoped_per_context_and_distinct_from_legacy() {
+        assert_eq!(account_for("ctx-a"), "vault-dek:ctx-a");
+        assert_ne!(account_for("ctx-a"), account_for("ctx-b"));
+        assert_ne!(account_for("ctx-a"), LEGACY_BIOMETRIC_ACCOUNT);
     }
 
     #[test]

@@ -67,6 +67,37 @@ pub struct VaultRecord {
     pub dek_wrapped_pass: Vec<u8>,
     pub recovery_salt: [u8; 16],
     pub dek_wrapped_recovery: Vec<u8>,
+    /// A fixed magic sealed under the DEK. Lets every unlock path prove a
+    /// candidate DEK really belongs to THIS vault before installing it —
+    /// the guard against a DEK from another context (e.g. a biometric
+    /// keychain item enrolled elsewhere) sealing notes here with a key this
+    /// record can never unwrap again. `None` only on records written before
+    /// this field existed; they gain it on the next successful passphrase or
+    /// recovery unlock (see `ops::ensure_dek_check`).
+    pub dek_check: Option<Vec<u8>>,
+}
+
+/// AAD + plaintext of the DEK check blob. Both are constants, so the blob
+/// reveals nothing about the DEK; a wrong key simply fails to open it.
+const DEK_CHECK_AAD: &[u8] = b"notefix-vault-dek-check";
+const DEK_CHECK_MAGIC: &[u8] = b"notefix-vault-ok";
+
+/// Seals the check magic under `dek` (fresh nonce each time).
+pub fn make_dek_check(dek: &Dek) -> Vec<u8> {
+    aead::seal(dek, DEK_CHECK_AAD, DEK_CHECK_MAGIC)
+}
+
+/// Proves `dek` belongs to `rec`. `Ok(true)` = verified, `Ok(false)` = the
+/// record predates the check (nothing to verify against), `Err(WrongKey)` =
+/// the DEK does NOT belong to this vault.
+pub fn verify_dek(rec: &VaultRecord, dek: &Dek) -> Result<bool, VaultError> {
+    match &rec.dek_check {
+        None => Ok(false),
+        Some(blob) => match aead::open(dek, DEK_CHECK_AAD, blob) {
+            Ok(pt) if pt == DEK_CHECK_MAGIC => Ok(true),
+            _ => Err(VaultError::WrongKey),
+        },
+    }
 }
 
 /// Wire format for [`VaultRecord`]: identical fields, but the raw byte
@@ -78,6 +109,9 @@ struct VaultRecordJson {
     dek_wrapped_pass: String,
     recovery_salt: String,
     dek_wrapped_recovery: String,
+    /// Absent in records written before the DEK check existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    dek_check: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -90,6 +124,7 @@ impl VaultRecord {
             dek_wrapped_pass: STANDARD.encode(&self.dek_wrapped_pass),
             recovery_salt: STANDARD.encode(self.recovery_salt),
             dek_wrapped_recovery: STANDARD.encode(&self.dek_wrapped_recovery),
+            dek_check: self.dek_check.as_ref().map(|b| STANDARD.encode(b)),
         };
         serde_json::to_string(&wire).expect("VaultRecordJson has no non-serializable fields")
     }
@@ -110,11 +145,16 @@ impl VaultRecord {
         let dek_wrapped_recovery = STANDARD
             .decode(wire.dek_wrapped_recovery)
             .map_err(|_| VaultError::Corrupt)?;
+        let dek_check = match wire.dek_check {
+            None => None,
+            Some(b64) => Some(STANDARD.decode(b64).map_err(|_| VaultError::Corrupt)?),
+        };
         Ok(VaultRecord {
             kdf_params: wire.kdf_params,
             dek_wrapped_pass,
             recovery_salt,
             dek_wrapped_recovery,
+            dek_check,
         })
     }
 }
@@ -153,6 +193,7 @@ pub fn setup(passphrase: &str) -> Result<(VaultRecord, RecoveryKey, Dek), VaultE
         dek_wrapped_pass,
         recovery_salt,
         dek_wrapped_recovery,
+        dek_check: Some(make_dek_check(&dek)),
     };
     Ok((record, recovery_key, dek))
 }
@@ -188,6 +229,9 @@ pub fn rewrap_passphrase(rec: &VaultRecord, dek: &Dek, new_passphrase: &str) -> 
         dek_wrapped_pass,
         recovery_salt: rec.recovery_salt,
         dek_wrapped_recovery: rec.dek_wrapped_recovery.clone(),
+        // Always (re)establish the check: a legacy record without one is
+        // upgraded here too, since the caller just proved it owns `dek`.
+        dek_check: Some(make_dek_check(dek)),
     }
 }
 
@@ -217,6 +261,39 @@ mod tests {
             dek.expose()
         );
     }
+    #[test]
+    fn dek_check_verifies_the_owning_dek_and_rejects_another() {
+        let (rec, _rk, dek) = setup("pw").unwrap();
+        assert!(rec.dek_check.is_some(), "setup writes the check");
+        assert!(verify_dek(&rec, &dek).unwrap());
+        let other = Dek::random();
+        assert!(matches!(
+            verify_dek(&rec, &other),
+            Err(VaultError::WrongKey)
+        ));
+        // A rewrap keeps the same DEK, so the new record still verifies it.
+        let rec2 = rewrap_passphrase(&rec, &dek, "pw2");
+        assert!(verify_dek(&rec2, &dek).unwrap());
+    }
+
+    #[test]
+    fn legacy_record_without_check_parses_and_reports_unverified() {
+        // Exactly what a pre-upgrade record looks like on disk: no dek_check.
+        let (rec, _rk, dek) = setup("pw").unwrap();
+        let mut legacy = rec;
+        legacy.dek_check = None;
+        let json = legacy.to_json();
+        assert!(!json.contains("dek_check"), "absent, not null: {json}");
+        let parsed = VaultRecord::from_json(&json).unwrap();
+        assert!(parsed.dek_check.is_none());
+        assert!(!verify_dek(&parsed, &dek).unwrap());
+        // Unlocking a legacy record still works (nothing to verify against).
+        assert_eq!(
+            unlock_passphrase(&parsed, "pw").unwrap().expose(),
+            dek.expose()
+        );
+    }
+
     #[test]
     fn record_json_roundtrips() {
         let (rec, _, _) = setup("x").unwrap();

@@ -31,6 +31,14 @@ Touch ID via `LocalAuthentication`. On mobile and Linux `is_available()`
 simply returns `false` (mobile biometric via a plugin is deferred), so gate
 the biometric UI on that check rather than on `isMobilePlatform` alone.
 
+The biometric keychain item is **per context** (`vault-dek:<context id>`) —
+every context is its own vault with its own DEK, so an app-wide item would
+hand one context another's key. The `VaultRecord` carries a `dek_check`
+(magic sealed under the DEK); every unlock path verifies a candidate DEK
+against it before installing it, and records that predate the check gain it
+on their next passphrase/recovery unlock. The pre-per-context item is
+deleted once at startup; users re-enable Touch ID per context.
+
 ### Two different "mobile" signals — don't confuse them
 
 - `useIsMobile()` (`src/hooks/useIsMobile.ts`) — **viewport width** (≤640px).

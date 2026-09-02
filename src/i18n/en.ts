@@ -548,6 +548,8 @@ export const en = {
     unlock: 'Unlock',
     wrongPassphrase: 'Wrong passphrase',
     biometricFailed: 'Touch ID failed — enter your passphrase',
+    biometricOtherContext: 'Touch ID is set up for a different context — enter your passphrase and re-enable Touch ID here',
+    biometricNeedsPassphrase: 'Unlock with your passphrase once to update this vault, then re-enable Touch ID',
     cancel: 'Cancel',
     protected: 'Protected',
     noteLocked: 'This note is protected',
