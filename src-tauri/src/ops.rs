@@ -48,6 +48,8 @@ pub struct ContextInfo {
     pub server_url: String,
     pub workspace_id: String,
     pub active: bool,
+    pub vault_exists: bool,
+    pub vault_biometric: bool,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -649,6 +651,53 @@ pub fn vault_change_passphrase(store: &Store, current: &str, next: &str) -> Resu
     Ok(dek)
 }
 
+/// Whether the context DB at `path` has a vault record — used by
+/// `contexts_list` to show each context's vault state in the Kontexte page
+/// without switching into it. Opens and migrates a throwaway `Store` handle
+/// on that path; any failure (missing file, unreadable DB, ...) is treated
+/// as "no vault" rather than surfaced, since this is best-effort UI
+/// decoration, not a security gate — the real gate is still
+/// `load_vault_record` on the context actually made active.
+pub fn context_vault_exists(path: &Path) -> bool {
+    (|| -> Result<bool, String> {
+        let store = Store::open(path).map_err(|e| e.to_string())?;
+        crate::migrate::run_migrations(&store.conn).map_err(|e| e.to_string())?;
+        Ok(store.vault_record().map_err(|e| e.to_string())?.is_some())
+    })()
+    .unwrap_or(false)
+}
+
+/// `context_vault_change_passphrase` for a NON-active context: open that
+/// context's own DB, verify `current` and re-wrap the DEK under `next` there
+/// (the same rewrap [`vault_change_passphrase`] performs on the active
+/// store), and discard the returned DEK. That context is not being unlocked
+/// or switched into — `VaultState` (which always tracks the ACTIVE
+/// context) must never be touched here.
+///
+/// The active context is refused: rewrapping it out from under the live
+/// `VaultState`/`Store` split here would desync the two. The command layer
+/// special-cases that id and reuses the existing `vault_change_passphrase`
+/// command path instead (managed store + `vault.unlock(dek)`).
+pub fn change_context_vault_passphrase(
+    reg: &Registry,
+    context_id: &str,
+    current: &str,
+    next: &str,
+) -> Result<(), String> {
+    if context_id == reg.active_id {
+        return Err("active context: use vault_change_passphrase".to_string());
+    }
+    let entry = reg
+        .contexts
+        .iter()
+        .find(|c| c.id == context_id)
+        .ok_or_else(|| "unknown context".to_string())?;
+    let store = Store::open(Path::new(&entry.path)).map_err(|e| e.to_string())?;
+    crate::migrate::run_migrations(&store.conn).map_err(|e| e.to_string())?;
+    vault_change_passphrase(&store, current, next)?;
+    Ok(())
+}
+
 /// `note_set_protected`: encrypts or decrypts one note's stored content in
 /// place, keeping `notes.protected` in sync with the physical content state.
 /// Requires an unlocked vault (`dek`) — the command refuses with
@@ -730,7 +779,19 @@ pub fn set_folder_locked(store: &Store, dek: &Dek, id: &str, locked: bool) -> Re
 // ---------------------------------------------------------------------------
 
 /// Registry snapshot for the frontend context switcher.
-pub fn to_infos(reg: &Registry) -> Vec<ContextInfo> {
+///
+/// `vault_exists`/`biometric` are injected rather than computed here: each
+/// check needs to open the *other* context's DB (or query the keychain),
+/// which this pure/testable core has no business doing. `contexts_list`
+/// (`commands.rs`) supplies real closures; every other caller — mutating a
+/// context and handing back the fresh snapshot — keeps the cheap
+/// [`to_infos`] wrapper, since the frontend re-fetches the vault flags via
+/// its own `contexts.list()` call anyway.
+pub fn to_infos_with(
+    reg: &Registry,
+    vault_exists: impl Fn(&ContextEntry) -> bool,
+    biometric: impl Fn(&ContextEntry) -> bool,
+) -> Vec<ContextInfo> {
     reg.contexts
         .iter()
         .map(|c| ContextInfo {
@@ -741,8 +802,17 @@ pub fn to_infos(reg: &Registry) -> Vec<ContextInfo> {
             server_url: c.server_url.clone(),
             workspace_id: c.workspace_id.clone(),
             active: c.id == reg.active_id,
+            vault_exists: vault_exists(c),
+            vault_biometric: biometric(c),
         })
         .collect()
+}
+
+/// Thin wrapper around [`to_infos_with`] for callers that don't need the
+/// (comparatively expensive) vault flags — every context-mutation op that
+/// returns a fresh snapshot after `add`/`rename`/`remove`/etc.
+pub fn to_infos(reg: &Registry) -> Vec<ContextInfo> {
+    to_infos_with(reg, |_| false, |_| false)
 }
 
 /// Snapshot the registry's contexts as aggregator `Ctx` descriptors
@@ -2892,6 +2962,147 @@ mod vault_change_passphrase_tests {
 }
 
 #[cfg(test)]
+mod context_vault_exists_tests {
+    use super::*;
+
+    #[test]
+    fn false_on_a_fresh_migrated_db_true_after_setup() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("c.db");
+        {
+            let s = Store::open(&path).unwrap();
+            crate::migrate::run_migrations(&s.conn).unwrap();
+        }
+
+        assert!(!context_vault_exists(&path));
+
+        {
+            let s = Store::open(&path).unwrap();
+            vault_setup(&s, "hunter2").unwrap();
+        }
+
+        assert!(context_vault_exists(&path));
+    }
+
+    #[test]
+    fn a_missing_db_file_reports_no_vault_rather_than_erroring() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("does-not-exist.db");
+        assert!(!context_vault_exists(&path));
+    }
+}
+
+#[cfg(test)]
+mod context_vault_change_passphrase_tests {
+    use super::test_support::*;
+    use super::*;
+
+    struct Fixture {
+        _dir: tempfile::TempDir,
+        reg: Registry,
+        other_path: PathBuf,
+    }
+
+    /// A registry with the default (active) context plus a second, NOT
+    /// active, context entry pointing at its own real DB file — the shape
+    /// `change_context_vault_passphrase` is meant to operate on.
+    fn fixture() -> Fixture {
+        let dir = tempfile::tempdir().unwrap();
+        let mut reg = Registry::default_for(&dir.path().join("active.db").to_string_lossy());
+        let other_path = dir.path().join("other.db");
+        reg.add(
+            "other".into(),
+            "Other".into(),
+            other_path.to_string_lossy().into_owned(),
+        );
+        Fixture {
+            _dir: dir,
+            reg,
+            other_path,
+        }
+    }
+
+    fn setup_vault_on(path: &Path, passphrase: &str) -> Vec<String> {
+        let s = Store::open(path).unwrap();
+        crate::migrate::run_migrations(&s.conn).unwrap();
+        let (groups, _dek) = vault_setup(&s, passphrase).unwrap();
+        groups
+    }
+
+    fn reopen_other(f: &Fixture) -> Store {
+        Store::open(&f.other_path).unwrap()
+    }
+
+    #[test]
+    fn rewraps_the_non_active_contexts_vault() {
+        let f = fixture();
+        setup_vault_on(&f.other_path, "old");
+
+        change_context_vault_passphrase(&f.reg, "other", "old", "new").unwrap();
+
+        let s = reopen_other(&f);
+        assert!(vault_unlock_passphrase(&record(&s), "old").is_err());
+        assert!(vault_unlock_passphrase(&record(&s), "new").is_ok());
+    }
+
+    #[test]
+    fn the_rewrapped_record_carries_a_dek_check() {
+        let f = fixture();
+        setup_vault_on(&f.other_path, "old");
+
+        change_context_vault_passphrase(&f.reg, "other", "old", "new").unwrap();
+
+        let s = reopen_other(&f);
+        assert!(record(&s).dek_check.is_some());
+    }
+
+    #[test]
+    fn the_recovery_key_keeps_working_after_the_change() {
+        let f = fixture();
+        let groups = setup_vault_on(&f.other_path, "old");
+
+        change_context_vault_passphrase(&f.reg, "other", "old", "new").unwrap();
+
+        let s = reopen_other(&f);
+        assert!(vault_unlock_recovery(&record(&s), &groups.join("-")).is_ok());
+    }
+
+    #[test]
+    fn an_unknown_context_id_is_rejected() {
+        let f = fixture();
+        assert_eq!(
+            err_of(change_context_vault_passphrase(
+                &f.reg, "nope", "old", "new"
+            )),
+            "unknown context"
+        );
+    }
+
+    #[test]
+    fn the_active_context_is_refused_here() {
+        let f = fixture();
+        let active_id = f.reg.active_id.clone();
+        assert_eq!(
+            err_of(change_context_vault_passphrase(
+                &f.reg, &active_id, "old", "new"
+            )),
+            "active context: use vault_change_passphrase"
+        );
+    }
+
+    #[test]
+    fn a_wrong_current_passphrase_leaves_the_other_contexts_vault_untouched() {
+        let f = fixture();
+        setup_vault_on(&f.other_path, "old");
+
+        assert!(change_context_vault_passphrase(&f.reg, "other", "wrong", "new").is_err());
+
+        let s = reopen_other(&f);
+        assert!(vault_unlock_passphrase(&record(&s), "old").is_ok());
+    }
+}
+
+#[cfg(test)]
 mod note_protection_tests {
     use super::test_support::*;
     use super::*;
@@ -3193,6 +3404,26 @@ mod registry_view_tests {
         assert_eq!(info.server_url, "https://notes.example");
         assert_eq!(info.workspace_id, "ws-1");
         assert!(!info.active);
+    }
+
+    #[test]
+    fn to_infos_defaults_the_vault_flags_to_false() {
+        let r = registry();
+        assert!(to_infos(&r)
+            .iter()
+            .all(|i| !i.vault_exists && !i.vault_biometric));
+    }
+
+    #[test]
+    fn to_infos_with_maps_the_supplied_vault_flags_per_entry() {
+        let r = registry();
+
+        let infos = to_infos_with(&r, |c| c.label == "Work", |c| c.label == "Personal");
+
+        let work = infos.iter().find(|i| i.label == "Work").unwrap();
+        let personal = infos.iter().find(|i| i.label == "Personal").unwrap();
+        assert!(work.vault_exists && !work.vault_biometric);
+        assert!(!personal.vault_exists && personal.vault_biometric);
     }
 
     #[test]

@@ -358,6 +358,7 @@ pub fn run() {
             commands::vault_unlock_recovery,
             commands::vault_lock,
             commands::vault_change_passphrase,
+            commands::context_vault_change_passphrase,
             commands::vault_biometric_available,
             commands::vault_biometric_enable,
             commands::vault_biometric_disable,

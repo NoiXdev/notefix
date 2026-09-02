@@ -568,7 +568,11 @@ pub fn contexts_list(
     reg: State<'_, Mutex<crate::profiles::Registry>>,
 ) -> Result<Vec<ContextInfo>, String> {
     let r = reg.lock().map_err(|e| e.to_string())?;
-    Ok(ops::to_infos(&r))
+    Ok(ops::to_infos_with(
+        &r,
+        |c| ops::context_vault_exists(std::path::Path::new(&c.path)),
+        |c| crate::vault::biometric::is_available() && crate::vault::biometric::is_enrolled(&c.id),
+    ))
 }
 
 #[tauri::command]
@@ -1398,6 +1402,33 @@ pub fn vault_change_passphrase(
     };
     vault.lock().map_err(|e| e.to_string())?.unlock(dek);
     Ok(())
+}
+
+/// Changes a context's vault passphrase from the Kontexte page, without
+/// switching into it first. For the ACTIVE context this is exactly
+/// `vault_change_passphrase` above (managed store + re-arming
+/// `VaultState`); for any other context it delegates to
+/// `ops::change_context_vault_passphrase`, which opens that context's own
+/// DB, rewraps its DEK there, and never touches `VaultState` — that state
+/// always tracks the active context only.
+#[tauri::command]
+pub fn context_vault_change_passphrase(
+    reg: State<'_, Mutex<crate::profiles::Registry>>,
+    store: State<'_, Mutex<Store>>,
+    vault: VaultStateHandle<'_>,
+    id: String,
+    current: String,
+    next: String,
+) -> Result<(), String> {
+    let is_active = {
+        let r = reg.lock().map_err(|e| e.to_string())?;
+        r.active_id == id
+    };
+    if is_active {
+        return vault_change_passphrase(store, vault, current, next);
+    }
+    let r = reg.lock().map_err(|e| e.to_string())?;
+    ops::change_context_vault_passphrase(&r, &id, &current, &next)
 }
 
 /// Encrypts or decrypts one note's stored content in place — see
