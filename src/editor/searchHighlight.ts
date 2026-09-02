@@ -7,6 +7,7 @@ import { findMatches } from '../search';
 
 export interface Match { from: number; to: number; }
 export interface SearchState { query: string; matches: Match[]; current: number; }
+export interface MatchDecorationSpec { from: number; to: number; class: string; }
 
 const searchKey = new PluginKey<SearchState>('search-highlight');
 
@@ -15,17 +16,44 @@ export function searchState(editor: Editor): SearchState {
   return searchKey.getState(editor.state) ?? { query: '', matches: [], current: -1 };
 }
 
-function computeMatches(doc: PMNode, query: string): Match[] {
+/** Pure: decoration range + CSS class for every match, marking `current` distinctly.
+ *  Consumed by the plugin's `decorations()` prop below. */
+export function matchDecorations(matches: Match[], current: number): MatchDecorationSpec[] {
+  return matches.map((m, i) => ({
+    from: m.from,
+    to: m.to,
+    class: i === current ? 'search-match search-match-current' : 'search-match',
+  }));
+}
+
+/** Pure: the next match index when stepping by `step` (±1, but any integer works),
+ *  wrapping around the match list. -1 when there are no matches (nothing to step to). */
+export function nextMatchIndex(current: number, step: number, length: number): number {
+  if (length <= 0) return -1;
+  const base = current < 0 ? 0 : current;
+  return (((base + step) % length) + length) % length;
+}
+
+/** Pure: match ranges across a flat list of (text, doc-position) runs — the
+ *  shape you get from walking a ProseMirror doc's text nodes. Positions in the
+ *  result are absolute doc positions (run position + in-text offset). */
+export function findSearchRanges(runs: Array<{ text: string; pos: number }>, query: string): Match[] {
   const q = query.trim();
   if (!q) return [];
   const out: Match[] = [];
+  for (const { text, pos } of runs) {
+    for (const [s, e] of findMatches(text, q)) out.push({ from: pos + s, to: pos + e });
+  }
+  return out;
+}
+
+function computeMatches(doc: PMNode, query: string): Match[] {
+  const runs: Array<{ text: string; pos: number }> = [];
   doc.descendants((node, pos) => {
-    if (node.isText && node.text) {
-      for (const [s, e] of findMatches(node.text, q)) out.push({ from: pos + s, to: pos + e });
-    }
+    if (node.isText && node.text) runs.push({ text: node.text, pos });
     return true;
   });
-  return out;
+  return findSearchRanges(runs, query);
 }
 
 declare module '@tiptap/core' {
@@ -70,11 +98,7 @@ export const SearchHighlight = Extension.create({
             if (!s || !s.matches.length) return DecorationSet.empty;
             return DecorationSet.create(
               state.doc,
-              s.matches.map((m, i) =>
-                Decoration.inline(m.from, m.to, {
-                  class: i === s.current ? 'search-match search-match-current' : 'search-match',
-                }),
-              ),
+              matchDecorations(s.matches, s.current).map(d => Decoration.inline(d.from, d.to, { class: d.class })),
             );
           },
         },
@@ -98,7 +122,7 @@ export const SearchHighlight = Extension.create({
       stepSearch: (step: number) => ({ state, dispatch }) => {
         const s = searchKey.getState(state);
         if (!s || !s.matches.length) return false;
-        const next = ((s.current < 0 ? 0 : s.current) + step + s.matches.length) % s.matches.length;
+        const next = nextMatchIndex(s.current, step, s.matches.length);
         const m = s.matches[next];
         if (dispatch) {
           dispatch(

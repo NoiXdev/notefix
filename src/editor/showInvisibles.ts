@@ -13,14 +13,23 @@ interface InvState {
 
 export const invisiblesKey = new PluginKey<InvState>('show-invisibles');
 
+/** Pure: 0-based [from, to) ranges of every space character in `text` — the
+ *  positions that get the middot decoration when invisibles are shown. */
+export function invisibleDecorationsFor(text: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === ' ') ranges.push([i, i + 1]);
+  }
+  return ranges;
+}
+
 function build(doc: PMNode, enabled: boolean): DecorationSet {
   if (!enabled) return DecorationSet.empty;
   const decos: Decoration[] = [];
   doc.descendants((node, pos) => {
     if (node.isText && node.text) {
-      const text = node.text;
-      for (let i = 0; i < text.length; i++) {
-        if (text[i] === ' ') decos.push(Decoration.inline(pos + i, pos + i + 1, { class: 'inv-space' }));
+      for (const [s, e] of invisibleDecorationsFor(node.text)) {
+        decos.push(Decoration.inline(pos + s, pos + e, { class: 'inv-space' }));
       }
     } else if (node.type.name === 'hardBreak') {
       decos.push(
