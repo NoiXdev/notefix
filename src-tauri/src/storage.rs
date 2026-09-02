@@ -626,7 +626,7 @@ impl Store {
     /// The cached JSON of the caller's own wrapped entries from the server
     /// (schema v15) — `{"mine":[...],"recovery":[...]}`, camelCase, matching
     /// the wire shape. `None` if nothing has been cached yet.
-    #[allow(dead_code)] // wired into vault commands by a later task
+    #[allow(dead_code)] // read by a vault-status command in a later task
     pub fn vault_entries(&self) -> rusqlite::Result<Option<String>> {
         use rusqlite::OptionalExtension;
         self.conn
@@ -640,7 +640,6 @@ impl Store {
     /// vault record exists yet, `record` is seeded with `''` as a
     /// placeholder (the column is `NOT NULL`); `vault_record()` treats an
     /// empty string as "no record" so this doesn't fabricate one.
-    #[allow(dead_code)] // wired into vault commands by a later task
     pub fn set_vault_entries(&self, json: &str) -> rusqlite::Result<()> {
         let now = now_ms();
         self.conn.execute(

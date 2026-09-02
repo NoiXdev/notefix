@@ -197,8 +197,25 @@ pub fn get_meta_i64(conn: &Connection, key: &str, default: i64) -> i64 {
         .unwrap_or(default)
 }
 
+/// Like `get_meta_i64`, but without a fallback default: absent (or
+/// unparsable) reads back as `None` rather than being silently coerced to a
+/// magic number, which is what a caller distinguishing "never set" from "set
+/// to zero" needs (e.g. the vault generation cache).
+#[allow(dead_code)] // exercised by tests today; a vault-status command reads it in a later task
+pub fn get_meta_i64_opt(conn: &Connection, key: &str) -> rusqlite::Result<Option<i64>> {
+    Ok(get_meta(conn, key)?.and_then(|s| s.parse().ok()))
+}
+
 pub fn set_meta_i64(conn: &Connection, key: &str, value: i64) -> rusqlite::Result<()> {
     set_meta(conn, key, &value.to_string())
+}
+
+/// Remove a meta key entirely (as opposed to setting it to an empty/zero
+/// value) — used to clear a stale `vault_server_legacy` flag once the server
+/// starts sending vault keys again.
+pub fn delete_meta(conn: &Connection, key: &str) -> rusqlite::Result<()> {
+    conn.execute("DELETE FROM meta WHERE key = ?1", [key])?;
+    Ok(())
 }
 
 use std::path::Path;

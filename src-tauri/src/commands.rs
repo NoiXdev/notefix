@@ -1099,10 +1099,10 @@ pub async fn run_sync_cycle(app: &AppHandle) -> Result<(), String> {
     .await;
 
     match result {
-        Ok((cursor, pf, pn)) => {
+        Ok(pull) => {
             {
                 let s = store_state.lock().map_err(|e| e.to_string())?;
-                ops::commit_sync_result(&s, &note_ids, &folder_ids, &pf, &pn, cursor, now_ms())?;
+                ops::commit_sync_result(&s, &note_ids, &folder_ids, &pull, now_ms())?;
             }
             broadcast_context_changed(app); // refresh the UI from the updated cache
                                             // S2b: transfer referenced images (non-fatal — notes already synced).

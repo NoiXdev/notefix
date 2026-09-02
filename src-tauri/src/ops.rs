@@ -1271,26 +1271,60 @@ pub fn collect_sync_push(store: &Store) -> Result<SyncPush, String> {
 }
 
 /// Apply one successful sync round-trip: clear the dirty flags for exactly the
-/// rows that were pushed and are still unchanged, merge the pulled rows, and
-/// advance both sync markers. `note_ids` / `folder_ids` are the snapshots from
-/// the matching [`SyncPush`].
+/// rows that were pushed and are still unchanged, merge the pulled rows,
+/// cache/flag the workspace vault-key state the server sent along, and
+/// advance both sync markers. `note_ids` / `folder_ids` are the snapshots
+/// from the matching [`SyncPush`].
 pub fn commit_sync_result(
     store: &Store,
     note_ids: &[(String, i64)],
     folder_ids: &[(String, i64)],
-    pulled_folders: &[serde_json::Value],
-    pulled_notes: &[serde_json::Value],
-    cursor: i64,
+    pull: &crate::sync::PullBody,
     now: i64,
 ) -> Result<(), String> {
     store
         .clear_note_dirty(note_ids)
         .map_err(|e| e.to_string())?;
     crate::folders::clear_folder_dirty(&store.conn, folder_ids).map_err(|e| e.to_string())?;
-    crate::sync::apply_pulled(store, pulled_folders, pulled_notes).map_err(|e| e.to_string())?;
-    crate::migrate::set_meta_i64(&store.conn, "sync_cursor", cursor).map_err(|e| e.to_string())?;
+    crate::sync::apply_pulled(store, &pull.folders, &pull.notes).map_err(|e| e.to_string())?;
+    apply_vault_keys(store, pull)?;
+    crate::migrate::set_meta_i64(&store.conn, "sync_cursor", pull.cursor)
+        .map_err(|e| e.to_string())?;
     crate::migrate::set_meta_i64(&store.conn, "sync_last_at", now).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Cache the caller's own wrapped vault-key entries the server sent back on
+/// pull, and record the workspace's key generation / rotation state. A
+/// server that predates the vault-keys feature simply omits `vaultKeys`
+/// entirely — that's recorded as `vault_server_legacy` so the UI can explain
+/// why protected notes can't be shared to another device yet, and the
+/// existing cache (if any, from a prior server that did support it) is left
+/// untouched rather than being wiped by a downgrade.
+pub fn apply_vault_keys(store: &Store, pull: &crate::sync::PullBody) -> Result<(), String> {
+    match &pull.vault_keys {
+        Some(keys) => {
+            store
+                .set_vault_entries(&keys.to_string())
+                .map_err(|e| e.to_string())?;
+            crate::migrate::set_meta_i64(
+                &store.conn,
+                "vault_generation",
+                i64::from(pull.vault_generation.unwrap_or(0)),
+            )
+            .map_err(|e| e.to_string())?;
+            crate::migrate::set_meta_i64(
+                &store.conn,
+                "vault_rotation_pending",
+                i64::from(pull.vault_rotation_pending),
+            )
+            .map_err(|e| e.to_string())?;
+            crate::migrate::delete_meta(&store.conn, "vault_server_legacy")
+                .map_err(|e| e.to_string())
+        }
+        None => crate::migrate::set_meta_i64(&store.conn, "vault_server_legacy", 1)
+            .map_err(|e| e.to_string()),
+    }
 }
 
 /// Of the image paths a context references, the subset that actually exists in
@@ -4918,7 +4952,15 @@ mod sync_cycle_tests {
         seed(&s, "n1", "<p>a</p>");
         let push = collect_sync_push(&s).unwrap();
 
-        commit_sync_result(&s, &push.note_ids, &push.folder_ids, &[], &[], 99, 1_700).unwrap();
+        let pull = crate::sync::PullBody {
+            cursor: 99,
+            folders: vec![],
+            notes: vec![],
+            vault_keys: None,
+            vault_generation: None,
+            vault_rotation_pending: false,
+        };
+        commit_sync_result(&s, &push.note_ids, &push.folder_ids, &pull, 1_700).unwrap();
 
         assert!(s.load_dirty_notes().unwrap().is_empty());
         assert_eq!(crate::migrate::get_meta_i64(&s.conn, "sync_cursor", 0), 99);
@@ -4946,7 +4988,15 @@ mod sync_cycle_tests {
             )
             .unwrap();
 
-        commit_sync_result(&s, &push.note_ids, &push.folder_ids, &[], &[], 5, 1).unwrap();
+        let pull = crate::sync::PullBody {
+            cursor: 5,
+            folders: vec![],
+            notes: vec![],
+            vault_keys: None,
+            vault_generation: None,
+            vault_rotation_pending: false,
+        };
+        commit_sync_result(&s, &push.note_ids, &push.folder_ids, &pull, 1).unwrap();
 
         let still_dirty = s.load_dirty_notes().unwrap();
         assert_eq!(still_dirty.len(), 1, "the re-edit is pushed next cycle");
@@ -4971,13 +5021,66 @@ mod sync_cycle_tests {
             "title": "from the server",
         });
 
-        commit_sync_result(&s, &[], &[], &[], &[pulled_note], 7, 1).unwrap();
+        let pull = crate::sync::PullBody {
+            cursor: 7,
+            folders: vec![],
+            notes: vec![pulled_note],
+            vault_keys: None,
+            vault_generation: None,
+            vault_rotation_pending: false,
+        };
+        commit_sync_result(&s, &[], &[], &pull, 1).unwrap();
 
         let notes = s.load_notes().unwrap();
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].id, "server-note");
         assert_eq!(notes[0].content, "<p>from the server</p>");
         assert!(!notes[0].dirty, "a pulled row arrives clean");
+    }
+
+    #[test]
+    fn apply_vault_keys_caches_entries_or_flags_a_legacy_server() {
+        let s = Store::open_in_memory().unwrap();
+        crate::migrate::run_migrations(&s.conn).unwrap();
+        let with = crate::sync::PullBody {
+            cursor: 1,
+            folders: vec![],
+            notes: vec![],
+            vault_keys: Some(serde_json::json!({"mine": [], "recovery": []})),
+            vault_generation: Some(1),
+            vault_rotation_pending: false,
+        };
+        apply_vault_keys(&s, &with).unwrap();
+        assert_eq!(
+            s.vault_entries().unwrap().as_deref(),
+            Some(r#"{"mine":[],"recovery":[]}"#)
+        );
+        assert_eq!(
+            crate::migrate::get_meta_i64_opt(&s.conn, "vault_generation").unwrap(),
+            Some(1)
+        );
+        assert_eq!(
+            crate::migrate::get_meta_i64_opt(&s.conn, "vault_server_legacy").unwrap(),
+            None
+        );
+        let legacy = crate::sync::PullBody {
+            cursor: 2,
+            folders: vec![],
+            notes: vec![],
+            vault_keys: None,
+            vault_generation: None,
+            vault_rotation_pending: false,
+        };
+        apply_vault_keys(&s, &legacy).unwrap();
+        assert_eq!(
+            crate::migrate::get_meta_i64_opt(&s.conn, "vault_server_legacy").unwrap(),
+            Some(1)
+        );
+        assert_eq!(
+            s.vault_entries().unwrap().as_deref(),
+            Some(r#"{"mine":[],"recovery":[]}"#),
+            "cache untouched"
+        );
     }
 
     #[test]
@@ -5082,7 +5185,15 @@ mod database_error_tests {
         let s = store_without_notes();
         assert!(collect_sync_push(&s).is_err());
         assert!(sync_status_synced(&s).is_err());
-        assert!(commit_sync_result(&s, &[("n1".into(), 1)], &[], &[], &[], 1, 1).is_err());
+        let pull = crate::sync::PullBody {
+            cursor: 1,
+            folders: vec![],
+            notes: vec![],
+            vault_keys: None,
+            vault_generation: None,
+            vault_rotation_pending: false,
+        };
+        assert!(commit_sync_result(&s, &[("n1".into(), 1)], &[], &pull, 1).is_err());
     }
 
     #[test]

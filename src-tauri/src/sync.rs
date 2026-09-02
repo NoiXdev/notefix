@@ -54,6 +54,10 @@ pub fn note_to_wire(n: &Note) -> Value {
         // Plaintext metadata, synced like `folderId` — never encrypted, even
         // for a protected note. See `Note::title`.
         "title": n.title,
+        // Which key generation sealed this note's ciphertext (see
+        // `storage::Note::key_gen`) — null for an unprotected note or one
+        // written before generations existed.
+        "keyGen": n.key_gen,
     })
 }
 
@@ -84,10 +88,10 @@ pub fn note_from_wire(v: &Value) -> Note {
         // here, and `upsert_note_from_server_conn` deliberately never writes
         // this column, so a pull can't clobber whatever was set locally.
         mcp_hidden: false,
-        // `key_gen` (see `storage::Note::key_gen`) isn't on the wire yet —
-        // wiring it into the sync protocol is a later task. Always `None`
-        // here for now.
-        key_gen: None,
+        // Which key generation sealed this note's ciphertext (see
+        // `storage::Note::key_gen`) — absent/null maps to `None`, matching an
+        // unprotected note or one from a server that predates generations.
+        key_gen: v["keyGen"].as_u64().map(|g| g as u32),
     }
 }
 
@@ -246,33 +250,53 @@ fn pull_url(server_url: &str, workspace_id: &str, since: i64) -> String {
     )
 }
 
-/// Map the `…/changes` GET JSON body to `(cursor, folders, notes)`. The
-/// server may nest each collection under a `data` key (`{"folders":
-/// {"data": [...]}}`) or send it as a bare array — both are accepted. Missing
-/// cursor falls back to the `since` cursor the caller requested. Pulled out
-/// of [`pull`] so this parsing logic is testable without a network call.
-fn parse_pull_response(body: &Value, since: i64) -> (i64, Vec<Value>, Vec<Value>) {
-    let cursor = body["cursor"].as_i64().unwrap_or(since);
-    let folders = body["folders"]["data"]
-        .as_array()
-        .or(body["folders"].as_array())
-        .cloned()
-        .unwrap_or_default();
-    let notes = body["notes"]["data"]
-        .as_array()
-        .or(body["notes"].as_array())
-        .cloned()
-        .unwrap_or_default();
-    (cursor, folders, notes)
+/// A parsed `…/changes` GET response: the pulled rows plus whatever the
+/// server said about the caller's workspace vault. `vault_keys` is `None`
+/// when the server predates the vault-keys feature entirely (it simply omits
+/// the field) — that's distinct from a present-but-empty `{"mine":[],
+/// "recovery":[]}`, which means "no keys yet" on a server that does support
+/// it.
+#[derive(Debug, Clone)]
+pub struct PullBody {
+    pub cursor: i64,
+    pub folders: Vec<Value>,
+    pub notes: Vec<Value>,
+    pub vault_keys: Option<Value>,
+    pub vault_generation: Option<u32>,
+    pub vault_rotation_pending: bool,
 }
 
-/// GET …/changes?since= → (cursor, folders, notes) as raw wire values.
+/// Map the `…/changes` GET JSON body to a [`PullBody`]. The server may nest
+/// each collection under a `data` key (`{"folders": {"data": [...]}}`) or
+/// send it as a bare array — both are accepted. Missing cursor falls back to
+/// the `since` cursor the caller requested. Pulled out of [`pull`] so this
+/// parsing logic is testable without a network call.
+pub fn parse_pull_response(body: &Value, since: i64) -> PullBody {
+    let arr = |k: &str| {
+        body[k]["data"]
+            .as_array()
+            .or(body[k].as_array())
+            .cloned()
+            .unwrap_or_default()
+    };
+    PullBody {
+        cursor: body["cursor"].as_i64().unwrap_or(since),
+        folders: arr("folders"),
+        notes: arr("notes"),
+        vault_keys: body.get("vaultKeys").filter(|v| v.is_object()).cloned(),
+        vault_generation: body["vaultGeneration"].as_u64().map(|g| g as u32),
+        vault_rotation_pending: body["vaultRotationPending"].as_bool().unwrap_or(false),
+    }
+}
+
+/// GET …/changes?since= → the pulled rows plus vault-key state, as raw wire
+/// values.
 pub async fn pull(
     server_url: &str,
     token: &str,
     workspace_id: &str,
     since: i64,
-) -> Result<(i64, Vec<Value>, Vec<Value>), SyncError> {
+) -> Result<PullBody, SyncError> {
     let resp = client()?
         .get(pull_url(server_url, workspace_id, since))
         .bearer_auth(token)
@@ -330,6 +354,16 @@ pub async fn push(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A minimal `Note` for wire-mapping tests — mirrors `ops::test_support::note`.
+    fn note(id: &str, content: &str) -> Note {
+        Note {
+            id: id.into(),
+            content: content.into(),
+            updated_at: 1,
+            ..Default::default()
+        }
+    }
 
     #[test]
     fn iso_ms_roundtrip_preserves_milliseconds() {
@@ -443,6 +477,21 @@ mod tests {
             &json!({"id":"a","content":"<p>x</p>","protected":false,"updatedAt":"2026-01-01T00:00:00Z"}),
         );
         assert!(m.protected_known && !m.protected);
+    }
+
+    #[test]
+    fn note_wire_carries_key_gen() {
+        let mut n = note("a", "cipher==");
+        n.protected = true;
+        n.key_gen = Some(3);
+        let w = note_to_wire(&n);
+        assert_eq!(w["keyGen"], 3);
+        assert_eq!(note_from_wire(&w).key_gen, Some(3));
+        assert_eq!(
+            note_from_wire(&json!({"id":"a","content":"x","updatedAt":"2026-01-01T00:00:00Z"}))
+                .key_gen,
+            None
+        );
     }
 
     #[test]
@@ -655,19 +704,33 @@ mod tests {
             "folders": {"data": [{"id": "f1"}]},
             "notes": {"data": [{"id": "n1"}, {"id": "n2"}]},
         });
-        let (cursor, folders, notes) = parse_pull_response(&body, 0);
-        assert_eq!(cursor, 100);
-        assert_eq!(folders.len(), 1);
-        assert_eq!(notes.len(), 2);
+        let p = parse_pull_response(&body, 0);
+        assert_eq!(p.cursor, 100);
+        assert_eq!(p.folders.len(), 1);
+        assert_eq!(p.notes.len(), 2);
     }
 
     #[test]
     fn parse_pull_response_accepts_bare_arrays_and_defaults_cursor() {
         let body = json!({"folders": [{"id": "f1"}], "notes": []});
-        let (cursor, folders, notes) = parse_pull_response(&body, 7);
-        assert_eq!(cursor, 7, "missing cursor falls back to `since`");
-        assert_eq!(folders.len(), 1);
-        assert!(notes.is_empty());
+        let p = parse_pull_response(&body, 7);
+        assert_eq!(p.cursor, 7, "missing cursor falls back to `since`");
+        assert_eq!(p.folders.len(), 1);
+        assert!(p.notes.is_empty());
+    }
+
+    #[test]
+    fn parse_pull_response_reads_vault_keys_and_generation() {
+        let body = json!({"cursor": 7, "folders": [], "notes": [],
+            "vaultGeneration": 2, "vaultRotationPending": true,
+            "vaultKeys": {"mine": [{"generation": 1, "kdfParams": {}, "dekWrapped": "w", "dekCheck": "c"}], "recovery": []}});
+        let p = parse_pull_response(&body, 0);
+        assert_eq!(p.cursor, 7);
+        assert_eq!(p.vault_generation, Some(2));
+        assert!(p.vault_rotation_pending);
+        assert_eq!(p.vault_keys.as_ref().unwrap()["mine"][0]["dekWrapped"], "w");
+        let legacy = parse_pull_response(&json!({"cursor": 1, "folders": [], "notes": []}), 0);
+        assert!(legacy.vault_keys.is_none() && legacy.vault_generation.is_none());
     }
 
     #[test]
