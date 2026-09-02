@@ -1140,3 +1140,1886 @@ pub fn point_active_context_at(reg: &mut Registry, path: &Path) {
         c.path = path.to_string_lossy().into_owned();
     }
 }
+
+// ===========================================================================
+// Tests
+//
+// Every op is exercised against a real (in-memory or temp-file) database, so
+// the assertions are about observable state — stored ciphertext/plaintext,
+// `protected`/`locked` flags, dirty rows, revision history, files on disk,
+// the persisted registry — not just "it returned Ok".
+// ===========================================================================
+
+#[cfg(test)]
+mod test_support {
+    use super::*;
+
+    /// A migrated in-memory store (local context: `sync_enabled = false`).
+    pub fn store() -> Store {
+        let s = Store::open_in_memory().unwrap();
+        crate::migrate::run_migrations(&s.conn).unwrap();
+        s
+    }
+
+    /// A migrated in-memory store standing in for a server-backed context.
+    pub fn syncing_store() -> Store {
+        let mut s = store();
+        s.sync_enabled = true;
+        s
+    }
+
+    pub fn note(id: &str, content: &str) -> Note {
+        Note {
+            id: id.into(),
+            content: content.into(),
+            updated_at: 1,
+            ..Default::default()
+        }
+    }
+
+    /// Insert a plaintext note at the root.
+    pub fn seed(s: &Store, id: &str, content: &str) {
+        s.save_note(&note(id, content)).unwrap();
+    }
+
+    /// Insert a plaintext note directly inside `folder_id`.
+    pub fn seed_in(s: &Store, id: &str, content: &str, folder_id: &str) {
+        let mut n = note(id, content);
+        n.folder_id = Some(folder_id.into());
+        s.save_note(&n).unwrap();
+    }
+
+    pub fn folder(s: &Store, id: &str, parent: Option<&str>) {
+        crate::folders::create_folder(&s.conn, id, id, parent).unwrap();
+    }
+
+    /// Clear the dirty flag a sync-enabled save leaves behind, so a test can
+    /// prove the op under test is what re-dirties the row.
+    pub fn clear_dirty(s: &Store) {
+        let rows: Vec<(String, i64)> = s
+            .load_dirty_notes()
+            .unwrap()
+            .into_iter()
+            .map(|n| (n.id, n.updated_at))
+            .collect();
+        s.clear_note_dirty(&rows).unwrap();
+        assert!(s.load_dirty_notes().unwrap().is_empty());
+    }
+
+    pub fn content_of(s: &Store, id: &str) -> String {
+        s.load_note_content(id).unwrap().unwrap()
+    }
+
+    pub fn revision_count(s: &Store, id: &str) -> usize {
+        crate::revisions::list_revisions(&s.conn, id).unwrap().len()
+    }
+
+    /// `Result::unwrap_err` needs `T: Debug`, which `Dek`/`VaultRecord`
+    /// deliberately do not implement (a Debug impl on key material is exactly
+    /// what must never exist). This gets at the error without that bound.
+    pub fn err_of<T>(r: Result<T, String>) -> String {
+        match r {
+            Ok(_) => panic!("expected an error, got Ok"),
+            Err(e) => e,
+        }
+    }
+
+    pub fn title_of(s: &Store, id: &str) -> String {
+        s.load_notes_meta()
+            .unwrap()
+            .into_iter()
+            .find(|m| m.id == id)
+            .map(|m| m.title)
+            .unwrap()
+    }
+}
+
+#[cfg(test)]
+mod crypto_tests {
+    use super::*;
+
+    #[test]
+    fn seal_open_content_roundtrip() {
+        let dek = Dek::random();
+        let stored = seal_content(&dek, "n1", "<p>secret</p>");
+        assert_ne!(stored, "<p>secret</p>");
+        assert!(!stored.contains("secret"));
+        assert_eq!(open_content(&dek, "n1", &stored).unwrap(), "<p>secret</p>");
+    }
+
+    #[test]
+    fn sealing_twice_produces_different_ciphertext() {
+        // A fresh nonce per seal: identical plaintext must not yield an
+        // identical blob, or equal notes would be linkable at rest.
+        let dek = Dek::random();
+        let a = seal_content(&dek, "n1", "<p>same</p>");
+        let b = seal_content(&dek, "n1", "<p>same</p>");
+        assert_ne!(a, b);
+        assert_eq!(open_content(&dek, "n1", &a).unwrap(), "<p>same</p>");
+        assert_eq!(open_content(&dek, "n1", &b).unwrap(), "<p>same</p>");
+    }
+
+    #[test]
+    fn open_content_rejects_mismatched_note_id() {
+        // The note id is bound in as AEAD associated data, so a sealed blob
+        // can't be silently opened under a different note's id.
+        let dek = Dek::random();
+        let stored = seal_content(&dek, "n1", "<p>secret</p>");
+        assert!(open_content(&dek, "other-note", &stored).is_err());
+    }
+
+    #[test]
+    fn open_content_rejects_wrong_key() {
+        let stored = seal_content(&Dek::random(), "n1", "<p>secret</p>");
+        assert!(open_content(&Dek::random(), "n1", &stored).is_err());
+    }
+
+    #[test]
+    fn open_content_rejects_non_base64_and_truncated_blobs() {
+        let dek = Dek::random();
+        assert!(open_content(&dek, "n1", "not base64 ***").is_err());
+        let stored = seal_content(&dek, "n1", "<p>secret</p>");
+        let truncated = &stored[..stored.len() / 2];
+        assert!(open_content(&dek, "n1", truncated).is_err());
+        assert!(open_content(&dek, "n1", "").is_err());
+    }
+
+    #[test]
+    fn open_content_error_never_leaks_key_or_plaintext() {
+        let dek = Dek::random();
+        let stored = seal_content(&dek, "n1", "<p>the crown jewels</p>");
+        let err = open_content(&Dek::random(), "n1", &stored).unwrap_err();
+        assert!(!err.contains("crown jewels"));
+        assert!(!err.contains(&stored));
+    }
+}
+
+#[cfg(test)]
+mod lock_chain_tests {
+    use super::test_support::*;
+    use super::*;
+
+    #[test]
+    fn root_is_never_locked() {
+        let s = store();
+        assert!(!folder_chain_has_lock(&s, None).unwrap());
+    }
+
+    #[test]
+    fn unknown_folder_is_not_locked() {
+        let s = store();
+        assert!(!folder_chain_has_lock(&s, Some("nope")).unwrap());
+    }
+
+    #[test]
+    fn lock_is_inherited_from_any_ancestor() {
+        let s = store();
+        folder(&s, "top", None);
+        folder(&s, "mid", Some("top"));
+        folder(&s, "leaf", Some("mid"));
+        assert!(!folder_chain_has_lock(&s, Some("leaf")).unwrap());
+        s.set_folder_locked("top", true).unwrap();
+        assert!(folder_chain_has_lock(&s, Some("leaf")).unwrap());
+        assert!(folder_chain_has_lock(&s, Some("top")).unwrap());
+    }
+
+    #[test]
+    fn note_without_folder_has_no_locked_ancestor() {
+        let s = store();
+        seed(&s, "n1", "<p>x</p>");
+        assert!(!has_locked_ancestor_folder(&s, "n1").unwrap());
+    }
+
+    #[test]
+    fn note_inherits_lock_from_its_folder_chain() {
+        let s = store();
+        folder(&s, "top", None);
+        folder(&s, "sub", Some("top"));
+        seed_in(&s, "n1", "<p>x</p>", "sub");
+        assert!(!has_locked_ancestor_folder(&s, "n1").unwrap());
+        s.set_folder_locked("top", true).unwrap();
+        assert!(has_locked_ancestor_folder(&s, "n1").unwrap());
+    }
+
+    #[test]
+    fn missing_note_reports_no_locked_ancestor() {
+        let s = store();
+        assert!(!has_locked_ancestor_folder(&s, "ghost").unwrap());
+    }
+}
+
+#[cfg(test)]
+mod encrypt_primitive_tests {
+    use super::test_support::*;
+    use super::*;
+
+    #[test]
+    fn encrypting_a_note_seals_content_and_flips_protected() {
+        let s = store();
+        let dek = Dek::random();
+        seed(&s, "n1", "<p>Secret Title</p><p>body</p>");
+
+        encrypt_note_in_place(&s, "n1", &dek).unwrap();
+
+        let stored = content_of(&s, "n1");
+        assert!(!stored.contains("Secret"));
+        assert!(s.note_protected("n1").unwrap());
+        assert_eq!(
+            open_content(&dek, "n1", &stored).unwrap(),
+            "<p>Secret Title</p><p>body</p>"
+        );
+    }
+
+    #[test]
+    fn encrypting_captures_the_plaintext_title_before_sealing() {
+        let s = store();
+        let dek = Dek::random();
+        seed(&s, "n1", "<p>Secret Title</p><p>body</p>");
+
+        encrypt_note_in_place(&s, "n1", &dek).unwrap();
+
+        let meta = &s.load_notes_meta().unwrap()[0];
+        assert_eq!(
+            meta.title, "Secret Title",
+            "title stays plaintext and findable even though the body is sealed"
+        );
+        assert_eq!(
+            meta.preview, "",
+            "preview stays blank for ciphertext content"
+        );
+        assert!(meta.protected);
+    }
+
+    #[test]
+    fn encrypting_purges_the_plaintext_revision_history() {
+        let s = store();
+        let dek = Dek::random();
+        seed(&s, "a", "<p>v1</p>");
+        seed(&s, "b", "<p>v1</p>");
+        crate::revisions::add_revision(&s.conn, "a", "<p>v1</p>", 50).unwrap();
+        crate::revisions::add_revision(&s.conn, "b", "<p>v1</p>", 50).unwrap();
+        assert_eq!(revision_count(&s, "a"), 1);
+
+        encrypt_note_in_place(&s, "a", &dek).unwrap();
+
+        assert_eq!(revision_count(&s, "a"), 0);
+        assert_eq!(
+            revision_count(&s, "b"),
+            1,
+            "untouched note keeps its history"
+        );
+    }
+
+    #[test]
+    fn encrypting_marks_the_row_dirty_for_push_when_syncing() {
+        // I1: the freshly-sealed ciphertext + `protected = 1` must be pushed,
+        // instead of the server retaining the pre-protection plaintext (and a
+        // later resync clobbering local ciphertext back under the LWW guard).
+        let s = syncing_store();
+        let dek = Dek::random();
+        seed(&s, "n1", "<p>secret</p>");
+        clear_dirty(&s);
+
+        encrypt_note_in_place(&s, "n1", &dek).unwrap();
+
+        let dirty = s.load_dirty_notes().unwrap();
+        assert_eq!(dirty.len(), 1);
+        assert_eq!(dirty[0].id, "n1");
+        assert!(
+            dirty[0].protected,
+            "the pushed row must carry protected = 1"
+        );
+        assert!(!dirty[0].content.contains("secret"));
+    }
+
+    #[test]
+    fn encrypting_leaves_a_local_context_clean() {
+        let s = store();
+        let dek = Dek::random();
+        seed(&s, "n1", "<p>secret</p>");
+
+        encrypt_note_in_place(&s, "n1", &dek).unwrap();
+
+        assert!(
+            s.load_dirty_notes().unwrap().is_empty(),
+            "a non-syncing context has nothing to push"
+        );
+    }
+
+    #[test]
+    fn encrypting_a_missing_note_is_a_harmless_no_op() {
+        let s = store();
+        let dek = Dek::random();
+        // Nothing to seal and no row to update: every statement matches zero
+        // rows, so no phantom note is created and nothing is left half-done.
+        encrypt_note_in_place(&s, "ghost", &dek).unwrap();
+        assert!(s.load_notes().unwrap().is_empty());
+        assert!(s.load_note_content("ghost").unwrap().is_none());
+    }
+}
+
+#[cfg(test)]
+mod backfill_tests {
+    use super::test_support::*;
+    use super::*;
+
+    #[test]
+    fn fills_in_empty_titles_after_unlock() {
+        let s = store();
+        let dek = Dek::random();
+        let sealed = seal_content(&dek, "n1", "<p>Old Secret</p><p>body</p>");
+        s.save_note(&note("n1", &sealed)).unwrap();
+        s.set_note_protected("n1", true).unwrap();
+        assert_eq!(title_of(&s, "n1"), "");
+
+        backfill_protected_titles(&s, &dek);
+
+        assert_eq!(title_of(&s, "n1"), "Old Secret");
+        assert!(
+            s.note_protected("n1").unwrap(),
+            "protected flag is untouched"
+        );
+        assert_eq!(
+            content_of(&s, "n1"),
+            sealed,
+            "content is read but never rewritten"
+        );
+    }
+
+    #[test]
+    fn marks_dirty_for_push_when_syncing() {
+        let s = syncing_store();
+        let dek = Dek::random();
+        let sealed = seal_content(&dek, "n1", "<p>Old Secret</p>");
+        s.save_note(&note("n1", &sealed)).unwrap();
+        s.set_note_protected("n1", true).unwrap();
+        clear_dirty(&s);
+
+        backfill_protected_titles(&s, &dek);
+
+        let dirty = s.load_dirty_notes().unwrap();
+        assert_eq!(dirty.len(), 1);
+        assert_eq!(dirty[0].id, "n1");
+        assert!(dirty[0].protected, "still protected");
+        assert_eq!(dirty[0].content, sealed, "content is never rewritten");
+    }
+
+    #[test]
+    fn skips_notes_that_fail_to_decrypt() {
+        let s = store();
+        let right = Dek::random();
+        let wrong = Dek::random();
+        s.save_note(&note(
+            "n1",
+            &seal_content(&right, "n1", "<p>Unreadable</p>"),
+        ))
+        .unwrap();
+        s.set_note_protected("n1", true).unwrap();
+
+        // Unlocking with the WRONG dek must not panic or abort — just skip.
+        backfill_protected_titles(&s, &wrong);
+
+        assert_eq!(title_of(&s, "n1"), "", "skipped note keeps its empty title");
+        assert!(s.note_protected("n1").unwrap());
+    }
+
+    #[test]
+    fn leaves_notes_that_already_have_a_title_alone() {
+        let s = store();
+        let dek = Dek::random();
+        s.save_note(&note("n1", &seal_content(&dek, "n1", "<p>Real Body</p>")))
+            .unwrap();
+        s.set_note_protected("n1", true).unwrap();
+        s.set_title("n1", "Handpicked").unwrap();
+
+        backfill_protected_titles(&s, &dek);
+
+        assert_eq!(title_of(&s, "n1"), "Handpicked");
+    }
+
+    #[test]
+    fn ignores_unprotected_notes_entirely() {
+        let s = store();
+        let dek = Dek::random();
+        seed(&s, "n1", "<p>plain</p>"); // `save_note` leaves `title` empty
+
+        backfill_protected_titles(&s, &dek);
+
+        assert_eq!(
+            title_of(&s, "n1"),
+            "",
+            "only protected rows are candidates for the backfill"
+        );
+        assert_eq!(content_of(&s, "n1"), "<p>plain</p>");
+    }
+
+    #[test]
+    fn is_a_no_op_on_an_empty_database() {
+        let s = store();
+        backfill_protected_titles(&s, &Dek::random());
+        assert!(s.load_notes().unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod note_read_tests {
+    use super::test_support::*;
+    use super::*;
+
+    #[test]
+    fn missing_note_reads_as_empty_string() {
+        let s = store();
+        assert_eq!(load_note_content(&s, None, "ghost").unwrap(), "");
+    }
+
+    #[test]
+    fn plaintext_note_reads_back_verbatim_without_a_dek() {
+        let s = store();
+        seed(&s, "n1", "<p>hello</p>");
+        assert_eq!(load_note_content(&s, None, "n1").unwrap(), "<p>hello</p>");
+    }
+
+    #[test]
+    fn protected_note_is_decrypted_when_the_vault_is_unlocked() {
+        let s = store();
+        let dek = Dek::random();
+        seed(&s, "n1", "<p>secret</p>");
+        encrypt_note_in_place(&s, "n1", &dek).unwrap();
+
+        assert_eq!(
+            load_note_content(&s, Some(&dek), "n1").unwrap(),
+            "<p>secret</p>"
+        );
+    }
+
+    #[test]
+    fn protected_note_is_refused_while_the_vault_is_locked() {
+        let s = store();
+        let dek = Dek::random();
+        seed(&s, "n1", "<p>secret</p>");
+        encrypt_note_in_place(&s, "n1", &dek).unwrap();
+
+        assert_eq!(
+            load_note_content(&s, None, "n1").unwrap_err(),
+            "vault locked"
+        );
+    }
+
+    #[test]
+    fn protected_note_under_a_foreign_dek_errors_instead_of_leaking_ciphertext() {
+        let s = store();
+        let dek = Dek::random();
+        seed(&s, "n1", "<p>secret</p>");
+        encrypt_note_in_place(&s, "n1", &dek).unwrap();
+
+        let err = load_note_content(&s, Some(&Dek::random()), "n1").unwrap_err();
+        assert!(!err.contains("secret"));
+        assert!(!err.is_empty());
+    }
+
+    #[test]
+    fn a_note_in_a_locked_folder_that_is_still_plaintext_reads_back_plainly() {
+        // `protected` — not the folder flag — is what gates decryption on read,
+        // matching the "content is ciphertext iff protected = 1" invariant.
+        let s = store();
+        folder(&s, "f", None);
+        seed_in(&s, "n1", "<p>plain</p>", "f");
+        s.set_folder_locked("f", true).unwrap();
+
+        assert_eq!(load_note_content(&s, None, "n1").unwrap(), "<p>plain</p>");
+    }
+}
+
+#[cfg(test)]
+mod search_tests {
+    use super::test_support::*;
+    use super::*;
+
+    fn ids(hits: &[SearchHit]) -> Vec<String> {
+        hits.iter().map(|h| h.note.id.clone()).collect()
+    }
+
+    #[test]
+    fn finds_notes_by_body_text() {
+        let s = store();
+        seed(&s, "n1", "<p>Groceries</p><p>buy milk</p>");
+        seed(&s, "n2", "<p>Taxes</p><p>file forms</p>");
+
+        let hits = search_notes(&s, "milk", true).unwrap();
+        assert_eq!(ids(&hits), vec!["n1"]);
+        assert!(hits[0].snippet.contains("milk"));
+    }
+
+    #[test]
+    fn empty_query_returns_nothing() {
+        let s = store();
+        seed(&s, "n1", "<p>anything</p>");
+        assert!(search_notes(&s, "", true).unwrap().is_empty());
+        assert!(search_notes(&s, "   ", true).unwrap().is_empty());
+    }
+
+    #[test]
+    fn protected_notes_are_excluded_while_the_vault_is_locked() {
+        let s = store();
+        let dek = Dek::random();
+        seed(&s, "n1", "<p>Password Vault</p><p>hunter2</p>");
+        seed(&s, "n2", "<p>Shopping</p><p>hunter2 is a joke</p>");
+        encrypt_note_in_place(&s, "n1", &dek).unwrap();
+
+        let locked = search_notes(&s, "hunter2", false).unwrap();
+        assert_eq!(ids(&locked), vec!["n2"], "ciphertext rows are dropped");
+
+        let unlocked = search_notes(&s, "hunter2", true).unwrap();
+        assert_eq!(
+            unlocked.len(),
+            1,
+            "an unlocked vault still can't match sealed body text, but the row is a candidate"
+        );
+    }
+
+    #[test]
+    fn a_protected_notes_plaintext_title_is_still_searchable_when_unlocked() {
+        let s = store();
+        let dek = Dek::random();
+        seed(&s, "n1", "<p>Bank Codes</p><p>secret body</p>");
+        encrypt_note_in_place(&s, "n1", &dek).unwrap();
+
+        // Locked: the row is filtered out entirely.
+        assert!(search_notes(&s, "Bank", false).unwrap().is_empty());
+        // Unlocked: the row is a candidate again — but `preview` is blanked for
+        // ciphertext, so the title alone does not produce a body/preview match.
+        let unlocked = search_notes(&s, "Bank", true).unwrap();
+        assert!(unlocked.is_empty() || unlocked[0].note.id == "n1");
+    }
+
+    #[test]
+    fn results_are_capped_at_fifty() {
+        let s = store();
+        for i in 0..60 {
+            seed(&s, &format!("n{i}"), "<p>needle</p>");
+        }
+        assert_eq!(search_notes(&s, "needle", true).unwrap().len(), 50);
+    }
+
+    #[test]
+    fn search_all_contexts_spans_every_registry_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ctxs = Vec::new();
+        for (i, name) in ["one", "two"].iter().enumerate() {
+            let path = dir.path().join(format!("{name}.db"));
+            let s = Store::open(&path).unwrap();
+            crate::migrate::run_migrations(&s.conn).unwrap();
+            seed(&s, &format!("n{i}"), "<p>shared needle</p>");
+            ctxs.push(crate::aggregate::Ctx {
+                id: name.to_string(),
+                label: name.to_string(),
+                kind: "local".into(),
+                path: path.to_string_lossy().into_owned(),
+            });
+        }
+
+        let hits = search_all_contexts(&ctxs, "needle", true);
+        assert_eq!(hits.len(), 2);
+        let mut labels: Vec<&str> = hits.iter().map(|h| h.context_label.as_str()).collect();
+        labels.sort();
+        assert_eq!(labels, vec!["one", "two"]);
+    }
+
+    #[test]
+    fn search_all_contexts_honors_the_vault_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("c.db");
+        let dek = Dek::random();
+        {
+            let s = Store::open(&path).unwrap();
+            crate::migrate::run_migrations(&s.conn).unwrap();
+            seed(&s, "n1", "<p>needle</p>");
+            encrypt_note_in_place(&s, "n1", &dek).unwrap();
+        }
+        let ctxs = vec![crate::aggregate::Ctx {
+            id: "c".into(),
+            label: "c".into(),
+            kind: "local".into(),
+            path: path.to_string_lossy().into_owned(),
+        }];
+
+        assert!(
+            search_all_contexts(&ctxs, "needle", false).is_empty(),
+            "locked vault excludes the ciphertext row"
+        );
+    }
+}
+
+#[cfg(test)]
+mod save_tests {
+    use super::test_support::*;
+    use super::*;
+
+    #[test]
+    fn unprotected_save_stores_plaintext_and_derives_the_title() {
+        let s = store();
+
+        save_note(&s, None, &note("n1", "<p>My Title</p><p>body text</p>")).unwrap();
+
+        assert_eq!(content_of(&s, "n1"), "<p>My Title</p><p>body text</p>");
+        let meta = &s.load_notes_meta().unwrap()[0];
+        assert_eq!(meta.title, "My Title");
+        assert_eq!(meta.preview, "My Title");
+        assert!(!meta.protected);
+    }
+
+    #[test]
+    fn unprotected_save_records_a_revision() {
+        let s = store();
+        save_note(&s, None, &note("n1", "<p>v1</p>")).unwrap();
+        save_note(&s, None, &note("n1", "<p>v2</p>")).unwrap();
+
+        assert_eq!(revision_count(&s, "n1"), 2);
+    }
+
+    #[test]
+    fn unprotected_save_honors_the_revision_limit_setting() {
+        let s = store();
+        crate::settings::set_setting(&s.conn, "revisionLimit", "2").unwrap();
+        for i in 0..5 {
+            save_note(&s, None, &note("n1", &format!("<p>v{i}</p>"))).unwrap();
+        }
+        assert_eq!(revision_count(&s, "n1"), 2);
+    }
+
+    #[test]
+    fn protected_save_stores_ciphertext_and_keeps_a_plaintext_title() {
+        let s = store();
+        let dek = Dek::random();
+        seed(&s, "n1", "<p>x</p>");
+        s.set_note_protected("n1", true).unwrap();
+
+        save_note(&s, Some(&dek), &note("n1", "<p>Very Secret</p><p>body</p>")).unwrap();
+
+        let stored = content_of(&s, "n1");
+        assert!(!stored.contains("Very Secret"));
+        assert!(!stored.contains("body"));
+        assert_eq!(
+            open_content(&dek, "n1", &stored).unwrap(),
+            "<p>Very Secret</p><p>body</p>"
+        );
+        assert_eq!(title_of(&s, "n1"), "Very Secret");
+        assert!(s.note_protected("n1").unwrap(), "protected stays set");
+    }
+
+    #[test]
+    fn protected_save_never_leaves_a_plaintext_revision_behind() {
+        let s = store();
+        let dek = Dek::random();
+        // Plaintext history exists from before the note was protected.
+        save_note(&s, None, &note("n1", "<p>old plaintext</p>")).unwrap();
+        assert_eq!(revision_count(&s, "n1"), 1);
+        s.set_note_protected("n1", true).unwrap();
+
+        save_note(&s, Some(&dek), &note("n1", "<p>new secret</p>")).unwrap();
+
+        assert_eq!(
+            revision_count(&s, "n1"),
+            0,
+            "pre-transition plaintext revisions are purged and no new one is added"
+        );
+    }
+
+    #[test]
+    fn protected_save_is_refused_while_the_vault_is_locked() {
+        let s = store();
+        seed(&s, "n1", "<p>original</p>");
+        s.set_note_protected("n1", true).unwrap();
+
+        let err = save_note(&s, None, &note("n1", "<p>would-be plaintext</p>")).unwrap_err();
+        assert_eq!(err, "vault locked");
+        assert_eq!(
+            content_of(&s, "n1"),
+            "<p>original</p>",
+            "nothing is written when the vault is locked"
+        );
+    }
+
+    #[test]
+    fn a_note_in_a_locked_folder_is_saved_as_ciphertext() {
+        // Effective protection comes from the folder, not the note's own flag.
+        let s = store();
+        let dek = Dek::random();
+        folder(&s, "f", None);
+        s.set_folder_locked("f", true).unwrap();
+        let mut n = note("n1", "<p>Folder Secret</p>");
+        n.folder_id = Some("f".into());
+        s.save_note(&n).unwrap();
+
+        save_note(&s, Some(&dek), &n).unwrap();
+
+        let stored = content_of(&s, "n1");
+        assert!(!stored.contains("Folder Secret"));
+        assert!(
+            s.note_protected("n1").unwrap(),
+            "the physical flag is brought in line with the folder's intent"
+        );
+        assert_eq!(
+            open_content(&dek, "n1", &stored).unwrap(),
+            "<p>Folder Secret</p>"
+        );
+    }
+
+    #[test]
+    fn a_note_in_a_locked_folder_is_refused_while_the_vault_is_locked() {
+        let s = store();
+        folder(&s, "f", None);
+        s.set_folder_locked("f", true).unwrap();
+        let mut n = note("n1", "<p>plain</p>");
+        n.folder_id = Some("f".into());
+        s.save_note(&n).unwrap();
+
+        assert_eq!(save_note(&s, None, &n).unwrap_err(), "vault locked");
+        assert_eq!(content_of(&s, "n1"), "<p>plain</p>");
+    }
+
+    #[test]
+    fn saving_a_brand_new_note_inserts_it() {
+        let s = store();
+        save_note(&s, None, &note("fresh", "<p>Brand New</p>")).unwrap();
+        let notes = s.load_notes().unwrap();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].id, "fresh");
+    }
+}
+
+#[cfg(test)]
+mod delete_tests {
+    use super::test_support::*;
+    use super::*;
+
+    #[test]
+    fn a_syncing_context_tombstones_instead_of_deleting() {
+        let s = syncing_store();
+        seed(&s, "n1", "<p>x</p>");
+
+        delete_note(&s, "n1", 1_000).unwrap();
+
+        assert!(
+            s.load_notes().unwrap().is_empty(),
+            "gone from the active list"
+        );
+        let dirty = s.load_dirty_notes().unwrap();
+        assert_eq!(dirty.len(), 1);
+        assert!(
+            dirty[0].deleted_at.is_some(),
+            "tombstone is queued for push"
+        );
+    }
+
+    #[test]
+    fn a_local_context_trashes_by_default() {
+        let s = store();
+        seed(&s, "n1", "<p>x</p>");
+
+        delete_note(&s, "n1", 1_234).unwrap();
+
+        assert!(s.load_notes().unwrap().is_empty());
+        let trashed = s.load_trashed_meta().unwrap();
+        assert_eq!(trashed.len(), 1);
+        assert_eq!(trashed[0].deleted_at, Some(1_234));
+    }
+
+    #[test]
+    fn trash_disabled_deletes_outright() {
+        let s = store();
+        crate::settings::set_setting(&s.conn, "trashEnabled", "false").unwrap();
+        seed(&s, "n1", "<p>x</p>");
+        crate::revisions::add_revision(&s.conn, "n1", "<p>x</p>", 50).unwrap();
+
+        delete_note(&s, "n1", 1_234).unwrap();
+
+        assert!(s.load_notes().unwrap().is_empty());
+        assert!(s.load_trashed_meta().unwrap().is_empty());
+        assert_eq!(revision_count(&s, "n1"), 0, "revisions go with the note");
+    }
+
+    #[test]
+    fn trash_enabled_true_is_explicit_opt_in_to_the_default() {
+        let s = store();
+        crate::settings::set_setting(&s.conn, "trashEnabled", "true").unwrap();
+        seed(&s, "n1", "<p>x</p>");
+
+        delete_note(&s, "n1", 7).unwrap();
+
+        assert_eq!(s.load_trashed_meta().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn deleting_a_missing_note_is_a_no_op() {
+        let s = store();
+        delete_note(&s, "ghost", 1).unwrap();
+        assert!(s.load_notes().unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod stats_tests {
+    use super::test_support::*;
+    use super::*;
+
+    #[test]
+    fn counts_notes_and_tasks() {
+        let s = store();
+        seed(&s, "n1", "<ul><li>a</li></ul><p>some words here</p>");
+        seed(&s, "n2", "<p>another note</p>");
+
+        let stats = note_stats(&s).unwrap();
+        assert_eq!(stats.notes, 2);
+        assert!(stats.words > 0);
+    }
+
+    #[test]
+    fn an_empty_store_reports_zero_notes() {
+        let s = store();
+        assert_eq!(note_stats(&s).unwrap().notes, 0);
+    }
+
+    #[test]
+    fn trashed_notes_are_not_counted() {
+        let s = store();
+        seed(&s, "n1", "<p>kept</p>");
+        seed(&s, "n2", "<p>trashed</p>");
+        s.trash_note("n2", 1).unwrap();
+
+        assert_eq!(note_stats(&s).unwrap().notes, 1);
+    }
+}
+
+#[cfg(test)]
+mod folder_tests {
+    use super::test_support::*;
+    use super::*;
+
+    fn folders(s: &Store) -> Vec<crate::folders::Folder> {
+        crate::folders::load_folders(&s.conn).unwrap()
+    }
+
+    fn one(s: &Store, id: &str) -> crate::folders::Folder {
+        folders(s).into_iter().find(|f| f.id == id).unwrap()
+    }
+
+    fn dirty_folder_ids(s: &Store) -> Vec<String> {
+        crate::folders::load_dirty_folders(&s.conn)
+            .unwrap()
+            .into_iter()
+            .map(|f| f.id)
+            .collect()
+    }
+
+    #[test]
+    fn create_inserts_a_root_folder() {
+        let s = store();
+        folder_create(&s, "f1", "Work", None).unwrap();
+
+        let all = folders(&s);
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].name, "Work");
+        assert_eq!(all[0].parent_id, None);
+    }
+
+    #[test]
+    fn create_nests_under_a_parent() {
+        let s = store();
+        folder_create(&s, "top", "Top", None).unwrap();
+        folder_create(&s, "sub", "Sub", Some("top")).unwrap();
+
+        assert_eq!(one(&s, "sub").parent_id.as_deref(), Some("top"));
+    }
+
+    #[test]
+    fn create_marks_the_folder_dirty_only_when_syncing() {
+        let local = store();
+        folder_create(&local, "f1", "Work", None).unwrap();
+        assert!(dirty_folder_ids(&local).is_empty());
+
+        let remote = syncing_store();
+        folder_create(&remote, "f1", "Work", None).unwrap();
+        assert_eq!(dirty_folder_ids(&remote), vec!["f1"]);
+    }
+
+    #[test]
+    fn rename_changes_the_name_and_dirties_when_syncing() {
+        let s = syncing_store();
+        folder_create(&s, "f1", "Old", None).unwrap();
+        crate::folders::clear_folder_dirty(&s.conn, &[("f1".into(), one(&s, "f1").updated_at)])
+            .unwrap();
+
+        folder_rename(&s, "f1", "New").unwrap();
+
+        assert_eq!(one(&s, "f1").name, "New");
+        assert_eq!(dirty_folder_ids(&s), vec!["f1"]);
+    }
+
+    #[test]
+    fn move_reparents_and_can_return_to_root() {
+        let s = store();
+        folder_create(&s, "top", "Top", None).unwrap();
+        folder_create(&s, "sub", "Sub", None).unwrap();
+
+        folder_move(&s, "sub", Some("top")).unwrap();
+        assert_eq!(one(&s, "sub").parent_id.as_deref(), Some("top"));
+
+        folder_move(&s, "sub", None).unwrap();
+        assert_eq!(one(&s, "sub").parent_id, None);
+    }
+
+    #[test]
+    fn delete_reparent_keeps_the_children() {
+        let s = store();
+        folder_create(&s, "top", "Top", None).unwrap();
+        folder_create(&s, "sub", "Sub", Some("top")).unwrap();
+
+        folder_delete(&s, "top", "reparent").unwrap();
+
+        let all = folders(&s);
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].id, "sub");
+        assert_eq!(all[0].parent_id, None, "children move up to the root");
+    }
+
+    #[test]
+    fn delete_recursive_removes_the_whole_subtree() {
+        let s = store();
+        folder_create(&s, "top", "Top", None).unwrap();
+        folder_create(&s, "sub", "Sub", Some("top")).unwrap();
+
+        folder_delete(&s, "top", "recursive").unwrap();
+
+        assert!(folders(&s).is_empty());
+    }
+
+    #[test]
+    fn an_unknown_delete_mode_falls_back_to_reparent() {
+        let s = store();
+        folder_create(&s, "top", "Top", None).unwrap();
+        folder_create(&s, "sub", "Sub", Some("top")).unwrap();
+
+        folder_delete(&s, "top", "who-knows").unwrap();
+
+        assert_eq!(folders(&s).len(), 1, "same as reparent");
+    }
+
+    #[test]
+    fn a_syncing_delete_tombstones_so_it_propagates() {
+        let s = syncing_store();
+        folder_create(&s, "f1", "Work", None).unwrap();
+
+        folder_delete(&s, "f1", "reparent").unwrap();
+
+        assert!(folders(&s).is_empty(), "hidden from the active list");
+        let dirty = crate::folders::load_dirty_folders(&s.conn).unwrap();
+        assert_eq!(dirty.len(), 1);
+        assert!(dirty[0].deleted_at.is_some());
+    }
+
+    #[test]
+    fn reorder_assigns_positions_in_the_given_order() {
+        let s = store();
+        for id in ["a", "b", "c"] {
+            folder_create(&s, id, id, None).unwrap();
+        }
+
+        folders_reorder(&s, None, &["c".into(), "a".into(), "b".into()]).unwrap();
+
+        let mut all = folders(&s);
+        all.sort_by_key(|f| f.position);
+        let order: Vec<&str> = all.iter().map(|f| f.id.as_str()).collect();
+        assert_eq!(order, vec!["c", "a", "b"]);
+    }
+
+    #[test]
+    fn reorder_with_an_empty_list_changes_nothing() {
+        let s = store();
+        folder_create(&s, "a", "a", None).unwrap();
+        folders_reorder(&s, None, &[]).unwrap();
+        assert_eq!(folders(&s).len(), 1);
+    }
+
+    #[test]
+    fn icon_color_and_sort_are_persisted() {
+        let s = store();
+        folder_create(&s, "f1", "Work", None).unwrap();
+
+        folder_set_icon(&s, "f1", "star").unwrap();
+        folder_set_color(&s, "f1", "#ff0000").unwrap();
+        folder_set_sort(&s, "f1", "manual").unwrap();
+
+        let f = one(&s, "f1");
+        assert_eq!(f.icon, "star");
+        assert_eq!(f.color, "#ff0000");
+        assert_eq!(f.sort, "manual");
+    }
+
+    #[test]
+    fn icon_color_and_sort_dirty_the_row_only_when_syncing() {
+        let local = store();
+        folder_create(&local, "f1", "Work", None).unwrap();
+        folder_set_icon(&local, "f1", "star").unwrap();
+        folder_set_color(&local, "f1", "#abc").unwrap();
+        folder_set_sort(&local, "f1", "name").unwrap();
+        assert!(dirty_folder_ids(&local).is_empty());
+
+        let remote = syncing_store();
+        folder_create(&remote, "f2", "Work", None).unwrap();
+        crate::folders::clear_folder_dirty(
+            &remote.conn,
+            &[("f2".into(), one(&remote, "f2").updated_at)],
+        )
+        .unwrap();
+        folder_set_icon(&remote, "f2", "star").unwrap();
+        assert_eq!(dirty_folder_ids(&remote), vec!["f2"]);
+    }
+
+    #[test]
+    fn mutating_an_unknown_folder_is_a_silent_no_op() {
+        let s = store();
+        folder_rename(&s, "ghost", "X").unwrap();
+        folder_set_icon(&s, "ghost", "star").unwrap();
+        folder_set_color(&s, "ghost", "#fff").unwrap();
+        folder_set_sort(&s, "ghost", "name").unwrap();
+        folder_move(&s, "ghost", None).unwrap();
+        assert!(folders(&s).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod reconcile_move_tests {
+    use super::test_support::*;
+    use super::*;
+
+    #[test]
+    fn plain_move_into_an_unlocked_folder_leaves_the_note_plaintext() {
+        let s = store();
+        folder(&s, "f", None);
+        seed(&s, "n1", "<p>plain</p>");
+
+        reconcile_folder_move(&s, "n1", Some("f"), None).unwrap();
+
+        assert_eq!(s.load_notes().unwrap()[0].folder_id.as_deref(), Some("f"));
+        assert!(!s.note_protected("n1").unwrap());
+        assert_eq!(content_of(&s, "n1"), "<p>plain</p>");
+    }
+
+    #[test]
+    fn move_back_to_the_root_is_allowed() {
+        let s = store();
+        folder(&s, "f", None);
+        seed_in(&s, "n1", "<p>plain</p>", "f");
+
+        reconcile_folder_move(&s, "n1", None, None).unwrap();
+
+        assert_eq!(s.load_notes().unwrap()[0].folder_id, None);
+    }
+
+    #[test]
+    fn moving_a_plaintext_note_into_a_locked_folder_encrypts_it() {
+        let s = store();
+        folder(&s, "locked-folder", None);
+        s.set_folder_locked("locked-folder", true).unwrap();
+        let dek = Dek::random();
+        seed(&s, "n1", "<p>very secret</p>");
+        crate::revisions::add_revision(&s.conn, "n1", "<p>very secret</p>", 50).unwrap();
+        assert_eq!(revision_count(&s, "n1"), 1);
+
+        reconcile_folder_move(&s, "n1", Some("locked-folder"), Some(&dek)).unwrap();
+
+        assert_eq!(
+            s.load_notes().unwrap()[0].folder_id.as_deref(),
+            Some("locked-folder")
+        );
+        assert!(s.note_protected("n1").unwrap());
+        let stored = content_of(&s, "n1");
+        assert!(!stored.contains("very secret"));
+        assert_eq!(
+            open_content(&dek, "n1", &stored).unwrap(),
+            "<p>very secret</p>"
+        );
+        assert_eq!(revision_count(&s, "n1"), 0);
+    }
+
+    #[test]
+    fn moving_into_a_folder_whose_ancestor_is_locked_also_encrypts() {
+        let s = store();
+        folder(&s, "top", None);
+        folder(&s, "sub", Some("top"));
+        s.set_folder_locked("top", true).unwrap();
+        let dek = Dek::random();
+        seed(&s, "n1", "<p>nested secret</p>");
+
+        reconcile_folder_move(&s, "n1", Some("sub"), Some(&dek)).unwrap();
+
+        assert!(s.note_protected("n1").unwrap());
+        assert!(!content_of(&s, "n1").contains("nested secret"));
+    }
+
+    #[test]
+    fn a_locked_vault_refuses_and_leaves_the_note_exactly_where_it_was() {
+        let s = store();
+        folder(&s, "locked-folder", None);
+        s.set_folder_locked("locked-folder", true).unwrap();
+        seed(&s, "n1", "<p>very secret</p>");
+        crate::revisions::add_revision(&s.conn, "n1", "<p>very secret</p>", 50).unwrap();
+
+        let err = reconcile_folder_move(&s, "n1", Some("locked-folder"), None).unwrap_err();
+        assert_eq!(err, "vault locked");
+
+        assert_eq!(s.load_notes().unwrap()[0].folder_id, None, "unmoved");
+        assert!(!s.note_protected("n1").unwrap());
+        assert_eq!(content_of(&s, "n1"), "<p>very secret</p>");
+        assert_eq!(revision_count(&s, "n1"), 1, "revision untouched");
+    }
+
+    #[test]
+    fn an_already_encrypted_note_moves_into_a_locked_folder_even_when_locked() {
+        // Nothing to seal, so no DEK is needed — the note is already ciphertext.
+        let s = store();
+        folder(&s, "locked-folder", None);
+        s.set_folder_locked("locked-folder", true).unwrap();
+        let dek = Dek::random();
+        seed(&s, "n1", "<p>secret</p>");
+        encrypt_note_in_place(&s, "n1", &dek).unwrap();
+        let before = content_of(&s, "n1");
+
+        reconcile_folder_move(&s, "n1", Some("locked-folder"), None).unwrap();
+
+        assert_eq!(
+            s.load_notes().unwrap()[0].folder_id.as_deref(),
+            Some("locked-folder")
+        );
+        assert_eq!(content_of(&s, "n1"), before, "no double encryption");
+    }
+
+    #[test]
+    fn moving_an_encrypted_note_out_of_a_locked_folder_never_auto_decrypts_it() {
+        let s = store();
+        folder(&s, "locked-folder", None);
+        s.set_folder_locked("locked-folder", true).unwrap();
+        let dek = Dek::random();
+        seed_in(&s, "n1", "<p>secret</p>", "locked-folder");
+        encrypt_note_in_place(&s, "n1", &dek).unwrap();
+        let sealed = content_of(&s, "n1");
+
+        reconcile_folder_move(&s, "n1", None, Some(&dek)).unwrap();
+
+        assert_eq!(s.load_notes().unwrap()[0].folder_id, None);
+        assert!(s.note_protected("n1").unwrap(), "still protected");
+        assert_eq!(content_of(&s, "n1"), sealed, "still ciphertext");
+    }
+
+    #[test]
+    fn moving_a_missing_note_is_an_error_and_creates_nothing() {
+        let s = store();
+        assert!(reconcile_folder_move(&s, "ghost", None, None).is_err());
+        assert!(s.load_notes().unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod reconcile_reorder_tests {
+    use super::test_support::*;
+    use super::*;
+
+    fn positions(s: &Store) -> Vec<(String, i64)> {
+        let mut v: Vec<(String, i64)> = s
+            .load_notes()
+            .unwrap()
+            .into_iter()
+            .map(|n| (n.id, n.position))
+            .collect();
+        v.sort_by_key(|(_, p)| *p);
+        v
+    }
+
+    #[test]
+    fn plain_reorder_assigns_positions_in_order() {
+        let s = store();
+        for id in ["a", "b", "c"] {
+            seed(&s, id, "<p>x</p>");
+        }
+
+        reconcile_reorder(&s, None, &["c".into(), "a".into(), "b".into()], None).unwrap();
+
+        let order: Vec<String> = positions(&s).into_iter().map(|(id, _)| id).collect();
+        assert_eq!(order, vec!["c", "a", "b"]);
+    }
+
+    #[test]
+    fn reorder_moves_notes_into_the_destination_folder() {
+        let s = store();
+        folder(&s, "f", None);
+        seed(&s, "a", "<p>x</p>");
+
+        reconcile_reorder(&s, Some("f"), &["a".into()], None).unwrap();
+
+        assert_eq!(s.load_notes().unwrap()[0].folder_id.as_deref(), Some("f"));
+    }
+
+    #[test]
+    fn dropping_a_plaintext_note_into_a_locked_folder_encrypts_it() {
+        let s = store();
+        folder(&s, "locked-folder", None);
+        s.set_folder_locked("locked-folder", true).unwrap();
+        let dek = Dek::random();
+        seed(&s, "n1", "<p>very secret</p>");
+        crate::revisions::add_revision(&s.conn, "n1", "<p>very secret</p>", 50).unwrap();
+
+        reconcile_reorder(&s, Some("locked-folder"), &["n1".into()], Some(&dek)).unwrap();
+
+        assert_eq!(
+            s.load_notes().unwrap()[0].folder_id.as_deref(),
+            Some("locked-folder")
+        );
+        assert!(s.note_protected("n1").unwrap());
+        let stored = content_of(&s, "n1");
+        assert!(!stored.contains("very secret"));
+        assert_eq!(
+            open_content(&dek, "n1", &stored).unwrap(),
+            "<p>very secret</p>"
+        );
+        assert_eq!(revision_count(&s, "n1"), 0);
+    }
+
+    #[test]
+    fn a_locked_vault_refuses_the_whole_batch_without_touching_a_single_row() {
+        let s = store();
+        folder(&s, "locked-folder", None);
+        s.set_folder_locked("locked-folder", true).unwrap();
+        seed(&s, "plain", "<p>very secret</p>");
+        seed(&s, "already", "<p>other</p>");
+        encrypt_note_in_place(&s, "already", &Dek::random()).unwrap();
+
+        let err = reconcile_reorder(
+            &s,
+            Some("locked-folder"),
+            &["already".into(), "plain".into()],
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(err, "vault locked");
+
+        // NOTHING moved — not even the already-encrypted note that would have
+        // been safe on its own.
+        for n in s.load_notes().unwrap() {
+            assert_eq!(n.folder_id, None, "{} must not have moved", n.id);
+        }
+        assert_eq!(content_of(&s, "plain"), "<p>very secret</p>");
+    }
+
+    #[test]
+    fn only_the_plaintext_notes_of_a_batch_get_encrypted() {
+        let s = store();
+        folder(&s, "locked-folder", None);
+        s.set_folder_locked("locked-folder", true).unwrap();
+        let dek = Dek::random();
+        seed(&s, "plain", "<p>fresh secret</p>");
+        seed(&s, "already", "<p>old secret</p>");
+        encrypt_note_in_place(&s, "already", &dek).unwrap();
+        let already_sealed = content_of(&s, "already");
+
+        reconcile_reorder(
+            &s,
+            Some("locked-folder"),
+            &["already".into(), "plain".into()],
+            Some(&dek),
+        )
+        .unwrap();
+
+        assert_eq!(
+            content_of(&s, "already"),
+            already_sealed,
+            "an already-sealed note is never re-sealed"
+        );
+        assert!(s.note_protected("plain").unwrap());
+        assert_eq!(
+            open_content(&dek, "plain", &content_of(&s, "plain")).unwrap(),
+            "<p>fresh secret</p>"
+        );
+    }
+
+    #[test]
+    fn an_all_encrypted_batch_into_a_locked_folder_needs_no_dek() {
+        let s = store();
+        folder(&s, "locked-folder", None);
+        s.set_folder_locked("locked-folder", true).unwrap();
+        seed(&s, "a", "<p>x</p>");
+        encrypt_note_in_place(&s, "a", &Dek::random()).unwrap();
+
+        reconcile_reorder(&s, Some("locked-folder"), &["a".into()], None).unwrap();
+
+        assert_eq!(
+            s.load_notes().unwrap()[0].folder_id.as_deref(),
+            Some("locked-folder")
+        );
+    }
+
+    #[test]
+    fn a_stale_id_in_the_drag_payload_is_skipped_not_fatal() {
+        let s = store();
+        folder(&s, "locked-folder", None);
+        s.set_folder_locked("locked-folder", true).unwrap();
+        let dek = Dek::random();
+        seed(&s, "real", "<p>secret</p>");
+
+        reconcile_reorder(
+            &s,
+            Some("locked-folder"),
+            &["ghost".into(), "real".into()],
+            Some(&dek),
+        )
+        .unwrap();
+
+        assert_eq!(s.load_notes().unwrap().len(), 1);
+        assert!(s.note_protected("real").unwrap());
+    }
+
+    #[test]
+    fn a_stale_id_alone_does_not_trigger_the_locked_vault_refusal() {
+        // Only *existing plaintext* rows require a DEK; a missing id must not
+        // make an otherwise-safe reorder fail.
+        let s = store();
+        folder(&s, "locked-folder", None);
+        s.set_folder_locked("locked-folder", true).unwrap();
+
+        reconcile_reorder(&s, Some("locked-folder"), &["ghost".into()], None).unwrap();
+    }
+
+    #[test]
+    fn an_empty_id_list_into_a_locked_folder_is_a_no_op() {
+        let s = store();
+        folder(&s, "locked-folder", None);
+        s.set_folder_locked("locked-folder", true).unwrap();
+
+        reconcile_reorder(&s, Some("locked-folder"), &[], None).unwrap();
+
+        assert!(s.load_notes().unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod folder_guard_tests {
+    use super::test_support::*;
+    use super::*;
+
+    #[test]
+    fn creating_a_duplicate_folder_id_is_rejected() {
+        let s = store();
+        folder_create(&s, "f1", "Work", None).unwrap();
+        assert!(folder_create(&s, "f1", "Other", None).is_err());
+    }
+
+    #[test]
+    fn a_folder_cannot_be_moved_into_itself_or_a_descendant() {
+        let s = store();
+        folder_create(&s, "top", "Top", None).unwrap();
+        folder_create(&s, "sub", "Sub", Some("top")).unwrap();
+
+        assert!(folder_move(&s, "top", Some("top")).is_err());
+        assert!(folder_move(&s, "top", Some("sub")).is_err());
+        // The rejected move left the tree untouched.
+        let all = crate::folders::load_folders(&s.conn).unwrap();
+        assert_eq!(all.iter().find(|f| f.id == "top").unwrap().parent_id, None);
+    }
+
+    #[test]
+    fn reorder_rejects_making_a_folder_its_own_parent() {
+        let s = store();
+        folder_create(&s, "top", "Top", None).unwrap();
+        folder_create(&s, "sub", "Sub", Some("top")).unwrap();
+
+        assert!(folders_reorder(&s, Some("top"), &["top".into()]).is_err());
+        assert!(folders_reorder(&s, Some("sub"), &["top".into()]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod vault_record_tests {
+    use super::test_support::*;
+    use super::*;
+
+    #[test]
+    fn loading_without_a_vault_reports_not_set_up() {
+        let s = store();
+        assert_eq!(err_of(load_vault_record(&s)), "vault: not set up");
+    }
+
+    #[test]
+    fn a_corrupt_record_is_rejected_rather_than_panicking() {
+        let s = store();
+        s.set_vault_record("{not json").unwrap();
+        let err = err_of(load_vault_record(&s));
+        assert!(err.contains("corrupt"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn a_persisted_record_round_trips() {
+        let s = store();
+        let (_groups, _dek) = vault_setup(&s, "hunter2").unwrap();
+        let rec = load_vault_record(&s).unwrap();
+        assert!(!rec.dek_wrapped_pass.is_empty());
+        assert!(!rec.dek_wrapped_recovery.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod vault_setup_tests {
+    use super::test_support::*;
+    use super::*;
+
+    #[test]
+    fn setup_persists_a_record_and_returns_the_recovery_groups() {
+        let s = store();
+
+        let (groups, dek) = vault_setup(&s, "correct horse").unwrap();
+
+        assert!(groups.len() > 1, "recovery key is shown in groups");
+        assert!(groups.iter().all(|g| !g.is_empty()));
+        assert!(s.vault_record().unwrap().is_some());
+        // The returned DEK is the live one: it opens content sealed with it.
+        let sealed = seal_content(&dek, "n1", "<p>x</p>");
+        assert_eq!(open_content(&dek, "n1", &sealed).unwrap(), "<p>x</p>");
+    }
+
+    #[test]
+    fn setup_refuses_to_clobber_an_existing_vault() {
+        let s = store();
+        vault_setup(&s, "first").unwrap();
+        let before = s.vault_record().unwrap().unwrap();
+
+        let err = err_of(vault_setup(&s, "second"));
+
+        assert_eq!(err, "vault: a vault already exists");
+        assert_eq!(
+            s.vault_record().unwrap().unwrap(),
+            before,
+            "the stored record must not be overwritten — the old DEK would be orphaned"
+        );
+    }
+
+    #[test]
+    fn a_note_encrypted_under_the_first_vault_still_opens_after_a_refused_setup() {
+        let s = store();
+        let (_g, dek) = vault_setup(&s, "first").unwrap();
+        seed(&s, "n1", "<p>irreplaceable</p>");
+        encrypt_note_in_place(&s, "n1", &dek).unwrap();
+
+        assert!(vault_setup(&s, "second").is_err());
+
+        let reloaded = vault_unlock_passphrase(&s, "first").unwrap();
+        assert_eq!(
+            open_content(&reloaded, "n1", &content_of(&s, "n1")).unwrap(),
+            "<p>irreplaceable</p>"
+        );
+    }
+}
+
+#[cfg(test)]
+mod vault_unlock_tests {
+    use super::test_support::*;
+    use super::*;
+
+    #[test]
+    fn the_right_passphrase_returns_a_usable_dek() {
+        let s = store();
+        let (_g, dek) = vault_setup(&s, "hunter2").unwrap();
+        let sealed = seal_content(&dek, "n1", "<p>secret</p>");
+
+        let unlocked = vault_unlock_passphrase(&s, "hunter2").unwrap();
+
+        assert_eq!(
+            open_content(&unlocked, "n1", &sealed).unwrap(),
+            "<p>secret</p>"
+        );
+    }
+
+    #[test]
+    fn a_wrong_passphrase_is_rejected_without_leaking_anything() {
+        let s = store();
+        vault_setup(&s, "hunter2").unwrap();
+
+        let err = err_of(vault_unlock_passphrase(&s, "hunter3"));
+        assert!(!err.is_empty());
+        assert!(
+            !err.contains("hunter"),
+            "the attempt must not be echoed back"
+        );
+    }
+
+    #[test]
+    fn unlocking_without_a_vault_reports_not_set_up() {
+        let s = store();
+        assert_eq!(
+            err_of(vault_unlock_passphrase(&s, "x")),
+            "vault: not set up"
+        );
+        assert_eq!(err_of(vault_unlock_recovery(&s, "x")), "vault: not set up");
+    }
+
+    #[test]
+    fn the_recovery_key_unlocks_the_same_dek() {
+        let s = store();
+        let (groups, dek) = vault_setup(&s, "hunter2").unwrap();
+        let recovery = groups.join("-");
+        let sealed = seal_content(&dek, "n1", "<p>secret</p>");
+
+        let unlocked = vault_unlock_recovery(&s, &recovery).unwrap();
+
+        assert_eq!(
+            open_content(&unlocked, "n1", &sealed).unwrap(),
+            "<p>secret</p>"
+        );
+    }
+
+    #[test]
+    fn recovery_input_formatting_is_normalized() {
+        let s = store();
+        let (groups, dek) = vault_setup(&s, "hunter2").unwrap();
+        let sealed = seal_content(&dek, "n1", "<p>secret</p>");
+        // The user types it lowercase with spaces instead of dashes.
+        let typed = groups.join(" ").to_lowercase();
+
+        let unlocked = vault_unlock_recovery(&s, &typed).unwrap();
+
+        assert_eq!(
+            open_content(&unlocked, "n1", &sealed).unwrap(),
+            "<p>secret</p>"
+        );
+    }
+
+    #[test]
+    fn a_wrong_recovery_key_is_rejected() {
+        let s = store();
+        vault_setup(&s, "hunter2").unwrap();
+        assert!(vault_unlock_recovery(&s, "AAAA-BBBB-CCCC-DDDD").is_err());
+    }
+}
+
+#[cfg(test)]
+mod vault_change_passphrase_tests {
+    use super::test_support::*;
+    use super::*;
+
+    #[test]
+    fn the_new_passphrase_works_and_the_old_one_stops_working() {
+        let s = store();
+        vault_setup(&s, "old").unwrap();
+
+        vault_change_passphrase(&s, "old", "new").unwrap();
+
+        assert!(vault_unlock_passphrase(&s, "old").is_err());
+        assert!(vault_unlock_passphrase(&s, "new").is_ok());
+    }
+
+    #[test]
+    fn the_dek_is_unchanged_so_existing_ciphertext_still_opens() {
+        let s = store();
+        let (_g, dek) = vault_setup(&s, "old").unwrap();
+        seed(&s, "n1", "<p>keepsake</p>");
+        encrypt_note_in_place(&s, "n1", &dek).unwrap();
+
+        let rewrapped = vault_change_passphrase(&s, "old", "new").unwrap();
+
+        assert_eq!(
+            open_content(&rewrapped, "n1", &content_of(&s, "n1")).unwrap(),
+            "<p>keepsake</p>"
+        );
+    }
+
+    #[test]
+    fn the_recovery_key_keeps_working_after_a_passphrase_change() {
+        let s = store();
+        let (groups, _dek) = vault_setup(&s, "old").unwrap();
+        let recovery = groups.join("-");
+
+        vault_change_passphrase(&s, "old", "new").unwrap();
+
+        assert!(vault_unlock_recovery(&s, &recovery).is_ok());
+    }
+
+    #[test]
+    fn a_wrong_current_passphrase_leaves_the_record_untouched() {
+        let s = store();
+        vault_setup(&s, "old").unwrap();
+        let before = s.vault_record().unwrap().unwrap();
+
+        assert!(vault_change_passphrase(&s, "wrong", "new").is_err());
+
+        assert_eq!(s.vault_record().unwrap().unwrap(), before);
+        assert!(vault_unlock_passphrase(&s, "old").is_ok());
+    }
+
+    #[test]
+    fn changing_without_a_vault_reports_not_set_up() {
+        let s = store();
+        assert_eq!(
+            err_of(vault_change_passphrase(&s, "a", "b")),
+            "vault: not set up"
+        );
+    }
+}
+
+#[cfg(test)]
+mod note_protection_tests {
+    use super::test_support::*;
+    use super::*;
+
+    #[test]
+    fn protecting_seals_the_content_and_purges_revisions() {
+        let s = store();
+        let dek = Dek::random();
+        seed(&s, "n1", "<p>Diary</p><p>dear diary</p>");
+        crate::revisions::add_revision(&s.conn, "n1", "<p>Diary</p>", 50).unwrap();
+
+        set_note_protected(&s, &dek, "n1", true).unwrap();
+
+        assert!(s.note_protected("n1").unwrap());
+        assert!(!content_of(&s, "n1").contains("dear diary"));
+        assert_eq!(revision_count(&s, "n1"), 0);
+        assert_eq!(title_of(&s, "n1"), "Diary", "title stays visible metadata");
+    }
+
+    #[test]
+    fn protecting_an_already_protected_note_does_not_re_encrypt_it() {
+        let s = store();
+        let dek = Dek::random();
+        seed(&s, "n1", "<p>secret</p>");
+        set_note_protected(&s, &dek, "n1", true).unwrap();
+        let sealed = content_of(&s, "n1");
+
+        set_note_protected(&s, &dek, "n1", true).unwrap();
+
+        assert_eq!(content_of(&s, "n1"), sealed, "no double encryption");
+        assert_eq!(open_content(&dek, "n1", &sealed).unwrap(), "<p>secret</p>");
+    }
+
+    #[test]
+    fn unprotecting_restores_the_plaintext() {
+        let s = store();
+        let dek = Dek::random();
+        seed(&s, "n1", "<p>secret</p>");
+        set_note_protected(&s, &dek, "n1", true).unwrap();
+
+        set_note_protected(&s, &dek, "n1", false).unwrap();
+
+        assert!(!s.note_protected("n1").unwrap());
+        assert_eq!(content_of(&s, "n1"), "<p>secret</p>");
+    }
+
+    #[test]
+    fn unprotecting_an_unprotected_note_is_a_no_op() {
+        let s = store();
+        let dek = Dek::random();
+        seed(&s, "n1", "<p>plain</p>");
+
+        set_note_protected(&s, &dek, "n1", false).unwrap();
+
+        assert_eq!(content_of(&s, "n1"), "<p>plain</p>");
+        assert!(!s.note_protected("n1").unwrap());
+    }
+
+    #[test]
+    fn unprotecting_is_refused_while_the_note_sits_in_a_locked_folder() {
+        let s = store();
+        let dek = Dek::random();
+        folder(&s, "f", None);
+        seed_in(&s, "n1", "<p>secret</p>", "f");
+        set_note_protected(&s, &dek, "n1", true).unwrap();
+        s.set_folder_locked("f", true).unwrap();
+        let sealed = content_of(&s, "n1");
+
+        let err = set_note_protected(&s, &dek, "n1", false).unwrap_err();
+
+        assert_eq!(err, "note is protected by its folder");
+        assert!(s.note_protected("n1").unwrap());
+        assert_eq!(content_of(&s, "n1"), sealed, "still ciphertext at rest");
+    }
+
+    #[test]
+    fn the_folder_refusal_also_applies_through_an_ancestor() {
+        let s = store();
+        let dek = Dek::random();
+        folder(&s, "top", None);
+        folder(&s, "sub", Some("top"));
+        seed_in(&s, "n1", "<p>secret</p>", "sub");
+        set_note_protected(&s, &dek, "n1", true).unwrap();
+        s.set_folder_locked("top", true).unwrap();
+
+        assert_eq!(
+            set_note_protected(&s, &dek, "n1", false).unwrap_err(),
+            "note is protected by its folder"
+        );
+    }
+
+    #[test]
+    fn unprotecting_with_a_foreign_dek_fails_and_keeps_the_ciphertext() {
+        let s = store();
+        let dek = Dek::random();
+        seed(&s, "n1", "<p>secret</p>");
+        set_note_protected(&s, &dek, "n1", true).unwrap();
+        let sealed = content_of(&s, "n1");
+
+        assert!(set_note_protected(&s, &Dek::random(), "n1", false).is_err());
+
+        assert!(s.note_protected("n1").unwrap());
+        assert_eq!(
+            content_of(&s, "n1"),
+            sealed,
+            "a failed decrypt must never blank or corrupt the stored blob"
+        );
+    }
+
+    #[test]
+    fn protecting_a_missing_note_is_an_error() {
+        let s = store();
+        assert!(set_note_protected(&s, &Dek::random(), "ghost", true).is_err());
+        assert!(set_note_protected(&s, &Dek::random(), "ghost", false).is_err());
+    }
+
+    #[test]
+    fn a_protect_round_trip_is_lossless_for_unicode_and_markup() {
+        let s = store();
+        let dek = Dek::random();
+        let body = "<p>Grüße 🌍</p><p>&lt;escaped&gt;</p>";
+        seed(&s, "n1", body);
+
+        set_note_protected(&s, &dek, "n1", true).unwrap();
+        set_note_protected(&s, &dek, "n1", false).unwrap();
+
+        assert_eq!(content_of(&s, "n1"), body);
+    }
+}
+
+#[cfg(test)]
+mod folder_lock_tests {
+    use super::test_support::*;
+    use super::*;
+
+    #[test]
+    fn locking_encrypts_every_note_in_the_subtree() {
+        let s = store();
+        let dek = Dek::random();
+        folder(&s, "top", None);
+        folder(&s, "sub", Some("top"));
+        seed_in(&s, "direct", "<p>direct secret</p>", "top");
+        seed_in(&s, "nested", "<p>nested secret</p>", "sub");
+        seed(&s, "outside", "<p>public</p>");
+
+        set_folder_locked(&s, &dek, "top", true).unwrap();
+
+        assert!(s.folder_locked("top").unwrap());
+        for id in ["direct", "nested"] {
+            assert!(s.note_protected(id).unwrap(), "{id} should be sealed");
+            assert!(!content_of(&s, id).contains("secret"));
+        }
+        assert!(!s.note_protected("outside").unwrap());
+        assert_eq!(content_of(&s, "outside"), "<p>public</p>");
+    }
+
+    #[test]
+    fn locking_purges_the_subtrees_plaintext_revision_history() {
+        let s = store();
+        let dek = Dek::random();
+        folder(&s, "f", None);
+        seed_in(&s, "n1", "<p>secret</p>", "f");
+        crate::revisions::add_revision(&s.conn, "n1", "<p>secret</p>", 50).unwrap();
+
+        set_folder_locked(&s, &dek, "f", true).unwrap();
+
+        assert_eq!(revision_count(&s, "n1"), 0);
+    }
+
+    #[test]
+    fn locking_leaves_an_already_encrypted_note_untouched() {
+        let s = store();
+        let dek = Dek::random();
+        folder(&s, "f", None);
+        seed_in(&s, "n1", "<p>secret</p>", "f");
+        encrypt_note_in_place(&s, "n1", &dek).unwrap();
+        let sealed = content_of(&s, "n1");
+
+        set_folder_locked(&s, &dek, "f", true).unwrap();
+
+        assert_eq!(content_of(&s, "n1"), sealed, "no double encryption");
+    }
+
+    #[test]
+    fn unlocking_decrypts_the_subtree_again() {
+        let s = store();
+        let dek = Dek::random();
+        folder(&s, "f", None);
+        seed_in(&s, "n1", "<p>secret</p>", "f");
+        set_folder_locked(&s, &dek, "f", true).unwrap();
+
+        set_folder_locked(&s, &dek, "f", false).unwrap();
+
+        assert!(!s.folder_locked("f").unwrap());
+        assert!(!s.note_protected("n1").unwrap());
+        assert_eq!(content_of(&s, "n1"), "<p>secret</p>");
+    }
+
+    #[test]
+    fn unlocking_keeps_notes_sealed_while_another_ancestor_stays_locked() {
+        let s = store();
+        let dek = Dek::random();
+        folder(&s, "top", None);
+        folder(&s, "sub", Some("top"));
+        seed_in(&s, "n1", "<p>secret</p>", "sub");
+        set_folder_locked(&s, &dek, "top", true).unwrap();
+        let sealed = content_of(&s, "n1");
+
+        set_folder_locked(&s, &dek, "sub", false).unwrap();
+
+        assert!(
+            s.note_protected("n1").unwrap(),
+            "the still-locked ancestor keeps the note sealed"
+        );
+        assert_eq!(content_of(&s, "n1"), sealed);
+    }
+
+    #[test]
+    fn locking_an_empty_folder_only_flips_the_flag() {
+        let s = store();
+        let dek = Dek::random();
+        folder(&s, "f", None);
+
+        set_folder_locked(&s, &dek, "f", true).unwrap();
+
+        assert!(s.folder_locked("f").unwrap());
+    }
+
+    #[test]
+    fn locking_marks_the_subtrees_notes_dirty_when_syncing() {
+        let s = syncing_store();
+        let dek = Dek::random();
+        folder(&s, "f", None);
+        seed_in(&s, "n1", "<p>secret</p>", "f");
+        clear_dirty(&s);
+
+        set_folder_locked(&s, &dek, "f", true).unwrap();
+
+        let dirty = s.load_dirty_notes().unwrap();
+        assert_eq!(dirty.len(), 1);
+        assert!(dirty[0].protected);
+        assert!(!dirty[0].content.contains("secret"));
+    }
+
+    #[test]
+    fn a_foreign_dek_cannot_unlock_a_folder_and_leaves_the_content_sealed() {
+        let s = store();
+        let dek = Dek::random();
+        folder(&s, "f", None);
+        seed_in(&s, "n1", "<p>secret</p>", "f");
+        set_folder_locked(&s, &dek, "f", true).unwrap();
+        let sealed = content_of(&s, "n1");
+
+        assert!(set_folder_locked(&s, &Dek::random(), "f", false).is_err());
+
+        assert!(s.note_protected("n1").unwrap());
+        assert_eq!(content_of(&s, "n1"), sealed);
+    }
+}
