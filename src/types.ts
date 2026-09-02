@@ -85,6 +85,13 @@ export interface VaultStatus {
    * wrap yet (somebody else rotated). Only they can add the missing one.
    */
   recoveryMissing: boolean;
+  /**
+   * The workspace has rotated past every key generation this device holds, so
+   * the backend refuses every SEAL. Protected notes are shown read-only while
+   * this is true — letting the user type into a note whose save is guaranteed
+   * to be rejected would lose the edit.
+   */
+  sealOutdated: boolean;
 }
 
 /**

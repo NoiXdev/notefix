@@ -386,6 +386,8 @@ export const fr = {
     find: 'Rechercher dans la note',
     loadingNote: 'Chargement de la note…',
     loadFailed: 'Cette note n\u2019a pas pu être chargée.',
+    saveFailed: 'Non enregistrée',
+    saveFailedReason: 'Non enregistrée : {{error}}',
     markdown: 'Markdown',
     openInWindow: 'Ouvrir dans une nouvelle fenêtre',
     status: {
@@ -492,6 +494,7 @@ export const fr = {
     notesBack: 'Notes',
     close: 'Fermer',
     copyFailed: 'Échec de la copie',
+    contextChanged: 'Le contexte a changé entre-temps. Veuillez réessayer.',
   },
   contexts: {
     sections: {
@@ -563,6 +566,7 @@ export const fr = {
     alreadyOnServer: 'Cet espace de travail a déjà un coffre. Déverrouillez-le avec votre mot de passe.',
     setupFailed: 'Le coffre n\u2019a pas pu être configuré : {{error}}',
     protectFailed: 'Protection impossible',
+    readOnly: 'Lecture seule',
     generationOutdated: 'Cet appareil n\u2019a pas encore la clé de coffre la plus récente. Saisissez votre code de changement ou déverrouillez à nouveau avec votre mot de passe.',
     biometricFailed: 'Échec de Touch ID — saisissez votre mot de passe',
     biometricOtherContext: 'Touch ID est configuré pour un autre contexte — saisissez votre mot de passe et réactivez Touch ID ici',

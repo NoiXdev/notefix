@@ -187,8 +187,16 @@ function ChangePassphraseDialog({ onSubmit, onClose, title }: {
     try {
       await onSubmit(current, next);
       onClose();
-    } catch {
-      setError(t("security.wrongCurrent"));
+    } catch (e) {
+      // A context switch mid-request aborts before a single local write, so
+      // the passphrase is unchanged on both sides — that is a retry, not a
+      // wrong current passphrase.
+      const msg = e instanceof Error ? e.message : String(e ?? "");
+      setError(
+        msg.includes("context changed during the request")
+          ? t("common.contextChanged")
+          : t("security.wrongCurrent"),
+      );
     }
   };
 
@@ -1133,7 +1141,11 @@ function ContextsPage() {
         const msg = e instanceof Error ? e.message : String(e ?? "");
         // A locked vault is the one failure with an obvious next step, so it
         // never goes through the raw-text interpolation.
-        setShareError(msg.includes("vault locked") ? t("vault.lockedHint") : t("vault.invite.shareFailed", { error: msg }));
+        setShareError(
+          msg.includes("vault locked") ? t("vault.lockedHint")
+          : msg.includes("context changed during the request") ? t("common.contextChanged")
+          : t("vault.invite.shareFailed", { error: msg }),
+        );
       }
     } finally {
       setSharing(false);

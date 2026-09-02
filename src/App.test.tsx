@@ -134,7 +134,7 @@ import type { VaultStatus } from "./types";
  */
 const vaultStatus = (overrides: Partial<VaultStatus> = {}): VaultStatus => ({
   exists: false, unlocked: false, biometric: false, conflict: false,
-  recoveryHolder: true, rotationCode: false, recoveryMissing: false,
+  recoveryHolder: true, rotationCode: false, recoveryMissing: false, sealOutdated: false,
   ...overrides,
 });
 
@@ -271,6 +271,82 @@ describe("App — vaultLockScope 'perNote'", () => {
 
     await waitFor(() => expect(api.notes.loadOne).toHaveBeenCalled());
     expect(screen.queryByText("Diese Notiz ist geschützt")).not.toBeInTheDocument();
+  });
+});
+
+// Round 2 / Important 1(b): the workspace rotated past every key this device
+// holds, so the backend would refuse every seal. Show the note, refuse edits.
+describe("App — protected notes are read-only behind an outdated key generation", () => {
+  it("renders the note with the read-only banner and no toolbar", async () => {
+    vi.mocked(api.vault.status).mockResolvedValue(
+      vaultStatus({ exists: true, unlocked: true, sealOutdated: true }),
+    );
+    vi.mocked(api.settings.load).mockResolvedValueOnce({ vaultLockScope: "session" });
+    mockLoad.mockResolvedValueOnce([protectedNoteMeta]);
+
+    render(<App />);
+
+    // The note is still readable — this is not the locked placeholder.
+    await waitFor(() => expect(api.notes.loadOne).toHaveBeenCalled());
+    expect(screen.queryByText("Diese Notiz ist geschützt")).not.toBeInTheDocument();
+    // (dnd-kit renders its own live region with role="status", so scope the
+    // query to the banner's own text.)
+    const banner = (await screen.findByText("Schreibgeschützt")).closest("[role='status']")!;
+    expect(banner).toHaveTextContent("Gib deinen Wechsel-Code ein");
+    expect(screen.queryByTitle("Fett")).not.toBeInTheDocument();
+  });
+
+  it("leaves an UNprotected note editable — only sealed content is affected", async () => {
+    vi.mocked(api.vault.status).mockResolvedValue(
+      vaultStatus({ exists: true, unlocked: true, sealOutdated: true }),
+    );
+    mockLoad.mockResolvedValueOnce([{ ...protectedNoteMeta, protected: false }]);
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByTitle("Fett")).toBeInTheDocument());
+    expect(screen.queryByText(/Schreibgeschützt/)).not.toBeInTheDocument();
+  });
+
+  it("keeps a protected note editable once the device has caught up", async () => {
+    vi.mocked(api.vault.status).mockResolvedValue(
+      vaultStatus({ exists: true, unlocked: true, sealOutdated: false }),
+    );
+    vi.mocked(api.settings.load).mockResolvedValueOnce({ vaultLockScope: "session" });
+    mockLoad.mockResolvedValueOnce([protectedNoteMeta]);
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByTitle("Fett")).toBeInTheDocument());
+    expect(screen.queryByText(/Schreibgeschützt/)).not.toBeInTheDocument();
+  });
+});
+
+// Round 2 / minor: dropping a plaintext note into a locked folder SEALS it,
+// so the move can be refused exactly like an explicit protect. Swallowing that
+// would leave the note looking moved when it never was.
+describe("App — a refused move is reported, not swallowed", () => {
+  it("explains an outdated key generation and restores the list", async () => {
+    vi.mocked(api.vault.status).mockResolvedValue(
+      vaultStatus({ exists: true, unlocked: true }),
+    );
+    vi.mocked(api.notes.setFolder).mockRejectedValueOnce(
+      new Error("vault: key generation outdated — unlock with your passphrase"),
+    );
+    render(<App />);
+    await waitFor(() => screen.getByTitle("Neue Notiz"));
+    fireEvent.click(screen.getByTitle("Neue Notiz"));
+    await waitFor(() => expect(screen.getByText("Ohne Titel")).toBeInTheDocument());
+
+    fireEvent.contextMenu(screen.getByText("Ohne Titel"));
+    fireEvent.click(screen.getByText("Verschieben nach"));
+    fireEvent.click(screen.getByText("— Root —"));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Dieses Gerät hat den neuesten Tresorschlüssel noch nicht.",
+    );
+    // The optimistic move was undone by the reload.
+    await waitFor(() => expect(mockLoad).toHaveBeenCalledTimes(2));
   });
 });
 

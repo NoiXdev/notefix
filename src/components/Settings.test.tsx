@@ -146,7 +146,7 @@ import type { VaultStatus } from "../types";
 /** A COMPLETE `VaultStatus`, so a test only has to spell out what it varies. */
 const vaultStatus = (overrides: Partial<VaultStatus> = {}): VaultStatus => ({
   exists: false, unlocked: false, biometric: false, conflict: false,
-  recoveryHolder: true, rotationCode: false, recoveryMissing: false,
+  recoveryHolder: true, rotationCode: false, recoveryMissing: false, sealOutdated: false,
   ...overrides,
 });
 

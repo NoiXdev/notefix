@@ -140,6 +140,11 @@ pub struct VaultStatus {
     /// This user holds the recovery key and some generation has no recovery
     /// wrap yet (somebody else rotated) — see [`generations_missing_recovery`].
     pub recovery_missing: bool,
+    /// The workspace has rotated past every generation this device's ring
+    /// holds, so every SEAL would be refused (see [`guard_seal_generation`]).
+    /// The UI shows protected notes read-only while this is true rather than
+    /// letting the user type into a note whose save cannot land.
+    pub seal_outdated: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -196,11 +201,54 @@ pub(crate) fn open_content(dek: &Dek, note_id: &str, stored: &str) -> Result<Str
 ///
 /// A local context (or a workspace that never rotated) has `vault_generation`
 /// 0 or 1 and is never affected.
-fn guard_seal_generation(store: &Store, generation: u32) -> Result<(), String> {
+///
+/// **Conflict-aware.** On a device with meta `vault_conflict` the ring holds
+/// that device's OWN vault, whose generation numbering has nothing to do with
+/// the workspace's: comparing the two would refuse every seal the moment the
+/// workspace rotated, and the advice the error gives ("unlock with your
+/// passphrase") could not help — no passphrase produces a workspace key this
+/// device was never given. So the comparison is skipped entirely and the
+/// device keeps sealing under its own vault, exactly as it did before it ever
+/// saw the workspace. Those notes stay off the workspace key because
+/// [`reseal_lagging_notes`] stands down on the same flag (C1).
+///
+/// `pub(crate)` so `mcp::StoreAccess::write_protected` can refuse BEFORE it
+/// writes plaintext into the content column — it seals in two steps, and a
+/// refusal after the first would leave the row plaintext with `protected = 1`.
+pub(crate) fn guard_seal_generation(store: &Store, generation: u32) -> Result<(), String> {
+    if crate::migrate::get_meta_i64_opt(&store.conn, "vault_conflict")
+        .map_err(|e| e.to_string())?
+        .is_some()
+    {
+        return Ok(());
+    }
     let server = crate::migrate::get_meta_i64(&store.conn, "vault_generation", 0);
     match server > i64::from(generation) {
         true => Err("vault: key generation outdated — unlock with your passphrase".to_string()),
         false => Ok(()),
+    }
+}
+
+/// Whether this context is in the state [`guard_seal_generation`] refuses:
+/// a workspace that has rotated past every generation this ring holds, on a
+/// device that is not conflicted. Backs `vault_status.seal_outdated`, which
+/// the UI uses to show protected notes READ-ONLY rather than letting the user
+/// type into a note whose save would be rejected.
+///
+/// A `ring_newest` of `None` (a locked vault) is deliberately NOT outdated:
+/// protected notes already render as locked placeholders there, and claiming
+/// "outdated key" on top would send the user after a rotation code when all
+/// they need is to unlock.
+pub fn seal_outdated(
+    server_generation: i64,
+    ring_newest: Option<u32>,
+    is_server_context: bool,
+    conflict: bool,
+) -> bool {
+    match ring_newest {
+        _ if !is_server_context || conflict => false,
+        None => false,
+        Some(newest) => server_generation > i64::from(newest),
     }
 }
 
@@ -292,12 +340,20 @@ fn has_locked_ancestor_folder_except(
 /// "readwrite" and the vault is unlocked, a write tool writes its new plaintext
 /// into `content` (still under the same store lock) and immediately calls this
 /// to reseal it — see `mcp::StoreAccess::write_protected`.
+///
+/// Refused outright while the workspace has rotated past `generation` (see
+/// [`guard_seal_generation`]). Checked HERE, at the one choke point every
+/// seal-on-transition goes through, so dragging a plaintext note into a
+/// locked folder ([`reconcile_folder_move`], [`reconcile_reorder`]) cannot
+/// quietly seal it under a key the rotation was meant to retire. Nothing is
+/// written when it fires.
 pub(crate) fn encrypt_note_in_place(
     store: &Store,
     id: &str,
     dek: &Dek,
     generation: u32,
 ) -> Result<(), String> {
+    guard_seal_generation(store, generation)?;
     let plaintext = store
         .load_note_content(id)
         .map_err(|e| e.to_string())?
@@ -2366,6 +2422,11 @@ pub struct VaultStatusFlags {
     /// This user holds the recovery key, and some generation of the vault has
     /// no recovery wrap yet (somebody else rotated). Only they can add it.
     pub recovery_missing: bool,
+    /// The workspace's key generation as of the last pull (meta
+    /// `vault_generation`, 0 for a local context). Handed out raw so the
+    /// caller can pair it with the live ring — which lives behind a different
+    /// lock — via [`seal_outdated`].
+    pub server_generation: i64,
 }
 
 pub fn vault_status_flags(
@@ -2394,6 +2455,7 @@ pub fn vault_status_flags(
         rotation_code: entries
             .as_ref()
             .is_some_and(|e| !pending_rotation_generations(e).is_empty()),
+        server_generation: crate::migrate::get_meta_i64(&store.conn, "vault_generation", 0),
         // Only the creator holds recovery wraps at all, so only they are ever
         // asked to fill a gap in them.
         recovery_missing: is_server_context
@@ -3864,6 +3926,9 @@ mod key_ring_tests {
         let vault = unlocked_at(1, d1.clone());
         seed(&s, "n1", "<p>plain</p>");
         crate::folders::create_folder(&s.conn, "f", "F", None).unwrap();
+        // Sealed while this device was still up to date.
+        seed(&s, "n2", "<p>x</p>");
+        encrypt_note_in_place(&s, "n2", &d1, 1).unwrap();
         // The last pull says the workspace is on generation 2; the ring is on 1.
         crate::migrate::set_meta_i64(&s.conn, "vault_generation", 2).unwrap();
 
@@ -3880,8 +3945,6 @@ mod key_ring_tests {
         assert!(!s.folder_locked("f").unwrap());
 
         // Editing an ALREADY protected note is refused for the same reason.
-        seed(&s, "n2", "<p>x</p>");
-        encrypt_note_in_place(&s, "n2", &d1, 1).unwrap();
         assert_eq!(
             save_note(&s, Some((&d1, 1)), &note("n2", "<p>edited</p>")).unwrap_err(),
             outdated
@@ -3896,10 +3959,70 @@ mod key_ring_tests {
 
         // Caught up (the code was redeemed): sealing works again.
         let mut ring = VaultState::default();
-        ring.unlock(1, d1);
+        ring.unlock(1, d1.clone());
         ring.unlock(2, Dek::random());
         set_note_protected(&s, &ring, "n1", true).unwrap();
         assert_eq!(s.note_key_gen("n1").unwrap(), Some(2));
+    }
+
+    /// Round 2 / Important 2: on a CONFLICTED device the ring is that
+    /// device's own vault, whose generation numbering has nothing to do with
+    /// the workspace's. Comparing them would lock the user out of their own
+    /// notes with advice ("unlock with your passphrase") that cannot help.
+    #[test]
+    fn a_conflicted_device_keeps_sealing_under_its_own_vault() {
+        let s = store();
+        let d1 = Dek::random();
+        let vault = unlocked_at(1, d1.clone());
+        seed(&s, "n1", "<p>mine</p>");
+        crate::folders::create_folder(&s.conn, "f", "F", None).unwrap();
+        // The workspace is far ahead; this device holds its OWN generation 1.
+        crate::migrate::set_meta_i64(&s.conn, "vault_generation", 3).unwrap();
+        crate::migrate::set_meta_i64(&s.conn, "vault_conflict", 1).unwrap();
+
+        set_note_protected(&s, &vault, "n1", true).unwrap();
+        assert_eq!(s.note_key_gen("n1").unwrap(), Some(1));
+        save_note(&s, Some((&d1, 1)), &note("n1", "<p>edited</p>")).unwrap();
+        assert_eq!(
+            open_note_content(&s, &vault, "n1").unwrap(),
+            "<p>edited</p>"
+        );
+        set_folder_locked(&s, &vault, "f", true).unwrap();
+        assert!(s.folder_locked("f").unwrap());
+
+        // Resolve the conflict (an unlock proved the two are one vault) and
+        // the ordinary rule applies again.
+        crate::migrate::delete_meta(&s.conn, "vault_conflict").unwrap();
+        seed(&s, "n2", "<p>plain</p>");
+        assert_eq!(
+            set_note_protected(&s, &vault, "n2", true).unwrap_err(),
+            "vault: key generation outdated — unlock with your passphrase"
+        );
+    }
+
+    /// Round 2 / minor: dragging a plaintext note into a locked folder is a
+    /// seal like any other and must refuse the same way.
+    #[test]
+    fn moving_a_note_into_a_locked_folder_refuses_on_an_outdated_ring() {
+        let s = store();
+        let d1 = Dek::random();
+        crate::folders::create_folder(&s.conn, "locked", "L", None).unwrap();
+        seed(&s, "n1", "<p>plain</p>");
+        set_folder_locked(&s, &unlocked_at(1, d1.clone()), "locked", true).unwrap();
+        seed(&s, "n2", "<p>plain</p>");
+        crate::migrate::set_meta_i64(&s.conn, "vault_generation", 2).unwrap();
+
+        let outdated = "vault: key generation outdated — unlock with your passphrase";
+        assert_eq!(
+            reconcile_folder_move(&s, "n2", Some("locked"), Some((&d1, 1))).unwrap_err(),
+            outdated
+        );
+        assert!(!s.note_protected("n2").unwrap(), "left plaintext, unmoved");
+        assert_eq!(
+            reconcile_reorder(&s, Some("locked"), &["n2".to_string()], Some((&d1, 1))).unwrap_err(),
+            outdated
+        );
+        assert!(!s.note_protected("n2").unwrap());
     }
 
     /// R5: the generation stamp rides along in the SAME statement that writes
@@ -6483,6 +6606,38 @@ mod vault_invite_tests {
         assert!(!vault_recovery_holder(None, Some(&mirrored), true));
         // ...and a local context is a holder either way.
         assert!(vault_recovery_holder(None, Some(&mirrored), false));
+    }
+
+    /// Round 2 / Important 1(b): the flag the UI uses to show protected notes
+    /// read-only instead of letting the user type into a note whose save the
+    /// backend would refuse. Mirrors `guard_seal_generation` exactly.
+    #[test]
+    fn seal_outdated_mirrors_the_seal_guard() {
+        // Behind the workspace: outdated.
+        assert!(seal_outdated(3, Some(1), true, false));
+        assert!(seal_outdated(2, Some(1), true, false));
+        // Caught up, or ahead of a workspace that has not rotated: not.
+        assert!(!seal_outdated(1, Some(1), true, false));
+        assert!(!seal_outdated(0, Some(1), true, false));
+        assert!(!seal_outdated(2, Some(3), true, false));
+        // A local context has no workspace generation to be behind.
+        assert!(!seal_outdated(3, Some(1), false, false));
+        // A conflicted device seals under its OWN vault — the two numberings
+        // are unrelated, so the comparison must not be made at all.
+        assert!(!seal_outdated(3, Some(1), true, true));
+        // A locked ring is reported as "locked", never as "outdated key":
+        // protected notes already show the locked placeholder there.
+        assert!(!seal_outdated(3, None, true, false));
+    }
+
+    /// The status carries the workspace generation raw, so the command can
+    /// pair it with the ring — which lives behind a different lock.
+    #[test]
+    fn the_status_flags_carry_the_workspace_generation() {
+        let s = store();
+        assert_eq!(vault_status_flags(&s, true).unwrap().server_generation, 0);
+        crate::migrate::set_meta_i64(&s.conn, "vault_generation", 4).unwrap();
+        assert_eq!(vault_status_flags(&s, true).unwrap().server_generation, 4);
     }
 
     #[test]

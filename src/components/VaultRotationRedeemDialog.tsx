@@ -35,6 +35,9 @@ export default function VaultRotationRedeemDialog({ redeem, onSuccess, onCancel 
       const msg = e instanceof Error ? e.message : String(e ?? '');
       if (msg.includes('vault locked')) setError(t('vault.rotation.lockedHint'));
       else if (msg.includes('wrong passphrase')) setError(t('vault.wrongPassphrase'));
+      // A context switch mid-request wrote nothing, so the one-time code is
+      // still good — never report it as spent.
+      else if (msg.includes('context changed during the request')) setError(t('common.contextChanged'));
       else setError(t('vault.rotation.invalidCode'));
     } finally {
       setBusy(false);

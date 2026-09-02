@@ -386,6 +386,8 @@ export const en = {
     find: 'Find in note',
     loadingNote: 'Loading note…',
     loadFailed: 'This note could not be loaded.',
+    saveFailed: 'Not saved',
+    saveFailedReason: 'Not saved: {{error}}',
     markdown: 'Markdown',
     openInWindow: 'Open in new window',
     status: {
@@ -492,6 +494,7 @@ export const en = {
     notesBack: 'Notes',
     close: 'Close',
     copyFailed: 'Copying failed',
+    contextChanged: 'The context changed in the meantime. Please try again.',
   },
   contexts: {
     sections: {
@@ -563,6 +566,7 @@ export const en = {
     alreadyOnServer: 'This workspace already has a vault. Unlock it with your password.',
     setupFailed: 'The vault could not be set up: {{error}}',
     protectFailed: 'Cannot protect this',
+    readOnly: 'Read-only',
     generationOutdated: 'This device does not have the newest vault key yet. Enter your change code or unlock again with your password.',
     biometricFailed: 'Touch ID failed — enter your passphrase',
     biometricOtherContext: 'Touch ID is set up for a different context — enter your passphrase and re-enable Touch ID here',

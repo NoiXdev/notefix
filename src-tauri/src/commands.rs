@@ -20,7 +20,7 @@ use crate::storage::{Note, NoteMeta, SearchHit, Store};
 // Re-exported so `crate::commands::…` keeps naming the same items after the
 // logic moved into `ops` — `mcp.rs` reaches for the two crypto primitives, and
 // the result types below are part of several command signatures.
-pub(crate) use crate::ops::{encrypt_note_in_place, open_content};
+pub(crate) use crate::ops::{encrypt_note_in_place, guard_seal_generation, open_content};
 pub use crate::ops::{ContextInfo, DbLocationResult, PathChecks, SyncStatus, VaultStatus};
 
 fn now_ms() -> i64 {
@@ -1045,6 +1045,19 @@ pub fn sync_status(
     ops::sync_status_synced(&s)
 }
 
+/// Re-check, after a network round-trip, that the active context is still the
+/// one the request was built for — see [`ops::SyncEpoch`]. Every vault command
+/// that goes to the server and then writes to the store calls this inside its
+/// write scope: the wraps it is about to persist belong to the workspace it
+/// talked to, and a context switch mid-flight would file them under another
+/// context's vault.
+fn check_epoch(app: &AppHandle, epoch: u64) -> Result<(), String> {
+    match app.state::<ops::SyncEpoch>().changed_since(epoch) {
+        true => Err("context changed during the request".to_string()),
+        false => Ok(()),
+    }
+}
+
 /// Whether the ACTIVE context's workspace is waiting for a key rotation, for
 /// the `sync-status` event payload. Best-effort: a store lock this thread
 /// cannot take right now reports `false` rather than failing the emit — the
@@ -1075,12 +1088,6 @@ pub async fn run_sync_cycle(app: &AppHandle) -> Result<(), String> {
     let Some(tokens) = crate::auth::load_tokens(&ctx.id)? else {
         return Ok(());
     };
-    // `ctx` was read before the network round-trip below; a context switch
-    // mid-flight would leave every step after it writing THIS workspace's
-    // data into another context's database. Everything that touches the store
-    // after the `.await` re-checks this against the live epoch and bails out.
-    let epoch = app.state::<ops::SyncEpoch>().current();
-
     let _ = app.emit(
         "sync-status",
         SyncStatus {
@@ -1092,16 +1099,28 @@ pub async fn run_sync_cycle(app: &AppHandle) -> Result<(), String> {
     );
 
     // Collect dirty rows + cursor under the lock, then release it.
+    //
+    // The epoch is captured INSIDE this same lock scope, together with the
+    // snapshot it describes: `ctx` was read before it, and a swap landing
+    // between the two would have this cycle push the NEW context's dirty
+    // notes to the OLD workspace — the one write no later re-check could
+    // undo. Taking both under one lock makes that window empty, since
+    // `swap_store_to` bumps the epoch and then takes this same lock.
+    // Everything after the `.await` re-checks the value against the live one.
+    let (epoch, snapshot) = {
+        let s = store_state.lock().map_err(|e| e.to_string())?;
+        (
+            app.state::<ops::SyncEpoch>().current(),
+            ops::collect_sync_push(&s)?,
+        )
+    };
     let ops::SyncPush {
         folders,
         notes,
         note_ids,
         folder_ids,
         since,
-    } = {
-        let s = store_state.lock().map_err(|e| e.to_string())?;
-        ops::collect_sync_push(&s)?
-    };
+    } = snapshot;
 
     // Network: push then pull (no lock held).
     let result = async {
@@ -1448,7 +1467,12 @@ pub fn vault_status(
         let store = store.lock().map_err(|e| e.to_string())?;
         ops::vault_status_flags(&store, is_server)?
     };
-    let unlocked = vault.lock().map_err(|e| e.to_string())?.is_unlocked();
+    // Store lock released above, VaultState taken here — sequential, never
+    // nested, per the lock-order convention near `swap_store_to`.
+    let (unlocked, ring_newest) = {
+        let v = vault.lock().map_err(|e| e.to_string())?;
+        (v.is_unlocked(), v.newest_generation())
+    };
     Ok(VaultStatus {
         exists: flags.exists,
         unlocked,
@@ -1456,6 +1480,12 @@ pub fn vault_status(
         recovery_holder: flags.recovery_holder,
         rotation_code: flags.rotation_code,
         recovery_missing: flags.recovery_missing,
+        seal_outdated: ops::seal_outdated(
+            flags.server_generation,
+            ring_newest,
+            is_server,
+            flags.conflict,
+        ),
         // Biometric unlock is offered only when the device can evaluate Touch
         // ID (`is_available`) AND the user has enrolled a wrapped DEK
         // (`is_enrolled`). `is_enrolled` reads the keychain without prompting.
@@ -1735,6 +1765,7 @@ pub async fn vault_change_passphrase(
     let target = vault_server_target(&app)?;
     let store_state = app.state::<Mutex<Store>>();
     let vault_state = app.state::<Mutex<crate::vault::state::VaultState>>();
+    let epoch = app.state::<ops::SyncEpoch>().current();
 
     // Rewrap the single local record in place — the path for a local
     // context, a legacy server, and a workspace that holds no key for this
@@ -1793,6 +1824,7 @@ pub async fn vault_change_passphrase(
     // (d) every generation landed: persist, then re-arm the ring.
     {
         let store = store_state.lock().map_err(|e| e.to_string())?;
+        check_epoch(&app, epoch)?;
         if let Some(record) = &rewrap.record {
             store
                 .set_vault_record(&record.to_json())
@@ -1885,6 +1917,7 @@ pub async fn vault_invite_accept(
     passphrase: String,
 ) -> Result<(), String> {
     let (ctx, token) = vault_invite_target(&app)?;
+    let epoch = app.state::<ops::SyncEpoch>().current();
     let wrap =
         crate::sync::vault_fetch_invite(&ctx.server_url, &token, &ctx.workspace_id, invitation_id)
             .await
@@ -1904,6 +1937,7 @@ pub async fn vault_invite_accept(
     let store_state = app.state::<Mutex<Store>>();
     {
         let store = store_state.lock().map_err(|e| e.to_string())?;
+        check_epoch(&app, epoch)?;
         let inputs = ops::load_vault_unlock_inputs(&store)?;
         let accepted = ops::accept_invite_entry(
             inputs.entries.as_ref(),
@@ -1986,6 +2020,7 @@ pub async fn vault_rotate(
     let (ctx, token) = vault_rotation_target(&app)?;
     let store_state = app.state::<Mutex<Store>>();
     let vault_state = app.state::<Mutex<crate::vault::state::VaultState>>();
+    let epoch = app.state::<ops::SyncEpoch>().current();
 
     if !vault_state.lock().map_err(|e| e.to_string())?.is_unlocked() {
         return Err("vault locked".to_string());
@@ -2057,12 +2092,21 @@ pub async fn vault_rotate(
 
     {
         let store = store_state.lock().map_err(|e| e.to_string())?;
+        check_epoch(&app, epoch)?;
         let cached = ops::cached_vault_entries(&store)?.unwrap_or_default();
         let merged = ops::merge_my_entry(&cached, own_entry)?;
         let merged = match &payload.recovery {
             Some(r) => ops::merge_recovery_entry(&merged, new_generation, r)?,
             None => merged,
         };
+        // The cache, the generation and the pending flag are one fact about
+        // the rotation. A crash between them could leave the device claiming
+        // generation N+1 with no wrap for it — unable to open its own new
+        // notes and unable to rotate again.
+        let tx = store
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| e.to_string())?;
         store
             .set_vault_entries(&merged.to_json())
             .map_err(|e| e.to_string())?;
@@ -2070,6 +2114,7 @@ pub async fn vault_rotate(
             .map_err(|e| e.to_string())?;
         crate::migrate::delete_meta(&store.conn, "vault_rotation_pending")
             .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
     }
     vault_state
         .lock()
@@ -2099,6 +2144,7 @@ pub async fn vault_rotation_redeem(
     let (ctx, token) = vault_rotation_target(&app)?;
     let store_state = app.state::<Mutex<Store>>();
     let vault_state = app.state::<Mutex<crate::vault::state::VaultState>>();
+    let epoch = app.state::<ops::SyncEpoch>().current();
 
     if !vault_state.lock().map_err(|e| e.to_string())?.is_unlocked() {
         return Err("vault locked".to_string());
@@ -2115,6 +2161,7 @@ pub async fn vault_rotation_redeem(
             .map_err(|e| e.to_string())?;
         {
             let store = store_state.lock().map_err(|e| e.to_string())?;
+            check_epoch(&app, epoch)?;
             // Caches the wrap and nothing else — in particular it never
             // clears `vault_conflict`; see `ops::apply_rotation_redeem`.
             ops::apply_rotation_redeem(&store, entry)?;

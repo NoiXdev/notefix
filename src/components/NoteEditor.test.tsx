@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, act } from "@testing-library/react";
+import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { NoteMeta } from "../types";
 import { markdownToHtml } from "../markdown";
@@ -71,6 +71,7 @@ const { fakeEditor, getConfig, resetFakeEditor } = vi.hoisted(() => {
     },
     getHTML: vi.fn(() => "<p></p>"),
     isEditable: true,
+    setEditable: vi.fn((v: boolean) => { editor.isEditable = v; }),
     isDestroyed: false,
     on: vi.fn(),
     off: vi.fn(),
@@ -94,6 +95,8 @@ const { fakeEditor, getConfig, resetFakeEditor } = vi.hoisted(() => {
       editor.commands.clearSearch.mockClear();
       editor.getHTML.mockReset();
       editor.getHTML.mockImplementation(() => "<p></p>");
+      editor.setEditable.mockClear();
+      editor.isEditable = true;
       editor.isDestroyed = false;
       editor.state = { selection: { from: 0, to: 0 }, doc: { textContent: "" } };
       // stash the config on every (re-)render so tests can grab the latest one
@@ -877,5 +880,119 @@ describe("NoteEditor — a note that will not load never becomes an empty docume
 
     expect(screen.getByTitle("Fett")).toBeInTheDocument();
     expect(fakeEditor.commands.setContent).toHaveBeenCalledWith("<p>Hello</p>");
+  });
+});
+
+describe("NoteEditor — a refused save is never reported as saved", () => {
+  beforeEach(() => {
+    (api.notes.loadOne as ReturnType<typeof vi.fn>).mockResolvedValue("<p>Hello</p>");
+  });
+
+  /** Type something and let the autosave debounce fire. */
+  const typeAndFlush = async (html: string) => {
+    act(() => { getConfig().onUpdate({ editor: fakeEditor }); }); // swallowed post-load
+    fakeEditor.getHTML.mockImplementation(() => html);
+    act(() => { getConfig().onUpdate({ editor: fakeEditor }); });
+    await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+  };
+
+  it("shows the mapped reason and keeps the edit when the key generation is outdated", async () => {
+    const rejecting = vi
+      .fn<(id: string, content: string) => Promise<void>>()
+      .mockRejectedValue(new Error("vault: key generation outdated — unlock with your passphrase"));
+    render(<NoteEditor note={mockNote} onChange={rejecting} autosaveDelay={1} />);
+    await flushNoteLoad();
+    await typeAndFlush("<p>edited</p>");
+
+    expect(rejecting).toHaveBeenCalledWith(mockNote.id, "<p>edited</p>");
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Nicht gespeichert");
+    expect(alert).toHaveTextContent("Dieses Gerät hat den neuesten Tresorschlüssel noch nicht.");
+    // Never claims success — the indicator carries the failure too.
+    expect(screen.getByLabelText("Speichern").getAttribute("title")).toContain(
+      "Dieses Gerät hat den neuesten Tresorschlüssel noch nicht.",
+    );
+    // The edit is still in the editor: nothing was reverted or cleared.
+    expect(fakeEditor.commands.setContent).toHaveBeenCalledTimes(1);
+    expect(fakeEditor.commands.setContent).toHaveBeenCalledWith("<p>Hello</p>");
+  });
+
+  it("maps a locked vault to the unlock hint", async () => {
+    const rejecting = vi
+      .fn<(id: string, content: string) => Promise<void>>()
+      .mockRejectedValue(new Error("vault locked"));
+    render(<NoteEditor note={mockNote} onChange={rejecting} autosaveDelay={1} />);
+    await flushNoteLoad();
+    await typeAndFlush("<p>edited</p>");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Entsperre zuerst den Tresor.");
+  });
+
+  it("wraps any other failure rather than dropping it", async () => {
+    const rejecting = vi
+      .fn<(id: string, content: string) => Promise<void>>()
+      .mockRejectedValue(new Error("disk full"));
+    render(<NoteEditor note={mockNote} onChange={rejecting} autosaveDelay={1} />);
+    await flushNoteLoad();
+    await typeAndFlush("<p>edited</p>");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Nicht gespeichert: disk full");
+  });
+
+  it("clears the failure once a save succeeds again", async () => {
+    const flaky = vi
+      .fn<(id: string, content: string) => Promise<void>>()
+      .mockRejectedValueOnce(new Error("vault locked"))
+      .mockResolvedValue(undefined);
+    render(<NoteEditor note={mockNote} onChange={flaky} autosaveDelay={1} />);
+    await flushNoteLoad();
+    await typeAndFlush("<p>one</p>");
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+
+    await typeAndFlush("<p>two</p>");
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+  });
+});
+
+describe("NoteEditor — read-only behind an outdated key generation", () => {
+  beforeEach(() => {
+    (api.notes.loadOne as ReturnType<typeof vi.fn>).mockResolvedValue("<p>Hello</p>");
+  });
+
+  it("shows the note with a banner, no toolbar, and a non-editable editor", async () => {
+    render(<NoteEditor note={mockNote} onChange={onChange} readOnly />);
+    await flushNoteLoad();
+
+    // The content still loaded — this is read-only, not the locked placeholder.
+    expect(fakeEditor.commands.setContent).toHaveBeenCalledWith("<p>Hello</p>");
+    const banner = screen.getByRole("status");
+    expect(banner).toHaveTextContent("Schreibgeschützt");
+    expect(banner).toHaveTextContent("Gib deinen Wechsel-Code ein");
+    expect(screen.queryByTitle("Fett")).not.toBeInTheDocument();
+    expect(getConfig().editable).toBe(false);
+    expect(fakeEditor.setEditable).toHaveBeenCalledWith(false);
+  });
+
+  it("schedules no save even if an update slips through", async () => {
+    render(<NoteEditor note={mockNote} onChange={onChange} readOnly autosaveDelay={1} />);
+    await flushNoteLoad();
+
+    act(() => { getConfig().onUpdate({ editor: fakeEditor }); }); // swallowed post-load
+    fakeEditor.getHTML.mockImplementation(() => "<p>sneaky</p>");
+    act(() => { getConfig().onUpdate({ editor: fakeEditor }); });
+    await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("re-enables the editor when the device catches up", async () => {
+    const { rerender } = render(<NoteEditor note={mockNote} onChange={onChange} readOnly />);
+    await flushNoteLoad();
+    expect(screen.queryByTitle("Fett")).not.toBeInTheDocument();
+
+    rerender(<NoteEditor note={mockNote} onChange={onChange} readOnly={false} />);
+    expect(screen.getByTitle("Fett")).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(fakeEditor.setEditable).toHaveBeenLastCalledWith(true);
   });
 });

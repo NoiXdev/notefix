@@ -58,6 +58,20 @@ describe('VaultRotationRedeemDialog', () => {
     expect(onSuccess).not.toHaveBeenCalled();
   });
 
+  it('says a context switch is a retry, never a spent code', async () => {
+    const { redeem, onSuccess } = renderDialog();
+    redeem.mockRejectedValueOnce(new Error('context changed during the request'));
+    fireEvent.change(screen.getByPlaceholderText('Wechsel-Code'), { target: { value: 'AAAA-BBBB' } });
+    fireEvent.change(screen.getByPlaceholderText('Passwort'), { target: { value: 'member-pw' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Schlüssel wechseln' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Der Kontext hat sich zwischendurch geändert. Bitte noch einmal versuchen.',
+    );
+    expect(screen.queryByText(/Code ist ungültig/)).not.toBeInTheDocument();
+    expect(onSuccess).not.toHaveBeenCalled();
+  });
+
   it('can be postponed', () => {
     const { onCancel, redeem } = renderDialog();
     fireEvent.click(screen.getByRole('button', { name: 'Später' }));

@@ -58,6 +58,8 @@ describe('VaultRotateDialog', () => {
       ['no rotation pending', 'Kein Schlüsselwechsel offen'],
       ['vault locked', 'Entsperre zuerst den Tresor.'],
       ['vault rotate HTTP 403', 'Nur der Besitzer des Arbeitsbereichs kann den Schlüssel wechseln.'],
+      // A context switch mid-request wrote nothing — a retry, not a failure.
+      ['context changed during the request', 'Der Kontext hat sich zwischendurch geändert. Bitte noch einmal versuchen.'],
       // Only a genuinely unforeseen failure falls through to the raw text.
       ['members HTTP 500', 'Schlüsselwechsel fehlgeschlagen: members HTTP 500'],
     ];

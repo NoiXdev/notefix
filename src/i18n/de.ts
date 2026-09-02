@@ -386,6 +386,8 @@ export const de = {
     find: 'In Notiz suchen',
     loadingNote: 'Notiz wird geladen…',
     loadFailed: 'Diese Notiz konnte nicht geladen werden.',
+    saveFailed: 'Nicht gespeichert',
+    saveFailedReason: 'Nicht gespeichert: {{error}}',
     markdown: 'Markdown',
     openInWindow: 'In neuem Fenster öffnen',
     status: {
@@ -492,6 +494,7 @@ export const de = {
     notesBack: 'Notizen',
     close: 'Schließen',
     copyFailed: 'Kopieren fehlgeschlagen',
+    contextChanged: 'Der Kontext hat sich zwischendurch geändert. Bitte noch einmal versuchen.',
   },
   contexts: {
     sections: {
@@ -563,6 +566,7 @@ export const de = {
     alreadyOnServer: 'Für diesen Arbeitsbereich gibt es bereits einen Tresor. Entsperre ihn mit deinem Passwort.',
     setupFailed: 'Der Tresor konnte nicht eingerichtet werden: {{error}}',
     protectFailed: 'Schützen nicht möglich',
+    readOnly: 'Schreibgeschützt',
     generationOutdated: 'Dieses Gerät hat den neuesten Tresorschlüssel noch nicht. Gib deinen Wechsel-Code ein oder entsperre erneut mit deinem Passwort.',
     biometricFailed: 'Touch ID fehlgeschlagen — bitte Passwort eingeben',
     biometricOtherContext: 'Touch ID ist für einen anderen Kontext eingerichtet — bitte Passwort eingeben und Touch ID hier neu aktivieren',

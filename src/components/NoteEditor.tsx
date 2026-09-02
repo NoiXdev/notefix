@@ -67,7 +67,19 @@ function getTitleFromHtml(html: string): string {
 
 interface Props {
   note: NoteMeta;
-  onChange: (id: string, content: string) => void;
+  /**
+   * Persist the note. May return a promise — and when it does, this component
+   * AWAITS it: a rejected save (a protected note this device may no longer
+   * seal, a vault that locked mid-edit) has to be reported, never reported as
+   * "saved" with the edit dropped on the floor.
+   */
+  onChange: (id: string, content: string) => void | Promise<void>;
+  /**
+   * Show the note but refuse edits. Used for a protected note while the
+   * workspace has rotated past this device's newest key: the backend would
+   * reject every save, so typing into it can only lose work.
+   */
+  readOnly?: boolean;
   isWindow?: boolean;
   onSetDue?: (id: string, dueAt: number | null) => void;
   autosaveDelay?: number;
@@ -115,7 +127,7 @@ const LARGE_NOTE_BYTES = 50_000;
  *  available through the markdown syntax and the markdown view. */
 const HEADING_LEVELS = [1, 2, 3] as const;
 
-export default function NoteEditor({ note, onChange, isWindow = false, onSetDue, autosaveDelay = 400, linkPreviewEnabled = true, linkPreviewMode = 'card', copyFormat = 'md', findShortcut = 'Mod+F', countShow = true, countPos = 'topRight', invisibles = false, toolbarPos = 'bottom' }: Props) {
+export default function NoteEditor({ note, onChange, readOnly = false, isWindow = false, onSetDue, autosaveDelay = 400, linkPreviewEnabled = true, linkPreviewMode = 'card', copyFormat = 'md', findShortcut = 'Mod+F', countShow = true, countPos = 'topRight', invisibles = false, toolbarPos = 'bottom' }: Props) {
   const { t } = useTranslation();
   const [pinned, setPinned] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
@@ -132,12 +144,51 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
   const [historyOpen, setHistoryOpen] = useState(false);
   const [mdMode, setMdMode] = useState(false);
   const [mdText, setMdText] = useState('');
-  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('saved');
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'failed'>('saved');
+  /** Why the last save was refused, already translated. Sticky until the next
+   *  successful save — a rejected edit must not scroll past unnoticed. */
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
   const [selStart, setSelStart] = useState(0);
   const [rich, setRich] = useState({ words: 0, chars: 0, sel: 0 });
   const delayRef = useRef(autosaveDelay);
   delayRef.current = autosaveDelay;
+  // `onUpdate` is baked into the useEditor config once, so it reads the live
+  // flag through a ref rather than a stale closure.
+  const readOnlyRef = useRef(readOnly);
+  readOnlyRef.current = readOnly;
+  /**
+   * The single place a note is persisted. Awaits `onChange` and only then
+   * claims "saved": the backend refuses a protected save this device may no
+   * longer seal (`vault: key generation outdated`) and one made after the
+   * vault locked, and silently reporting either as saved loses the edit with
+   * no signal at all. The content stays in the editor either way, so the user
+   * can fix the cause and save again.
+   */
+  const commit = (html: string): Promise<void> => {
+    setSaveState('saving');
+    return Promise.resolve(onChange(note.id, html)).then(
+      () => {
+        setSaveState('saved');
+        setSaveError(null);
+        setLastSavedAt(Date.now());
+      },
+      (e: unknown) => {
+        const msg = e instanceof Error ? e.message : String(e ?? '');
+        setSaveState('failed');
+        setSaveError(
+          msg.includes('key generation outdated') ? t('vault.generationOutdated')
+          : msg.includes('vault locked') ? t('vault.lockedHint')
+          : t('editor.saveFailedReason', { error: msg }),
+        );
+      },
+    );
+  };
+  // `onUpdate` is built once by `useEditor`, so it reaches the CURRENT commit
+  // (and thus the current `onChange`/note id) through a ref.
+  const commitRef = useRef(commit);
+  commitRef.current = commit;
+
   const lpRef = useRef({ enabled: linkPreviewEnabled, mode: linkPreviewMode });
   lpRef.current = { enabled: linkPreviewEnabled ?? true, mode: linkPreviewMode ?? 'card' };
   const copyRef = useRef<CopyFormat>(copyFormat ?? 'md');
@@ -160,6 +211,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
       ShowInvisibles,
     ],
     content: '<p></p>', // real content is fetched per note in the effect below
+    editable: !readOnly,
     onUpdate: ({ editor: e }) => {
       if (skipNextUpdate.current) {
         skipNextUpdate.current = false;
@@ -168,13 +220,14 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
       const html = e.getHTML();
         setProgress(countTasks(html));
       if (isWindow) api.setWindowTitle(getTitleFromHtml(html));
+      // Belt and braces next to `editable: false`: nothing may be scheduled
+      // for a note the backend would refuse to store.
+      if (readOnlyRef.current) return;
       if (pendingSave.current) clearTimeout(pendingSave.current);
       setSaveState('saving');
       pendingSave.current = setTimeout(() => {
         pendingSave.current = null;
-        onChange(note.id, html);
-        setSaveState('saved');
-        setLastSavedAt(Date.now());
+        void commitRef.current(html);
       }, delayRef.current);
     },
     editorProps: {
@@ -236,6 +289,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
     }
     setMdMode(false);
     setSaveState('saved');
+    setSaveError(null);
     setLastSavedAt(null);
     setLoadError(null);
 
@@ -307,6 +361,12 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
     return off;
   }, [note.id, editor]);
 
+  // `editable` is baked into the useEditor config at mount, so a vault that
+  // rotates (or catches up) while a note is open has to be applied here.
+  useEffect(() => {
+    editor?.setEditable?.(!readOnly);
+  }, [editor, readOnly]);
+
   // Track Tiptap selection/content to drive the rich-mode status bar.
   useEffect(() => {
     if (!editor) return;
@@ -344,15 +404,13 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
     if (!pendingSave.current) return;
     clearTimeout(pendingSave.current);
     pendingSave.current = null;
-    onChange(note.id, mdMode ? markdownToHtml(mdText) : editor.getHTML());
-    setSaveState('saved');
-    setLastSavedAt(Date.now());
+    void commit(mdMode ? markdownToHtml(mdText) : editor.getHTML());
   };
 
   const restore = (content: string) => {
     skipNextUpdate.current = true;
     editor.commands.setContent(content);
-    onChange(note.id, content);
+    void commit(content);
     setMdMode(false);
     setHistoryOpen(false);
   };
@@ -374,9 +432,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
     setSaveState('saving');
     pendingSave.current = setTimeout(() => {
       pendingSave.current = null;
-      onChange(note.id, markdownToHtml(value));
-      setSaveState('saved');
-      setLastSavedAt(Date.now());
+      void commit(markdownToHtml(value));
     }, delayRef.current);
   };
 
@@ -416,14 +472,44 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
 
   return (
     <div className="flex flex-col h-full relative" style={{ background: 'var(--paper)' }}>
+      {/* This note can be read but not written: the workspace rotated past
+          every key this device holds, so every save would be refused. Said
+          up front, rather than after the user has typed a paragraph. */}
+      {readOnly && (
+        <div
+          role="status"
+          className="shrink-0 px-4 py-2 text-xs border-b"
+          style={{ borderColor: '#d97706', background: '#fffbeb', color: '#7c2d12' }}
+        >
+          <strong className="font-semibold">{t('vault.readOnly')}</strong>{' '}
+          {t('vault.generationOutdated')}
+        </div>
+      )}
+      {/* Sticky until a save succeeds. The edit is still in the editor — the
+          user can fix the cause and save again — but nothing may suggest it
+          reached disk. */}
+      {saveError && (
+        <div
+          role="alert"
+          className="shrink-0 px-4 py-2 text-xs border-b"
+          style={{ borderColor: '#dc2626', background: '#fef2f2', color: '#7f1d1d' }}
+        >
+          <strong className="font-semibold">{t('editor.saveFailed')}</strong> {saveError}
+        </div>
+      )}
       {findOpen && editor && !mdMode && <FindBar editor={editor} onClose={() => setFindOpen(false)} />}
       {/* Top-right cluster: live status (words/chars or Ln/Col) + autosave indicator */}
       <div className={`absolute ${countPosClass} z-10 flex items-center gap-2`}>
         {countShow && <span className="font-mono text-[11px] text-gray-500 select-none pointer-events-none whitespace-nowrap">{statusText}</span>}
         <button
           onClick={flushSave}
-          title={saveState === 'saving' ? t('editor.saving') : lastSavedAt ? t('editor.savedAt', { time: new Date(lastSavedAt).toLocaleTimeString() }) : t('editor.saved')}
-          className="w-6 h-6 flex items-center justify-center rounded text-[var(--ink-strong)]/70 hover:text-[var(--ink)]"
+          title={
+            saveState === 'failed' ? (saveError ?? t('editor.saveFailed'))
+            : saveState === 'saving' ? t('editor.saving')
+            : lastSavedAt ? t('editor.savedAt', { time: new Date(lastSavedAt).toLocaleTimeString() })
+            : t('editor.saved')
+          }
+          className={`w-6 h-6 flex items-center justify-center rounded hover:text-[var(--ink)] ${saveState === 'failed' ? 'text-red-600' : 'text-[var(--ink-strong)]/70'}`}
           aria-label={t('editor.save')}
         >
           {saveState === 'saving' ? (
@@ -523,6 +609,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
               <CodeEditor
                 value={mdText}
                 onValueChange={onMdChange}
+                readOnly={readOnly}
                 highlight={highlightMarkdown}
                 onKeyUp={onCur}
                 onClick={onCur}
@@ -539,7 +626,10 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
       </div>
 
       {/* Formatting toolbar — position (top/bottom) via flex order, or hidden. */}
-      {toolbarPos !== 'hidden' && (
+      {/* Read-only hides the whole toolbar: every button in it mutates the
+          document (and the markdown toggle would hand the user a writable
+          textarea around the same content). */}
+      {toolbarPos !== 'hidden' && !readOnly && (
       <div
         className={`shrink-0 flex items-center gap-0.5 px-3 py-2 overflow-x-auto ${toolbarPos === 'top' ? 'border-b' : 'border-t'}`}
         style={{ background: 'var(--panel)', borderColor: 'var(--line)', order: toolbarPos === 'top' ? -1 : 0, paddingBottom: toolbarPos === 'top' ? undefined : 'calc(0.5rem + env(safe-area-inset-bottom))' }}

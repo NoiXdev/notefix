@@ -42,6 +42,9 @@ export default function VaultRotateDialog({ recoveryHolder, rotate, onSuccess, o
       else if (msg.includes('wrong recovery key')) setError(t('vault.wrongRecoveryKey'));
       else if (msg.includes('no rotation pending')) setError(t('vault.rotation.noPending'));
       else if (msg.includes('vault locked')) setError(t('vault.lockedHint'));
+      // The active context was switched while the rotation was on the wire —
+      // nothing was written, so retrying is the whole fix.
+      else if (msg.includes('context changed during the request')) setError(t('common.contextChanged'));
       // The server refuses a rotation from anyone but the workspace owner.
       else if (msg.includes('HTTP 403')) setError(t('vault.rotation.ownerOnly'));
       else setError(t('vault.rotation.failed', { error: msg }));

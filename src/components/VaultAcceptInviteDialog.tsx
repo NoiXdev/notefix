@@ -50,8 +50,16 @@ export default function VaultAcceptInviteDialog({ resolve, accept, onSuccess, on
     try {
       await accept(invitationId, code, passphrase);
       setAccepted(true);
-    } catch {
-      setError(t('vault.invite.invalid'));
+    } catch (e) {
+      // A context switch mid-request wrote nothing locally, so the one-time
+      // code has NOT been spent — saying "invalid" would send the member off
+      // to ask for a new invitation they do not need.
+      const msg = e instanceof Error ? e.message : String(e ?? '');
+      setError(
+        msg.includes('context changed during the request')
+          ? t('common.contextChanged')
+          : t('vault.invite.invalid'),
+      );
     } finally {
       setBusy(false);
     }

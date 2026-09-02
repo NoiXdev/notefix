@@ -396,7 +396,7 @@ export default function App() {
       );
     }
     return note
-      ? <div className="h-screen"><NoteEditor note={note} onChange={updateNote} isWindow onSetDue={setDue} autosaveDelay={settings.autosaveDelay} linkPreviewEnabled={settings.linkPreviewEnabled} linkPreviewMode={settings.linkPreviewMode} copyFormat={settings.copyFormat} countShow={settings.editorCountShow} countPos={settings.editorCountPos} invisibles={settings.editorInvisibles} toolbarPos={settings.editorToolbarPos} /></div>
+      ? <div className="h-screen"><NoteEditor note={note} onChange={updateNote} readOnly={!!note.protected && vault.status.sealOutdated} isWindow onSetDue={setDue} autosaveDelay={settings.autosaveDelay} linkPreviewEnabled={settings.linkPreviewEnabled} linkPreviewMode={settings.linkPreviewMode} copyFormat={settings.copyFormat} countShow={settings.editorCountShow} countPos={settings.editorCountPos} invisibles={settings.editorInvisibles} toolbarPos={settings.editorToolbarPos} /></div>
       : <div className="flex h-screen items-center justify-center text-gray-400 text-sm">{t('common.noteNotFound')}</div>;
   }
 
@@ -429,21 +429,25 @@ export default function App() {
   // Apply a protect/lock toggle once the vault is confirmed unlocked, then
   // refresh — the same explicit-reload pattern useFolders/useNotes use after
   // a mutation, since the change-broadcast skips the sender window.
+  /** A backend refusal, as something the user can act on. */
+  const vaultErrorMessage = (e: unknown) => {
+    const msg = e instanceof Error ? e.message : String(e ?? '');
+    return msg.includes('key generation outdated') ? t('vault.generationOutdated')
+      : msg.includes('key generation not available') ? t('vault.generationUnavailable')
+      : msg.includes('vault locked') ? t('vault.lockedHint')
+      : msg.includes('context changed during the request') ? t('common.contextChanged')
+      : msg;
+  };
+
   const applyProtect = async (kind: 'note' | 'folder', id: string, next: boolean) => {
     try {
       if (kind === 'note') await api.vault.protectNote(id, next);
       else await api.vault.lockFolder(id, next);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e ?? '');
-      // The two vault-generation refusals have an actionable next step; say
-      // it, rather than swallowing the failure and leaving the note looking
-      // unchanged for no visible reason.
-      setProtectError(
-        msg.includes('key generation outdated') ? t('vault.generationOutdated')
-        : msg.includes('key generation not available') ? t('vault.generationUnavailable')
-        : msg.includes('vault locked') ? t('vault.lockedHint')
-        : msg,
-      );
+      // The vault refusals all have an actionable next step; say it, rather
+      // than swallowing the failure and leaving the note looking unchanged
+      // for no visible reason.
+      setProtectError(vaultErrorMessage(e));
       return;
     }
     await reloadNotes();
@@ -460,6 +464,28 @@ export default function App() {
       setVaultDialog('unlock');
     } else {
       void applyProtect(kind, id, next);
+    }
+  };
+
+  // Dropping a plaintext note into a locked folder SEALS it, so both of these
+  // can be refused exactly like an explicit protect (an outdated key
+  // generation, a vault that locked in between). Both hooks apply their move
+  // optimistically, so a refusal reloads to put the note back where it was.
+  const moveNote = async (id: string, folderId: string | null) => {
+    try {
+      await setFolder(id, folderId);
+    } catch (e) {
+      setProtectError(vaultErrorMessage(e));
+      await reloadNotes();
+    }
+  };
+
+  const reorderNotesGuarded = async (folderId: string | null, ids: string[]) => {
+    try {
+      await reorderNotes(folderId, ids);
+    } catch (e) {
+      setProtectError(vaultErrorMessage(e));
+      await reloadNotes();
     }
   };
 
@@ -579,11 +605,11 @@ export default function App() {
         onTogglePin={setPinned}
         onArchive={setArchived}
         onSetColor={setColor}
-        onMoveNote={setFolder}
+        onMoveNote={moveNote}
         onCreateFolder={createFolder}
         onRenameFolder={renameFolder}
         onDeleteFolder={requestDeleteFolder}
-        onReorderNotes={reorderNotes}
+        onReorderNotes={reorderNotesGuarded}
         onReorderFolders={reorderFolders}
         onSetFolderIcon={setFolderIcon}
         onSetFolderColor={setFolderColor}
@@ -649,7 +675,7 @@ export default function App() {
               </div>
             </div>
           ) : (
-            <NoteEditor note={selectedNote} onChange={updateNote} onSetDue={setDue} autosaveDelay={settings.autosaveDelay} linkPreviewEnabled={settings.linkPreviewEnabled} linkPreviewMode={settings.linkPreviewMode} copyFormat={settings.copyFormat} findShortcut={resolveBindings(settings.shortcuts).findInNote} countShow={settings.editorCountShow} countPos={settings.editorCountPos} invisibles={settings.editorInvisibles} toolbarPos={settings.editorToolbarPos} />
+            <NoteEditor note={selectedNote} onChange={updateNote} readOnly={selectedNote.protected && vault.status.sealOutdated} onSetDue={setDue} autosaveDelay={settings.autosaveDelay} linkPreviewEnabled={settings.linkPreviewEnabled} linkPreviewMode={settings.linkPreviewMode} copyFormat={settings.copyFormat} findShortcut={resolveBindings(settings.shortcuts).findInNote} countShow={settings.editorCountShow} countPos={settings.editorCountPos} invisibles={settings.editorInvisibles} toolbarPos={settings.editorToolbarPos} />
           )
         ) : (
           <div className="flex h-full items-center justify-center" style={{ background: 'var(--paper)' }}>
