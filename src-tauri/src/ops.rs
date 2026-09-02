@@ -3023,3 +3023,1024 @@ mod folder_lock_tests {
         assert_eq!(content_of(&s, "n1"), sealed);
     }
 }
+
+#[cfg(test)]
+mod registry_view_tests {
+    use super::*;
+
+    fn registry() -> Registry {
+        let mut r = Registry::default_for("/data/notefix.db");
+        r.rename(&r.active_id.clone(), "Personal".into()).unwrap();
+        r.add(
+            "b".into(),
+            "Work".into(),
+            "/data/contexts/b/notefix.db".into(),
+        );
+        r
+    }
+
+    #[test]
+    fn to_infos_marks_exactly_one_context_active() {
+        let r = registry();
+        let infos = to_infos(&r);
+
+        assert_eq!(infos.len(), 2);
+        assert_eq!(infos.iter().filter(|i| i.active).count(), 1);
+        assert!(infos.iter().find(|i| i.id == r.active_id).unwrap().active);
+    }
+
+    #[test]
+    fn to_infos_carries_the_server_fields_through() {
+        let mut r = Registry::default_for("/d.db");
+        r.add_server(
+            "s".into(),
+            "notes.example".into(),
+            "/s.db".into(),
+            "https://notes.example".into(),
+        );
+        r.bind_workspace("s", "ws-1".into()).unwrap();
+
+        let info = to_infos(&r).into_iter().find(|i| i.id == "s").unwrap();
+        assert_eq!(info.kind, "server");
+        assert_eq!(info.server_url, "https://notes.example");
+        assert_eq!(info.workspace_id, "ws-1");
+        assert!(!info.active);
+    }
+
+    #[test]
+    fn registry_contexts_mirrors_every_entry() {
+        let r = registry();
+        let ctxs = registry_contexts(&r);
+
+        assert_eq!(ctxs.len(), 2);
+        let labels: Vec<&str> = ctxs.iter().map(|c| c.label.as_str()).collect();
+        assert!(labels.contains(&"Personal") && labels.contains(&"Work"));
+        assert!(ctxs.iter().all(|c| c.kind == "local"));
+    }
+
+    #[test]
+    fn active_server_is_none_for_a_local_context() {
+        let r = registry();
+        assert!(active_server(&r).is_none());
+    }
+
+    #[test]
+    fn active_server_returns_the_entry_when_the_active_context_is_server_backed() {
+        let mut r = Registry::default_for("/d.db");
+        r.add_server("s".into(), "srv".into(), "/s.db".into(), "https://s".into());
+        r.set_active("s").unwrap();
+
+        let ctx = active_server(&r).unwrap();
+        assert_eq!(ctx.id, "s");
+        assert_eq!(ctx.server_url, "https://s");
+    }
+}
+
+#[cfg(test)]
+mod context_mutation_tests {
+    use super::*;
+
+    struct Fixture {
+        _dir: tempfile::TempDir,
+        contexts: PathBuf,
+        profiles: PathBuf,
+        reg: Registry,
+    }
+
+    fn fixture() -> Fixture {
+        let dir = tempfile::tempdir().unwrap();
+        let contexts = dir.path().join("contexts");
+        let profiles = dir.path().join("profiles.json");
+        let reg = Registry::default_for(&dir.path().join("notefix.db").to_string_lossy());
+        Fixture {
+            _dir: dir,
+            contexts,
+            profiles,
+            reg,
+        }
+    }
+
+    fn saved(f: &Fixture) -> Registry {
+        let json = std::fs::read_to_string(&f.profiles).unwrap();
+        serde_json::from_str(&json).unwrap()
+    }
+
+    #[test]
+    fn prepare_context_db_creates_a_migrated_database() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let path = prepare_context_db(dir.path(), "ctx-1").unwrap();
+
+        assert_eq!(path, dir.path().join("ctx-1").join("notefix.db"));
+        assert!(path.is_file());
+        // Migrated: the settings table the app relies on exists.
+        let s = Store::open(&path).unwrap();
+        assert!(crate::settings::load_settings(&s.conn).is_ok());
+    }
+
+    #[test]
+    fn context_add_creates_an_isolated_db_and_activates_it() {
+        let mut f = fixture();
+        let before = f.reg.active_id.clone();
+
+        let (path, infos) =
+            context_add(&mut f.reg, &f.contexts, &f.profiles, "Work".into()).unwrap();
+
+        assert!(path.is_file());
+        assert!(
+            path.parent().unwrap().parent().unwrap() == f.contexts,
+            "each context gets its own directory so images stay isolated"
+        );
+        assert_eq!(infos.len(), 2);
+        assert_ne!(f.reg.active_id, before, "the new context becomes active");
+        assert_eq!(f.reg.active().unwrap().label, "Work");
+        assert_eq!(saved(&f).active_id, f.reg.active_id, "registry persisted");
+    }
+
+    #[test]
+    fn two_added_contexts_get_separate_directories() {
+        let mut f = fixture();
+        let (a, _) = context_add(&mut f.reg, &f.contexts, &f.profiles, "A".into()).unwrap();
+        let (b, _) = context_add(&mut f.reg, &f.contexts, &f.profiles, "B".into()).unwrap();
+
+        assert_ne!(a.parent(), b.parent());
+        assert_eq!(f.reg.contexts.len(), 3);
+    }
+
+    #[test]
+    fn context_switch_returns_the_path_and_sync_flag() {
+        let mut f = fixture();
+        f.reg.add_server(
+            "s".into(),
+            "srv".into(),
+            "/tmp/s.db".into(),
+            "https://s".into(),
+        );
+
+        let (path, is_server) = context_switch(&mut f.reg, &f.profiles, "s").unwrap();
+
+        assert_eq!(path, "/tmp/s.db");
+        assert!(is_server);
+        assert_eq!(saved(&f).active_id, "s");
+    }
+
+    #[test]
+    fn switching_to_a_local_context_reports_no_sync() {
+        let mut f = fixture();
+        f.reg.add("b".into(), "B".into(), "/tmp/b.db".into());
+
+        let (_path, is_server) = context_switch(&mut f.reg, &f.profiles, "b").unwrap();
+
+        assert!(!is_server);
+    }
+
+    #[test]
+    fn switching_to_an_unknown_context_is_rejected_and_persists_nothing() {
+        let mut f = fixture();
+        let before = f.reg.active_id.clone();
+
+        assert_eq!(
+            context_switch(&mut f.reg, &f.profiles, "nope").unwrap_err(),
+            "unknown context"
+        );
+
+        assert_eq!(f.reg.active_id, before);
+        assert!(!f.profiles.exists(), "nothing was written");
+    }
+
+    #[test]
+    fn context_rename_updates_the_label_and_persists() {
+        let mut f = fixture();
+        let id = f.reg.active_id.clone();
+
+        let infos = context_rename(&mut f.reg, &f.profiles, &id, "Renamed".into()).unwrap();
+
+        assert_eq!(infos[0].label, "Renamed");
+        assert_eq!(saved(&f).active().unwrap().label, "Renamed");
+    }
+
+    #[test]
+    fn renaming_an_unknown_context_is_rejected() {
+        let mut f = fixture();
+        assert_eq!(
+            context_rename(&mut f.reg, &f.profiles, "nope", "X".into()).unwrap_err(),
+            "unknown context"
+        );
+    }
+
+    #[test]
+    fn context_remove_drops_the_entry_and_can_keep_the_file() {
+        let mut f = fixture();
+        let (path, _) = context_add(&mut f.reg, &f.contexts, &f.profiles, "Doomed".into()).unwrap();
+        // The added context became active; switch away so it can be removed.
+        let other = f.reg.contexts[0].id.clone();
+        let doomed = f.reg.active_id.clone();
+        context_switch(&mut f.reg, &f.profiles, &other).unwrap();
+
+        let (removed, infos) = context_remove(&mut f.reg, &f.profiles, &doomed, false).unwrap();
+
+        assert_eq!(removed.id, doomed);
+        assert_eq!(infos.len(), 1);
+        assert!(path.is_file(), "delete_file = false keeps the database");
+        assert_eq!(saved(&f).contexts.len(), 1);
+    }
+
+    #[test]
+    fn context_remove_can_delete_the_database_and_its_sidecars() {
+        let mut f = fixture();
+        let (path, _) = context_add(&mut f.reg, &f.contexts, &f.profiles, "Doomed".into()).unwrap();
+        for ext in ["-wal", "-shm"] {
+            std::fs::write(with_ext(&path, ext), b"x").unwrap();
+        }
+        let other = f.reg.contexts[0].id.clone();
+        let doomed = f.reg.active_id.clone();
+        context_switch(&mut f.reg, &f.profiles, &other).unwrap();
+
+        context_remove(&mut f.reg, &f.profiles, &doomed, true).unwrap();
+
+        assert!(!path.exists());
+        assert!(!with_ext(&path, "-wal").exists());
+        assert!(!with_ext(&path, "-shm").exists());
+    }
+
+    #[test]
+    fn the_active_context_cannot_be_removed() {
+        let mut f = fixture();
+        let active = f.reg.active_id.clone();
+        f.reg.add("b".into(), "B".into(), "/tmp/b.db".into());
+
+        assert_eq!(
+            context_remove(&mut f.reg, &f.profiles, &active, false).unwrap_err(),
+            "cannot remove active context"
+        );
+        assert_eq!(f.reg.contexts.len(), 2, "nothing was removed");
+        assert!(!f.profiles.exists(), "and nothing was persisted");
+    }
+
+    #[test]
+    fn the_last_remaining_context_cannot_be_removed() {
+        let mut f = fixture();
+        f.reg.add("b".into(), "B".into(), "/tmp/b.db".into());
+        f.reg.set_active("b").unwrap();
+        let only_other = f.reg.contexts[0].id.clone();
+        // Remove the non-active one so a single (active) context is left...
+        context_remove(&mut f.reg, &f.profiles, &only_other, false).unwrap();
+        assert_eq!(f.reg.contexts.len(), 1);
+
+        // ...which is then unremovable, active-check first.
+        assert_eq!(
+            context_remove(&mut f.reg, &f.profiles, "b", false).unwrap_err(),
+            "cannot remove active context"
+        );
+    }
+
+    #[test]
+    fn removing_an_unknown_context_is_rejected() {
+        let mut f = fixture();
+        f.reg.add("b".into(), "B".into(), "/tmp/b.db".into());
+
+        assert_eq!(
+            context_remove(&mut f.reg, &f.profiles, "nope", false).unwrap_err(),
+            "unknown context"
+        );
+        assert_eq!(f.reg.contexts.len(), 2);
+    }
+
+    #[test]
+    fn context_bind_workspace_binds_and_optionally_renames() {
+        let mut f = fixture();
+        f.reg.add_server(
+            "s".into(),
+            "srv".into(),
+            "/tmp/s.db".into(),
+            "https://s".into(),
+        );
+
+        let infos =
+            context_bind_workspace(&mut f.reg, &f.profiles, "s", "ws-9".into(), "Team".into())
+                .unwrap();
+
+        let info = infos.into_iter().find(|i| i.id == "s").unwrap();
+        assert_eq!(info.workspace_id, "ws-9");
+        assert_eq!(info.label, "Team");
+        assert_eq!(saved(&f).contexts.last().unwrap().workspace_id, "ws-9");
+    }
+
+    #[test]
+    fn an_empty_label_leaves_the_existing_name_alone() {
+        let mut f = fixture();
+        f.reg.add_server(
+            "s".into(),
+            "Original".into(),
+            "/tmp/s.db".into(),
+            "https://s".into(),
+        );
+
+        context_bind_workspace(&mut f.reg, &f.profiles, "s", "ws-9".into(), String::new()).unwrap();
+
+        assert_eq!(
+            f.reg.contexts.iter().find(|c| c.id == "s").unwrap().label,
+            "Original"
+        );
+    }
+
+    #[test]
+    fn binding_an_unknown_context_is_rejected() {
+        let mut f = fixture();
+        assert_eq!(
+            context_bind_workspace(&mut f.reg, &f.profiles, "nope", "ws".into(), String::new())
+                .unwrap_err(),
+            "unknown context"
+        );
+    }
+
+    #[test]
+    fn register_server_context_adds_it_as_the_active_server_entry() {
+        let mut f = fixture();
+
+        let infos = register_server_context(
+            &mut f.reg,
+            &f.profiles,
+            "srv-1",
+            "notes.example".into(),
+            Path::new("/tmp/srv.db"),
+            "https://notes.example".into(),
+        )
+        .unwrap();
+
+        let info = infos.into_iter().find(|i| i.id == "srv-1").unwrap();
+        assert!(info.active);
+        assert_eq!(info.kind, "server");
+        assert_eq!(info.server_url, "https://notes.example");
+        assert_eq!(info.workspace_id, "", "not bound to a workspace yet");
+        assert_eq!(saved(&f).active_id, "srv-1");
+    }
+}
+
+#[cfg(test)]
+mod auth_flow_tests {
+    use super::*;
+
+    fn config() -> crate::auth::OAuthConfig {
+        crate::auth::OAuthConfig {
+            client_id: "notefix-desktop".into(),
+            authorize_url: "https://notes.example/oauth/authorize".into(),
+            token_url: "https://notes.example/oauth/token".into(),
+            scopes: vec!["notes.read".into(), "notes.write".into()],
+        }
+    }
+
+    #[test]
+    fn server_label_uses_the_host() {
+        assert_eq!(server_label("https://notes.example/api"), "notes.example");
+        assert_eq!(server_label("http://localhost:8000"), "localhost");
+    }
+
+    #[test]
+    fn server_label_falls_back_to_the_raw_string_when_unparsable() {
+        assert_eq!(server_label("not a url"), "not a url");
+        assert_eq!(server_label(""), "");
+    }
+
+    #[test]
+    fn authorize_url_carries_every_pkce_parameter() {
+        let url = build_authorize_url(&config(), "CHAL", "STATE").unwrap();
+        let parsed = url::Url::parse(&url).unwrap();
+        let q: std::collections::HashMap<String, String> =
+            parsed.query_pairs().into_owned().collect();
+
+        assert_eq!(q["response_type"], "code");
+        assert_eq!(q["client_id"], "notefix-desktop");
+        assert_eq!(q["redirect_uri"], crate::auth::REDIRECT_URI);
+        assert_eq!(q["code_challenge"], "CHAL");
+        assert_eq!(q["code_challenge_method"], "S256");
+        assert_eq!(q["state"], "STATE");
+        assert_eq!(q["scope"], "notes.read notes.write");
+        assert!(url.starts_with("https://notes.example/oauth/authorize?"));
+    }
+
+    #[test]
+    fn no_scopes_means_no_scope_parameter() {
+        let mut c = config();
+        c.scopes.clear();
+
+        let url = build_authorize_url(&c, "CHAL", "STATE").unwrap();
+
+        assert!(!url.contains("scope="));
+    }
+
+    #[test]
+    fn an_unparsable_authorize_url_is_rejected() {
+        let mut c = config();
+        c.authorize_url = "/relative/only".into();
+        assert!(build_authorize_url(&c, "CHAL", "STATE").is_err());
+    }
+
+    #[test]
+    fn existing_query_parameters_are_preserved() {
+        let mut c = config();
+        c.authorize_url = "https://notes.example/authorize?tenant=acme".into();
+
+        let url = build_authorize_url(&c, "CHAL", "STATE").unwrap();
+
+        let parsed = url::Url::parse(&url).unwrap();
+        let q: std::collections::HashMap<String, String> =
+            parsed.query_pairs().into_owned().collect();
+        assert_eq!(q["tenant"], "acme");
+        assert_eq!(q["state"], "STATE");
+    }
+
+    #[test]
+    fn the_callback_yields_the_code_and_state() {
+        let (code, state) = parse_auth_callback("notefix://auth?code=abc123&state=xyz789").unwrap();
+        assert_eq!(code, "abc123");
+        assert_eq!(state, "xyz789");
+    }
+
+    #[test]
+    fn percent_encoded_callback_values_are_decoded() {
+        let (code, state) =
+            parse_auth_callback("notefix://auth?code=a%2Bb%2Fc&state=s%20t").unwrap();
+        assert_eq!(code, "a+b/c");
+        assert_eq!(state, "s t");
+    }
+
+    #[test]
+    fn a_callback_missing_code_or_state_is_rejected() {
+        assert_eq!(
+            parse_auth_callback("notefix://auth?state=xyz").unwrap_err(),
+            "missing code in callback"
+        );
+        assert_eq!(
+            parse_auth_callback("notefix://auth?code=abc").unwrap_err(),
+            "missing state in callback"
+        );
+        assert_eq!(
+            parse_auth_callback("notefix://auth").unwrap_err(),
+            "missing code in callback"
+        );
+    }
+
+    #[test]
+    fn an_unparsable_callback_url_is_rejected() {
+        assert!(parse_auth_callback("://////").is_err());
+        assert!(parse_auth_callback("").is_err());
+    }
+
+    #[test]
+    fn extra_callback_parameters_are_ignored() {
+        let (code, state) =
+            parse_auth_callback("notefix://auth?foo=1&code=c&bar=2&state=s&baz=3").unwrap();
+        assert_eq!((code.as_str(), state.as_str()), ("c", "s"));
+    }
+}
+
+#[cfg(test)]
+mod sync_status_tests {
+    use super::test_support::*;
+    use super::*;
+
+    #[test]
+    fn a_local_context_reports_local_without_touching_the_store() {
+        let r = Registry::default_for("/d.db");
+        let status = sync_status_local(&r).unwrap();
+        assert_eq!(status.state, "local");
+        assert_eq!(status.pending, 0);
+        assert_eq!(status.last_synced_at, 0);
+    }
+
+    #[test]
+    fn an_unbound_server_context_reports_unbound() {
+        let mut r = Registry::default_for("/d.db");
+        r.add_server("s".into(), "srv".into(), "/s.db".into(), "https://s".into());
+        r.set_active("s").unwrap();
+
+        let status = sync_status_local(&r).unwrap();
+        assert_eq!(status.state, "unbound");
+    }
+
+    #[test]
+    fn a_bound_server_context_defers_to_the_store() {
+        let mut r = Registry::default_for("/d.db");
+        r.add_server("s".into(), "srv".into(), "/s.db".into(), "https://s".into());
+        r.set_active("s").unwrap();
+        r.bind_workspace("s", "ws-1".into()).unwrap();
+
+        assert!(sync_status_local(&r).is_none());
+    }
+
+    #[test]
+    fn a_store_that_never_synced_reports_syncing() {
+        let s = syncing_store();
+        let status = sync_status_synced(&s).unwrap();
+        assert_eq!(status.state, "syncing");
+        assert_eq!(status.last_synced_at, 0);
+    }
+
+    #[test]
+    fn a_store_with_a_cursor_reports_synced() {
+        let s = syncing_store();
+        crate::migrate::set_meta_i64(&s.conn, "sync_last_at", 1_700_000).unwrap();
+
+        let status = sync_status_synced(&s).unwrap();
+        assert_eq!(status.state, "synced");
+        assert_eq!(status.last_synced_at, 1_700_000);
+    }
+
+    #[test]
+    fn pending_counts_dirty_notes_and_folders_together() {
+        let s = syncing_store();
+        seed(&s, "n1", "<p>a</p>");
+        seed(&s, "n2", "<p>b</p>");
+        crate::folders::create_folder(&s.conn, "f1", "F", None).unwrap();
+        crate::folders::touch_folder(&s.conn, "f1").unwrap();
+
+        assert_eq!(sync_status_synced(&s).unwrap().pending, 3);
+    }
+
+    #[test]
+    fn nothing_dirty_means_zero_pending() {
+        let s = syncing_store();
+        seed(&s, "n1", "<p>a</p>");
+        clear_dirty(&s);
+
+        assert_eq!(sync_status_synced(&s).unwrap().pending, 0);
+    }
+}
+
+#[cfg(test)]
+mod select_notes_tests {
+    use super::test_support::*;
+    use super::*;
+
+    #[test]
+    fn an_empty_selection_means_everything() {
+        let all = vec![note("a", ""), note("b", "")];
+        assert_eq!(select_notes(all, &[]).len(), 2);
+    }
+
+    #[test]
+    fn a_selection_keeps_only_the_named_notes_in_input_order() {
+        let all = vec![note("a", ""), note("b", ""), note("c", "")];
+        let picked = select_notes(all, &["c".into(), "a".into()]);
+        let ids: Vec<&str> = picked.iter().map(|n| n.id.as_str()).collect();
+        assert_eq!(ids, vec!["a", "c"], "input order wins, not selection order");
+    }
+
+    #[test]
+    fn unknown_ids_in_the_selection_are_ignored() {
+        let all = vec![note("a", "")];
+        assert!(select_notes(all, &["ghost".into()]).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod export_tests {
+    use super::test_support::*;
+    use super::*;
+
+    /// An images root holding one 1x1-ish PNG at `a/b/pic.png`.
+    fn images_root(dir: &Path) -> PathBuf {
+        let root = dir.join("images");
+        std::fs::create_dir_all(root.join("a/b")).unwrap();
+        std::fs::write(root.join("a/b/pic.png"), [0x89, 0x50, 0x4e, 0x47]).unwrap();
+        root
+    }
+
+    #[test]
+    fn export_notes_json_writes_every_note_when_no_ids_are_given() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = store();
+        seed(&s, "a", "<p>alpha</p>");
+        seed(&s, "b", "<p>beta</p>");
+        let out = dir.path().join("notes.json");
+
+        export_notes_json(&s, &out, &[]).unwrap();
+
+        let json = std::fs::read_to_string(&out).unwrap();
+        assert!(json.contains("alpha") && json.contains("beta"));
+        assert!(json.contains("\"updatedAt\""), "camelCase wire shape");
+    }
+
+    #[test]
+    fn export_notes_json_honors_an_id_selection() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = store();
+        seed(&s, "a", "<p>alpha</p>");
+        seed(&s, "b", "<p>beta</p>");
+        let out = dir.path().join("notes.json");
+
+        export_notes_json(&s, &out, &["b".into()]).unwrap();
+
+        let json = std::fs::read_to_string(&out).unwrap();
+        assert!(json.contains("beta"));
+        assert!(!json.contains("alpha"));
+    }
+
+    #[test]
+    fn export_notes_json_reports_an_unwritable_target() {
+        let s = store();
+        let err = export_notes_json(&s, Path::new("/no/such/dir/notes.json"), &[]).unwrap_err();
+        assert!(!err.is_empty());
+    }
+
+    #[test]
+    fn export_notes_inlined_turns_images_into_data_urls() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = images_root(dir.path());
+        let s = store();
+        seed(&s, "a", "<img src=\"noteimg://localhost/a/b/pic.png\">");
+        let out = dir.path().join("notes.json");
+
+        export_notes_inlined(&s, &root, &out, &[]).unwrap();
+
+        let json = std::fs::read_to_string(&out).unwrap();
+        assert!(json.contains("data:image/png;base64,"));
+        assert!(!json.contains("noteimg://"));
+    }
+
+    #[test]
+    fn a_missing_image_leaves_its_url_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("images");
+        std::fs::create_dir_all(&root).unwrap();
+        let s = store();
+        seed(&s, "a", "<img src=\"noteimg://localhost/gone.png\">");
+        let out = dir.path().join("notes.json");
+
+        export_notes_inlined(&s, &root, &out, &[]).unwrap();
+
+        let json = std::fs::read_to_string(&out).unwrap();
+        assert!(json.contains("noteimg://localhost/gone.png"));
+    }
+
+    #[test]
+    fn note_inlined_html_returns_one_notes_html_with_images_embedded() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = images_root(dir.path());
+        let s = store();
+        seed(
+            &s,
+            "a",
+            "<p>hi</p><img src=\"noteimg://localhost/a/b/pic.png\">",
+        );
+
+        let html = note_inlined_html(&s, &root, "a").unwrap();
+
+        assert!(html.starts_with("<p>hi</p>"));
+        assert!(html.contains("data:image/png;base64,"));
+    }
+
+    #[test]
+    fn note_inlined_html_rejects_an_unknown_note() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = store();
+        assert_eq!(
+            note_inlined_html(&s, dir.path(), "ghost").unwrap_err(),
+            "note not found"
+        );
+    }
+
+    #[test]
+    fn note_inlined_html_can_still_reach_a_trashed_note() {
+        // It reads `load_all_notes`, so printing a note that was just trashed
+        // in another window still works.
+        let dir = tempfile::tempdir().unwrap();
+        let s = store();
+        seed(&s, "a", "<p>trashed</p>");
+        s.trash_note("a", 1).unwrap();
+
+        assert_eq!(
+            note_inlined_html(&s, dir.path(), "a").unwrap(),
+            "<p>trashed</p>"
+        );
+    }
+
+    #[test]
+    fn save_export_writes_the_bytes_verbatim() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("out.pdf");
+
+        save_export(&out, b"%PDF-1.4 fake").unwrap();
+
+        assert_eq!(std::fs::read(&out).unwrap(), b"%PDF-1.4 fake");
+    }
+
+    #[test]
+    fn save_export_reports_a_bad_destination() {
+        assert!(save_export(Path::new("/no/such/dir/out.bin"), b"x").is_err());
+    }
+
+    #[test]
+    fn export_md_bundle_writes_the_markdown_and_copies_its_images() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = images_root(dir.path());
+        let dest = dir.path().join("bundle");
+
+        export_md_bundle(
+            &root,
+            &dest,
+            "# Title\n\n![](noteimg://localhost/a/b/pic.png)\n",
+            "My Note",
+        )
+        .unwrap();
+
+        let md = std::fs::read_to_string(dest.join("My Note.md")).unwrap();
+        assert!(md.contains("images/a/b/pic.png"));
+        assert!(!md.contains("noteimg://"));
+        assert!(dest.join("images/a/b/pic.png").is_file());
+    }
+
+    #[test]
+    fn export_md_bundle_sanitizes_path_characters_in_the_filename() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("bundle");
+
+        export_md_bundle(dir.path(), &dest, "# x", "a/b:c\\d").unwrap();
+
+        assert!(dest.join("a-b-c-d.md").is_file());
+    }
+
+    #[test]
+    fn export_notes_bundle_writes_notes_json_next_to_the_images() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = images_root(dir.path());
+        let dest = dir.path().join("bundle");
+        let s = store();
+        seed(&s, "a", "<img src=\"noteimg://localhost/a/b/pic.png\">");
+        seed(&s, "b", "<p>no images</p>");
+
+        export_notes_bundle(&s, &root, &dest, &[]).unwrap();
+
+        let json = std::fs::read_to_string(dest.join("notes.json")).unwrap();
+        assert!(json.contains("images/a/b/pic.png"));
+        assert!(!json.contains("noteimg://"));
+        assert!(json.contains("no images"));
+        assert!(dest.join("images/a/b/pic.png").is_file());
+    }
+
+    #[test]
+    fn export_notes_bundle_honors_an_id_selection() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("bundle");
+        let s = store();
+        seed(&s, "a", "<p>alpha</p>");
+        seed(&s, "b", "<p>beta</p>");
+
+        export_notes_bundle(&s, dir.path(), &dest, &["a".into()]).unwrap();
+
+        let json = std::fs::read_to_string(dest.join("notes.json")).unwrap();
+        assert!(json.contains("alpha"));
+        assert!(!json.contains("beta"));
+    }
+
+    #[test]
+    fn a_protected_notes_body_is_exported_as_ciphertext() {
+        // Export runs without the vault, so a sealed note must stay sealed in
+        // the exported file. Its `title` is plaintext metadata by design (see
+        // `Note::title`) and is therefore expected to be readable.
+        let dir = tempfile::tempdir().unwrap();
+        let s = store();
+        seed(&s, "a", "<p>Expenses</p><p>classified body</p>");
+        encrypt_note_in_place(&s, "a", &Dek::random()).unwrap();
+        let out = dir.path().join("notes.json");
+
+        export_notes_json(&s, &out, &[]).unwrap();
+
+        let json = std::fs::read_to_string(&out).unwrap();
+        assert!(
+            !json.contains("classified body"),
+            "the sealed body must never reach the export file"
+        );
+        assert!(
+            json.contains("Expenses"),
+            "the plaintext title is by design"
+        );
+    }
+}
+
+#[cfg(test)]
+mod save_image_tests {
+    use super::*;
+
+    #[test]
+    fn writes_the_file_under_the_notes_shard_and_returns_its_url() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let url = save_image(dir.path(), "aa-bb-cc", "pic.png", b"binary").unwrap();
+
+        assert_eq!(url, "noteimg://localhost/aa/bb/cc/pic.png");
+        assert_eq!(
+            std::fs::read(dir.path().join("aa/bb/cc/pic.png")).unwrap(),
+            b"binary"
+        );
+    }
+
+    #[test]
+    fn a_note_id_without_dashes_is_a_single_directory() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let url = save_image(dir.path(), "plainid", "x.png", b"x").unwrap();
+
+        assert_eq!(url, "noteimg://localhost/plainid/x.png");
+        assert!(dir.path().join("plainid/x.png").is_file());
+    }
+
+    #[test]
+    fn a_traversing_or_empty_name_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        for bad in ["", "../escape.png", "a/../b.png", "back\\slash.png"] {
+            assert_eq!(
+                save_image(dir.path(), "n1", bad, b"x").unwrap_err(),
+                "invalid name",
+                "name {bad:?} must be rejected"
+            );
+        }
+        assert!(
+            !dir.path().join("escape.png").exists(),
+            "nothing escaped the images root"
+        );
+    }
+
+    #[test]
+    fn a_traversing_or_empty_note_id_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        for bad in ["", "..", "a/../b"] {
+            assert_eq!(
+                save_image(dir.path(), bad, "pic.png", b"x").unwrap_err(),
+                "invalid note id",
+                "note id {bad:?} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn the_name_is_validated_before_the_note_id() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            save_image(dir.path(), "..", "../x.png", b"x").unwrap_err(),
+            "invalid name"
+        );
+    }
+
+    #[test]
+    fn overwriting_an_existing_image_replaces_its_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        save_image(dir.path(), "n1", "pic.png", b"first").unwrap();
+        save_image(dir.path(), "n1", "pic.png", b"second").unwrap();
+
+        assert_eq!(
+            std::fs::read(dir.path().join("n1/pic.png")).unwrap(),
+            b"second"
+        );
+    }
+}
+
+#[cfg(test)]
+mod check_paths_tests {
+    use super::*;
+
+    #[test]
+    fn reports_both_directories_as_writable() {
+        let dir = tempfile::tempdir().unwrap();
+        let images = dir.path().join("images");
+        std::fs::create_dir_all(&images).unwrap();
+        let db = dir.path().join("notefix.db");
+
+        let checks = check_paths(&db, &images);
+
+        assert!(checks.db_writable);
+        assert!(checks.images_writable);
+        assert_eq!(checks.db_path, dir.path().to_string_lossy());
+        assert_eq!(checks.images_path, images.to_string_lossy());
+    }
+
+    #[test]
+    fn a_missing_images_directory_is_not_writable() {
+        let dir = tempfile::tempdir().unwrap();
+        let checks = check_paths(&dir.path().join("notefix.db"), &dir.path().join("nope"));
+
+        assert!(checks.db_writable);
+        assert!(!checks.images_writable);
+    }
+
+    #[test]
+    fn a_database_path_with_no_parent_is_not_writable() {
+        let checks = check_paths(Path::new("/"), Path::new("/definitely/not/here"));
+        assert!(!checks.db_writable);
+        assert!(!checks.images_writable);
+    }
+}
+
+#[cfg(test)]
+mod db_location_tests {
+    use super::test_support::*;
+    use super::*;
+
+    #[test]
+    fn with_ext_appends_sidecar_suffixes_and_passes_the_bare_path_through() {
+        let p = Path::new("/data/notefix.db");
+        assert_eq!(with_ext(p, ""), PathBuf::from("/data/notefix.db"));
+        assert_eq!(with_ext(p, "-wal"), PathBuf::from("/data/notefix.db-wal"));
+        assert_eq!(with_ext(p, "-shm"), PathBuf::from("/data/notefix.db-shm"));
+    }
+
+    #[test]
+    fn move_db_files_relocates_the_database_and_its_sidecars() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("old.db");
+        let to = dir.path().join("sub").join("new.db");
+        std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+        std::fs::write(&from, b"db").unwrap();
+        std::fs::write(with_ext(&from, "-wal"), b"wal").unwrap();
+        std::fs::write(with_ext(&from, "-shm"), b"shm").unwrap();
+
+        move_db_files(&from, &to).unwrap();
+
+        assert_eq!(std::fs::read(&to).unwrap(), b"db");
+        assert_eq!(std::fs::read(with_ext(&to, "-wal")).unwrap(), b"wal");
+        assert_eq!(std::fs::read(with_ext(&to, "-shm")).unwrap(), b"shm");
+        assert!(!from.exists());
+        assert!(!with_ext(&from, "-wal").exists());
+    }
+
+    #[test]
+    fn move_db_files_skips_sidecars_that_do_not_exist() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("old.db");
+        let to = dir.path().join("new.db");
+        std::fs::write(&from, b"db").unwrap();
+
+        move_db_files(&from, &to).unwrap();
+
+        assert!(to.is_file());
+        assert!(!with_ext(&to, "-wal").exists());
+    }
+
+    #[test]
+    fn move_db_files_is_a_no_op_when_the_source_is_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        move_db_files(&dir.path().join("missing.db"), &dir.path().join("new.db")).unwrap();
+        assert!(!dir.path().join("new.db").exists());
+    }
+
+    #[test]
+    fn move_db_files_reports_an_unreachable_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("old.db");
+        std::fs::write(&from, b"db").unwrap();
+
+        assert!(move_db_files(&from, Path::new("/no/such/dir/new.db")).is_err());
+    }
+
+    #[test]
+    fn reopen_store_at_points_the_store_at_a_migrated_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("moved.db");
+        let mut s = store();
+        seed(&s, "in-memory-only", "<p>x</p>");
+
+        reopen_store_at(&mut s, &target).unwrap();
+
+        assert!(target.is_file());
+        assert!(
+            s.load_notes().unwrap().is_empty(),
+            "the store now reads the new database"
+        );
+        // Migrated, so it is immediately usable.
+        seed(&s, "fresh", "<p>y</p>");
+        assert_eq!(s.load_notes().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn reopen_store_at_reports_an_unopenable_path() {
+        let mut s = store();
+        assert!(reopen_store_at(&mut s, Path::new("/no/such/dir/x.db")).is_err());
+    }
+
+    #[test]
+    fn point_active_context_at_only_moves_the_active_entry() {
+        let mut r = Registry::default_for("/old/notefix.db");
+        let active = r.active_id.clone();
+        r.add("other".into(), "Other".into(), "/other/notefix.db".into());
+
+        point_active_context_at(&mut r, Path::new("/new/notefix.db"));
+
+        assert_eq!(r.active().unwrap().path, "/new/notefix.db");
+        assert_eq!(
+            r.contexts.iter().find(|c| c.id == "other").unwrap().path,
+            "/other/notefix.db"
+        );
+        assert_eq!(r.active_id, active, "the active context does not change");
+    }
+
+    #[test]
+    fn point_active_context_at_is_a_no_op_when_the_active_id_is_dangling() {
+        let mut r = Registry::default_for("/old/notefix.db");
+        r.active_id = "gone".into();
+
+        point_active_context_at(&mut r, Path::new("/new/notefix.db"));
+
+        assert_eq!(r.contexts[0].path, "/old/notefix.db");
+    }
+}
