@@ -40,30 +40,16 @@ pub fn is_newer(current: &str, latest: &str) -> bool {
     false
 }
 
-#[tauri::command]
-pub async fn check_for_update() -> Result<UpdateInfo, String> {
-    let current = env!("CARGO_PKG_VERSION").to_string();
+/// The latest-release endpoint URL. Pulled out so it's testable without a
+/// network call.
+fn latest_release_url() -> String {
+    format!("https://api.github.com/repos/{REPO}/releases/latest")
+}
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(8))
-        .user_agent("Notefix (update-check)")
-        .build()
-        .map_err(|e| e.to_string())?;
-
-    let resp = client
-        .get(format!(
-            "https://api.github.com/repos/{REPO}/releases/latest"
-        ))
-        .header("Accept", "application/vnd.github+json")
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-
-    if !resp.status().is_success() {
-        return Err(format!("GitHub returned {}", resp.status()));
-    }
-
-    let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+/// Build the `UpdateInfo` result from GitHub's `releases/latest` JSON body,
+/// given the running app's version. Pulled out of [`check_for_update`] so the
+/// parsing/error-classification logic is testable without a network call.
+fn build_update_info(current: String, body: &serde_json::Value) -> Result<UpdateInfo, String> {
     let latest = body
         .get("tag_name")
         .and_then(|v| v.as_str())
@@ -86,9 +72,35 @@ pub async fn check_for_update() -> Result<UpdateInfo, String> {
     })
 }
 
+#[tauri::command]
+pub async fn check_for_update() -> Result<UpdateInfo, String> {
+    let current = env!("CARGO_PKG_VERSION").to_string();
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(8))
+        .user_agent("Notefix (update-check)")
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let resp = client
+        .get(latest_release_url())
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !resp.status().is_success() {
+        return Err(format!("GitHub returned {}", resp.status()));
+    }
+
+    let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    build_update_info(current, &body)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::is_newer;
+    use super::*;
+    use serde_json::json;
 
     #[test]
     fn detects_newer_versions() {
@@ -104,5 +116,46 @@ mod tests {
         assert!(!is_newer("0.1.2", "v0.1.2"));
         assert!(!is_newer("0.1.3", "0.1.2"));
         assert!(!is_newer("1.0.0", "0.9.9"));
+    }
+
+    #[test]
+    fn latest_release_url_is_well_formed() {
+        assert_eq!(
+            latest_release_url(),
+            "https://api.github.com/repos/NoiXdev/notefix/releases/latest"
+        );
+    }
+
+    #[test]
+    fn build_update_info_flags_available_update() {
+        let body = json!({
+            "tag_name": "v0.8.0",
+            "html_url": "https://github.com/NoiXdev/notefix/releases/tag/v0.8.0",
+        });
+        let info = build_update_info("0.7.0".to_string(), &body).unwrap();
+        assert_eq!(info.current, "0.7.0");
+        assert_eq!(info.latest, "v0.8.0");
+        assert!(info.update_available);
+        assert_eq!(
+            info.url,
+            "https://github.com/NoiXdev/notefix/releases/tag/v0.8.0"
+        );
+    }
+
+    #[test]
+    fn build_update_info_no_update_when_already_current() {
+        let body = json!({ "tag_name": "v0.7.0" });
+        let info = build_update_info("0.7.0".to_string(), &body).unwrap();
+        assert!(!info.update_available);
+        // No html_url in the body -> falls back to the static releases page.
+        assert_eq!(info.url, RELEASES_URL);
+    }
+
+    #[test]
+    fn build_update_info_missing_tag_is_error() {
+        match build_update_info("0.7.0".to_string(), &json!({})) {
+            Err(msg) => assert_eq!(msg, "no release tag found"),
+            Ok(_) => panic!("expected an error for a body with no tag_name"),
+        }
     }
 }

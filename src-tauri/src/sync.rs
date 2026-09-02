@@ -169,76 +169,80 @@ fn base(server_url: &str) -> String {
     server_url.trim_end_matches('/').to_string()
 }
 
-/// GET /api/workspaces — the user's workspaces for the picker.
-pub async fn fetch_workspaces(
-    server_url: &str,
-    token: &str,
-) -> Result<Vec<WorkspaceInfo>, SyncError> {
-    let url = format!("{}/api/workspaces", base(server_url));
-    let resp = client()?
-        .get(&url)
-        .bearer_auth(token)
-        .header("Accept", "application/json")
-        .send()
-        .await
-        .map_err(|e| SyncError::Offline(e.to_string()))?;
-    if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+/// Classify an HTTP response status for our sync endpoints: 401 is treated as
+/// `Offline` (retryable — token likely needs refreshing), any other non-2xx
+/// is a `Fatal` error tagged with `context`, 2xx is `Ok`. Pulled out of
+/// `fetch_workspaces`/`pull`/`push` so this classification is testable
+/// without a network call.
+fn classify_status(status: reqwest::StatusCode, context: &str) -> Result<(), SyncError> {
+    if status == reqwest::StatusCode::UNAUTHORIZED {
         return Err(SyncError::Offline("unauthorized".into()));
     }
-    if !resp.status().is_success() {
+    if !status.is_success() {
         return Err(SyncError::Fatal(format!(
-            "workspaces HTTP {}",
-            resp.status().as_u16()
+            "{context} HTTP {}",
+            status.as_u16()
         )));
     }
-    let body: Value = resp
-        .json()
-        .await
-        .map_err(|e| SyncError::Fatal(e.to_string()))?;
-    let rows = body["data"].as_array().cloned().unwrap_or_default();
-    Ok(rows
+    Ok(())
+}
+
+fn workspaces_url(server_url: &str) -> String {
+    format!("{}/api/workspaces", base(server_url))
+}
+
+/// Map the `/api/workspaces` JSON body to `WorkspaceInfo`s. Pulled out of
+/// [`fetch_workspaces`] so the response-parsing logic is testable without a
+/// network call.
+fn parse_workspaces(body: &Value) -> Vec<WorkspaceInfo> {
+    body["data"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
         .iter()
         .map(|w| WorkspaceInfo {
             id: w["id"].as_str().unwrap_or_default().to_string(),
             name: w["name"].as_str().unwrap_or_default().to_string(),
             role: w["role"].as_str().unwrap_or_default().to_string(),
         })
-        .collect())
+        .collect()
 }
 
-/// GET …/changes?since= → (cursor, folders, notes) as raw wire values.
-pub async fn pull(
+/// GET /api/workspaces — the user's workspaces for the picker.
+pub async fn fetch_workspaces(
     server_url: &str,
     token: &str,
-    workspace_id: &str,
-    since: i64,
-) -> Result<(i64, Vec<Value>, Vec<Value>), SyncError> {
-    let url = format!(
-        "{}/api/workspaces/{}/changes?since={}",
-        base(server_url),
-        workspace_id,
-        since
-    );
+) -> Result<Vec<WorkspaceInfo>, SyncError> {
     let resp = client()?
-        .get(&url)
+        .get(workspaces_url(server_url))
         .bearer_auth(token)
         .header("Accept", "application/json")
         .send()
         .await
         .map_err(|e| SyncError::Offline(e.to_string()))?;
-    if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
-        return Err(SyncError::Offline("unauthorized".into()));
-    }
-    if !resp.status().is_success() {
-        return Err(SyncError::Fatal(format!(
-            "pull HTTP {}",
-            resp.status().as_u16()
-        )));
-    }
+    classify_status(resp.status(), "workspaces")?;
     let body: Value = resp
         .json()
         .await
         .map_err(|e| SyncError::Fatal(e.to_string()))?;
+    Ok(parse_workspaces(&body))
+}
+
+fn pull_url(server_url: &str, workspace_id: &str, since: i64) -> String {
+    format!(
+        "{}/api/workspaces/{}/changes?since={}",
+        base(server_url),
+        workspace_id,
+        since
+    )
+}
+
+/// Map the `…/changes` GET JSON body to `(cursor, folders, notes)`. The
+/// server may nest each collection under a `data` key (`{"folders":
+/// {"data": [...]}}`) or send it as a bare array — both are accepted. Missing
+/// cursor falls back to the `since` cursor the caller requested. Pulled out
+/// of [`pull`] so this parsing logic is testable without a network call.
+fn parse_pull_response(body: &Value, since: i64) -> (i64, Vec<Value>, Vec<Value>) {
     let cursor = body["cursor"].as_i64().unwrap_or(since);
     let folders = body["folders"]["data"]
         .as_array()
@@ -250,7 +254,44 @@ pub async fn pull(
         .or(body["notes"].as_array())
         .cloned()
         .unwrap_or_default();
-    Ok((cursor, folders, notes))
+    (cursor, folders, notes)
+}
+
+/// GET …/changes?since= → (cursor, folders, notes) as raw wire values.
+pub async fn pull(
+    server_url: &str,
+    token: &str,
+    workspace_id: &str,
+    since: i64,
+) -> Result<(i64, Vec<Value>, Vec<Value>), SyncError> {
+    let resp = client()?
+        .get(pull_url(server_url, workspace_id, since))
+        .bearer_auth(token)
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| SyncError::Offline(e.to_string()))?;
+    classify_status(resp.status(), "pull")?;
+    let body: Value = resp
+        .json()
+        .await
+        .map_err(|e| SyncError::Fatal(e.to_string()))?;
+    Ok(parse_pull_response(&body, since))
+}
+
+fn push_url(server_url: &str, workspace_id: &str) -> String {
+    format!(
+        "{}/api/workspaces/{}/changes",
+        base(server_url),
+        workspace_id
+    )
+}
+
+/// Map the `…/changes` POST JSON body to the server's new cursor (0 if
+/// absent). Pulled out of [`push`] so this parsing logic is testable without
+/// a network call.
+fn parse_push_response(body: &Value) -> i64 {
+    body["cursor"].as_i64().unwrap_or(0)
 }
 
 /// POST …/changes with dirty folders+notes; returns the server's new cursor.
@@ -261,33 +302,20 @@ pub async fn push(
     folders: Vec<Value>,
     notes: Vec<Value>,
 ) -> Result<i64, SyncError> {
-    let url = format!(
-        "{}/api/workspaces/{}/changes",
-        base(server_url),
-        workspace_id
-    );
     let resp = client()?
-        .post(&url)
+        .post(push_url(server_url, workspace_id))
         .bearer_auth(token)
         .header("Accept", "application/json")
         .json(&json!({ "folders": folders, "notes": notes }))
         .send()
         .await
         .map_err(|e| SyncError::Offline(e.to_string()))?;
-    if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
-        return Err(SyncError::Offline("unauthorized".into()));
-    }
-    if !resp.status().is_success() {
-        return Err(SyncError::Fatal(format!(
-            "push HTTP {}",
-            resp.status().as_u16()
-        )));
-    }
+    classify_status(resp.status(), "push")?;
     let body: Value = resp
         .json()
         .await
         .map_err(|e| SyncError::Fatal(e.to_string()))?;
-    Ok(body["cursor"].as_i64().unwrap_or(0))
+    Ok(parse_push_response(&body))
 }
 
 #[cfg(test)]
@@ -534,5 +562,94 @@ mod tests {
     fn sync_error_display() {
         assert_eq!(SyncError::Offline("x".into()).to_string(), "x");
         assert_eq!(SyncError::Fatal("y".into()).to_string(), "y");
+    }
+
+    #[test]
+    fn base_trims_trailing_slash() {
+        assert_eq!(base("https://sync.test/"), "https://sync.test");
+        assert_eq!(base("https://sync.test"), "https://sync.test");
+    }
+
+    #[test]
+    fn classify_status_unauthorized_is_offline() {
+        assert!(matches!(
+            classify_status(reqwest::StatusCode::UNAUTHORIZED, "pull"),
+            Err(SyncError::Offline(m)) if m == "unauthorized"
+        ));
+    }
+
+    #[test]
+    fn classify_status_server_error_is_fatal_with_context() {
+        let err = classify_status(reqwest::StatusCode::INTERNAL_SERVER_ERROR, "push")
+            .expect_err("500 must fail");
+        assert!(matches!(err, SyncError::Fatal(m) if m == "push HTTP 500"));
+    }
+
+    #[test]
+    fn classify_status_success_is_ok() {
+        assert!(classify_status(reqwest::StatusCode::OK, "pull").is_ok());
+    }
+
+    #[test]
+    fn workspaces_pull_and_push_urls_are_well_formed() {
+        assert_eq!(
+            workspaces_url("https://sync.test/"),
+            "https://sync.test/api/workspaces"
+        );
+        assert_eq!(
+            pull_url("https://sync.test", "w1", 42),
+            "https://sync.test/api/workspaces/w1/changes?since=42"
+        );
+        assert_eq!(
+            push_url("https://sync.test", "w1"),
+            "https://sync.test/api/workspaces/w1/changes"
+        );
+    }
+
+    #[test]
+    fn parse_workspaces_maps_fields() {
+        let body = json!({"data": [
+            {"id": "w1", "name": "Team", "role": "owner"},
+            {"id": "w2", "name": "Solo", "role": "member"},
+        ]});
+        let ws = parse_workspaces(&body);
+        assert_eq!(ws.len(), 2);
+        assert_eq!(ws[0].id, "w1");
+        assert_eq!(ws[0].name, "Team");
+        assert_eq!(ws[0].role, "owner");
+        assert_eq!(ws[1].id, "w2");
+    }
+
+    #[test]
+    fn parse_workspaces_empty_when_no_data_field() {
+        assert!(parse_workspaces(&json!({})).is_empty());
+    }
+
+    #[test]
+    fn parse_pull_response_reads_nested_data_envelope() {
+        let body = json!({
+            "cursor": 100,
+            "folders": {"data": [{"id": "f1"}]},
+            "notes": {"data": [{"id": "n1"}, {"id": "n2"}]},
+        });
+        let (cursor, folders, notes) = parse_pull_response(&body, 0);
+        assert_eq!(cursor, 100);
+        assert_eq!(folders.len(), 1);
+        assert_eq!(notes.len(), 2);
+    }
+
+    #[test]
+    fn parse_pull_response_accepts_bare_arrays_and_defaults_cursor() {
+        let body = json!({"folders": [{"id": "f1"}], "notes": []});
+        let (cursor, folders, notes) = parse_pull_response(&body, 7);
+        assert_eq!(cursor, 7, "missing cursor falls back to `since`");
+        assert_eq!(folders.len(), 1);
+        assert!(notes.is_empty());
+    }
+
+    #[test]
+    fn parse_push_response_reads_cursor_or_defaults_to_zero() {
+        assert_eq!(parse_push_response(&json!({"cursor": 55})), 55);
+        assert_eq!(parse_push_response(&json!({})), 0);
     }
 }

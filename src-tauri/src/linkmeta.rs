@@ -75,16 +75,26 @@ pub fn parse_og(html: &str, url: &str) -> LinkMeta {
     }
 }
 
-#[tauri::command]
-pub async fn fetch_link_meta(url: String) -> Result<LinkMeta, String> {
-    if !(url.starts_with("http://") || url.starts_with("https://")) {
-        return Err("invalid url".to_string());
-    }
-    let client = reqwest::Client::builder()
+/// Only `http(s)://` URLs are fetched — pulled out of [`fetch_link_meta`] so
+/// this guard is testable without a network call.
+fn is_http_url(url: &str) -> bool {
+    url.starts_with("http://") || url.starts_with("https://")
+}
+
+fn http_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .user_agent("NotefixBot/1.0 (+link-preview)")
         .build()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn fetch_link_meta(url: String) -> Result<LinkMeta, String> {
+    if !is_http_url(&url) {
+        return Err("invalid url".to_string());
+    }
+    let client = http_client()?;
     let resp = client.get(&url).send().await.map_err(|e| e.to_string())?;
     let html = resp.text().await.map_err(|e| e.to_string())?;
     Ok(parse_og(&html, &url))
@@ -113,5 +123,58 @@ mod tests {
         let m = parse_og("<html></html>", "https://a.b");
         assert_eq!(m.title, "");
         assert_eq!(m.site, "a.b");
+    }
+
+    #[test]
+    fn description_falls_back_to_plain_description_meta() {
+        let html = r#"<meta name="description" content="Plain desc">"#;
+        let m = parse_og(html, "https://a.b");
+        assert_eq!(m.description, "Plain desc");
+    }
+
+    #[test]
+    fn empty_meta_content_is_skipped_and_falls_back_to_title_tag() {
+        let html = r#"<meta property="og:title" content=""><title>Fallback Title</title>"#;
+        let m = parse_og(html, "https://a.b");
+        assert_eq!(m.title, "Fallback Title");
+    }
+
+    #[test]
+    fn meta_content_matches_reversed_attribute_order() {
+        // content="…" before property="…" — the second regex pattern.
+        let html = r#"<meta content="Reversed" property="og:title">"#;
+        let m = parse_og(html, "https://a.b");
+        assert_eq!(m.title, "Reversed");
+    }
+
+    #[test]
+    fn html_unescape_decodes_common_entities() {
+        let html = r#"<meta property="og:title" content="Tom &amp; Jerry &lt;3&gt; &quot;fun&quot; &#39;ok&#39;">"#;
+        let m = parse_og(html, "https://a.b");
+        assert_eq!(m.title, "Tom & Jerry <3> \"fun\" 'ok'");
+    }
+
+    #[test]
+    fn http_client_builds_successfully() {
+        assert!(http_client().is_ok());
+    }
+
+    #[test]
+    fn is_http_url_accepts_http_and_https_only() {
+        assert!(is_http_url("http://example.com"));
+        assert!(is_http_url("https://example.com"));
+        assert!(!is_http_url("ftp://example.com"));
+        assert!(!is_http_url("javascript:alert(1)"));
+        assert!(!is_http_url(""));
+    }
+
+    #[tokio::test]
+    async fn fetch_link_meta_rejects_non_http_urls_without_a_network_call() {
+        // The scheme guard returns before the first `.await`, so this
+        // exercises the command end-to-end with no real network access.
+        match fetch_link_meta("javascript:alert(1)".to_string()).await {
+            Err(msg) => assert_eq!(msg, "invalid url"),
+            Ok(_) => panic!("non-http scheme must be rejected"),
+        }
     }
 }
