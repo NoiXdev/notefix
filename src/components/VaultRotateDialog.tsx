@@ -35,9 +35,15 @@ export default function VaultRotateDialog({ recoveryHolder, rotate, onSuccess, o
       onSuccess(await rotate(passphrase, recoveryHolder ? recoveryKey : undefined));
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e ?? '');
+      // Every branch the backend can actually produce gets its own words; the
+      // catch-all interpolation is a last resort, so it must never be the
+      // place a raw English backend string becomes the user-facing text.
       if (msg.includes('wrong passphrase')) setError(t('vault.wrongPassphrase'));
-      else if (msg.includes('recovery key')) setError(t('vault.rotation.failed', { error: msg }));
+      else if (msg.includes('wrong recovery key')) setError(t('vault.wrongRecoveryKey'));
       else if (msg.includes('no rotation pending')) setError(t('vault.rotation.noPending'));
+      else if (msg.includes('vault locked')) setError(t('vault.lockedHint'));
+      // The server refuses a rotation from anyone but the workspace owner.
+      else if (msg.includes('HTTP 403')) setError(t('vault.rotation.ownerOnly'));
       else setError(t('vault.rotation.failed', { error: msg }));
     } finally {
       setBusy(false);

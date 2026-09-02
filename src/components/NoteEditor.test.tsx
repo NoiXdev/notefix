@@ -836,3 +836,46 @@ describe("NoteEditor — toolbar position variants", () => {
     expect(screen.queryByTitle("Fett")).not.toBeInTheDocument();
   });
 });
+
+describe("NoteEditor — a note that will not load never becomes an empty document", () => {
+  it("shows the locked placeholder when the ring lacks the note's key generation", async () => {
+    (api.notes.loadOne as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("key generation not available"),
+    );
+    render(<NoteEditor note={mockNote} onChange={onChange} />);
+    await flushNoteLoad();
+
+    expect(
+      screen.getByText(/mit einem neueren Schlüssel gesichert/i),
+    ).toBeInTheDocument();
+    // No editor chrome at all — nothing writable, nothing that could save.
+    expect(screen.queryByTitle("Fett")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Speichern")).not.toBeInTheDocument();
+    expect(document.querySelector("[contenteditable]")).toBeNull();
+    // And above all: no blank document was pushed into the editor.
+    expect(fakeEditor.commands.setContent).not.toHaveBeenCalled();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("shows an error state — not an empty document — for any other failure", async () => {
+    (api.notes.loadOne as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("db is gone"));
+    render(<NoteEditor note={mockNote} onChange={onChange} />);
+    await flushNoteLoad();
+
+    expect(screen.getByText("Diese Notiz konnte nicht geladen werden.")).toBeInTheDocument();
+    expect(
+      screen.queryByText(/mit einem neueren Schlüssel gesichert/i),
+    ).not.toBeInTheDocument();
+    expect(fakeEditor.commands.setContent).not.toHaveBeenCalled();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("renders the editor normally once a note loads again", async () => {
+    (api.notes.loadOne as ReturnType<typeof vi.fn>).mockResolvedValue("<p>Hello</p>");
+    render(<NoteEditor note={mockNote} onChange={onChange} />);
+    await flushNoteLoad();
+
+    expect(screen.getByTitle("Fett")).toBeInTheDocument();
+    expect(fakeEditor.commands.setContent).toHaveBeenCalledWith("<p>Hello</p>");
+  });
+});

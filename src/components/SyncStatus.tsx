@@ -8,14 +8,13 @@ import type { SyncStatus as S } from '../syncStatus';
 export default function SyncStatus() {
   const { t } = useTranslation();
   const [s, setS] = useState<S | null>(null);
-  // A removed member leaves the workspace waiting for a key change. It is not
-  // a sync state, but this is where the workspace's health is visible.
-  const [rotationPending, setRotationPending] = useState(false);
 
-  const refresh = () => {
-    void api.contexts.syncStatus().then(setS);
-    void api.contexts.list().then(list => setRotationPending(list.some(c => c.active && c.vaultRotationPending)));
-  };
+  // A removed member leaves the workspace waiting for a key change. It is not
+  // a sync state, but it rides along on the status — both the command and the
+  // `sync-status` event carry it — so the badge costs no extra round-trip.
+  const rotationPending = s?.vaultRotationPending ?? false;
+
+  const refresh = () => { void api.contexts.syncStatus().then(setS); };
   useEffect(() => { refresh(); return api.onSyncStatus(setS); }, []);
   useEffect(() => api.onContextChanged(refresh), []);
 

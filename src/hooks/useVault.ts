@@ -6,11 +6,23 @@ export function useVault() {
   const [status, setStatus] = useState<VaultStatus>({ exists: false, unlocked: false, biometric: false, conflict: false, recoveryHolder: true, rotationCode: false, recoveryMissing: false });
 
   const refresh = useCallback(async () => {
-    setStatus(await api.vault.status());
+    try {
+      setStatus(await api.vault.status());
+    } catch {
+      // No active context yet, a store being swapped, a backend hiccup —
+      // none of them is worth an unhandled rejection. The status simply
+      // stays as it was; the next refresh (or `context-changed`) corrects it.
+    }
   }, []);
 
   useEffect(() => {
     void refresh();
+    // Switching contexts locks the vault backend-side (the DEK belongs to the
+    // previous context's DB), and every vault action the backend performs on
+    // its own — an accepted invitation, a rotation — broadcasts the same
+    // event. Subscribing HERE rather than in each consumer is what keeps the
+    // Security and Contexts pages and their banners from going stale.
+    return api.onContextChanged(() => { void refresh(); });
   }, [refresh]);
 
   const setup = useCallback(

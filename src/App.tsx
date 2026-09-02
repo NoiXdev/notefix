@@ -77,6 +77,9 @@ export default function App() {
   const [rotationRedeem, setRotationRedeem] = useState(false);
   // A protect that is waiting on the one-time "images stay unencrypted" hint.
   const [imagesHint, setImagesHint] = useState<{ kind: 'note' | 'folder'; id: string; next: boolean } | null>(null);
+  // Why a protect/lock was refused, already translated. In-app only — Tauri's
+  // WebView has no window.alert.
+  const [protectError, setProtectError] = useState<string | null>(null);
   // 'perNote' lock scope: notes unlocked this session, so re-locking the note
   // list doesn't force re-entering the passphrase for a note already shown.
   const [revealedNotes, setRevealedNotes] = useState<Set<string>>(new Set());
@@ -154,11 +157,11 @@ export default function App() {
       void reloadNotes();
       void reloadFolders();
       void reloadSettings();
-      // Switching contexts locks the vault backend-side (the DEK belongs to the
-      // previous context's DB); refresh so the UI reflects the locked state.
-      void vault.refresh();
+      // The vault status is refreshed by `useVault`'s own subscription to
+      // this event, so every consumer of the hook stays in step — not just
+      // this one.
     });
-  }, [reloadNotes, reloadFolders, reloadSettings, vault.refresh]);
+  }, [reloadNotes, reloadFolders, reloadSettings]);
 
   // Prompt to bind a workspace when the active context is an unbound server context.
   useEffect(() => {
@@ -427,8 +430,22 @@ export default function App() {
   // refresh — the same explicit-reload pattern useFolders/useNotes use after
   // a mutation, since the change-broadcast skips the sender window.
   const applyProtect = async (kind: 'note' | 'folder', id: string, next: boolean) => {
-    if (kind === 'note') await api.vault.protectNote(id, next);
-    else await api.vault.lockFolder(id, next);
+    try {
+      if (kind === 'note') await api.vault.protectNote(id, next);
+      else await api.vault.lockFolder(id, next);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e ?? '');
+      // The two vault-generation refusals have an actionable next step; say
+      // it, rather than swallowing the failure and leaving the note looking
+      // unchanged for no visible reason.
+      setProtectError(
+        msg.includes('key generation outdated') ? t('vault.generationOutdated')
+        : msg.includes('key generation not available') ? t('vault.generationUnavailable')
+        : msg.includes('vault locked') ? t('vault.lockedHint')
+        : msg,
+      );
+      return;
+    }
     await reloadNotes();
     await reloadFolders();
   };
@@ -456,9 +473,17 @@ export default function App() {
   };
 
   const requestProtect = (kind: 'note' | 'folder', id: string, next: boolean) => {
-    // Protecting a note seals its HTML, but the images it references stay as
+    // Protecting seals a note's HTML, but the images it references stay as
     // plain files on disk. Say so once, before the first such note is locked.
-    if (kind === 'note' && next && !imagesHintSeen()) {
+    if (next && !imagesHintSeen()) {
+      // A note can be probed for images cheaply; a folder's subtree cannot
+      // (its notes' content is loaded lazily), and locking one seals every
+      // note in it — so a folder always gets the hint. One acknowledgement
+      // covers both.
+      if (kind === 'folder') {
+        setImagesHint({ kind, id, next });
+        return;
+      }
       void noteHasImages(id).then(has => {
         if (has) setImagesHint({ kind, id, next });
         else gateProtect(kind, id, next);
@@ -688,7 +713,7 @@ export default function App() {
         <ConfirmDialog
           title={t('vault.imagesUnencryptedTitle')}
           message={t('vault.imagesUnencryptedHint')}
-          confirmLabel={t('vault.lockNote')}
+          confirmLabel={imagesHint.kind === 'folder' ? t('vault.lockFolder') : t('vault.lockNote')}
           onConfirm={() => {
             const p = imagesHint;
             rememberImagesHint();
@@ -698,7 +723,35 @@ export default function App() {
           onCancel={() => setImagesHint(null)}
         />
       )}
-      {vaultDialog === 'setup' && <VaultSetup setup={vault.setup} onSuccess={afterUnlockOrSetup} onCancel={cancelVaultDialog} />}
+      {protectError && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={() => setProtectError(null)}>
+          <div className="w-96 rounded-lg bg-gray-900 border border-gray-700 p-5" onClick={e => e.stopPropagation()}>
+            <h2 className="text-gray-100 text-base font-semibold mb-2">{t('vault.protectFailed')}</h2>
+            <p className="text-gray-400 text-sm mb-5" role="alert">{protectError}</p>
+            <div className="flex justify-end">
+              <button
+                onClick={() => setProtectError(null)}
+                className="px-3 py-1.5 rounded text-sm font-medium"
+                style={{ background: 'var(--line)', color: '#1c1917' }}
+              >
+                {t('common.close')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {vaultDialog === 'setup' && (
+        <VaultSetup
+          setup={vault.setup}
+          onSuccess={afterUnlockOrSetup}
+          onCancel={cancelVaultDialog}
+          // The workspace already holds a vault. Send the user to unlock
+          // instead of setting up a second, incompatible one — and keep
+          // `pendingProtect`, so the action they started still happens once
+          // they are in.
+          onAlreadyExists={() => { void vault.refresh(); setVaultDialog('unlock'); }}
+        />
+      )}
       {vaultDialog === 'unlock' && (
         <VaultUnlock
           biometricAvailable={vault.status.biometric}

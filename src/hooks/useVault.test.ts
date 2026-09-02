@@ -2,18 +2,27 @@ import { renderHook, act, waitFor } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { VaultStatus } from "../types";
 
-const { mockStatus, mockSetup, mockUnlock, mockUnlockRecovery, mockUnlockBiometric, mockLock, mockChangePassphrase } = vi.hoisted(() => ({
-  mockStatus: vi.fn<() => Promise<VaultStatus>>(),
-  mockSetup: vi.fn<(passphrase: string) => Promise<string[]>>(),
-  mockUnlock: vi.fn<(passphrase: string) => Promise<void>>(),
-  mockUnlockRecovery: vi.fn<(recovery: string) => Promise<void>>(),
-  mockUnlockBiometric: vi.fn<() => Promise<void>>(),
-  mockLock: vi.fn<() => Promise<void>>(),
-  mockChangePassphrase: vi.fn<(current: string, next: string) => Promise<void>>(),
-}));
+const { mockStatus, mockSetup, mockUnlock, mockUnlockRecovery, mockUnlockBiometric, mockLock, mockChangePassphrase, contextChangedRef, mockOnContextChanged } = vi.hoisted(() => {
+  const contextChangedRef = { current: null as null | (() => void) };
+  return {
+    mockStatus: vi.fn<() => Promise<VaultStatus>>(),
+    mockSetup: vi.fn<(passphrase: string) => Promise<string[]>>(),
+    mockUnlock: vi.fn<(passphrase: string) => Promise<void>>(),
+    mockUnlockRecovery: vi.fn<(recovery: string) => Promise<void>>(),
+    mockUnlockBiometric: vi.fn<() => Promise<void>>(),
+    mockLock: vi.fn<() => Promise<void>>(),
+    mockChangePassphrase: vi.fn<(current: string, next: string) => Promise<void>>(),
+    contextChangedRef,
+    mockOnContextChanged: vi.fn<(cb: () => void) => () => void>((cb) => {
+      contextChangedRef.current = cb;
+      return () => { contextChangedRef.current = null; };
+    }),
+  };
+});
 
 vi.mock("../api", () => ({
   api: {
+    onContextChanged: mockOnContextChanged,
     vault: {
       status: mockStatus,
       setup: mockSetup,
@@ -30,6 +39,11 @@ import { useVault } from "./useVault";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  contextChangedRef.current = null;
+  mockOnContextChanged.mockImplementation((cb) => {
+    contextChangedRef.current = cb;
+    return () => { contextChangedRef.current = null; };
+  });
   mockStatus.mockResolvedValue({ exists: true, unlocked: false, biometric: false });
   mockSetup.mockResolvedValue(["code-1", "code-2"]);
   mockUnlock.mockResolvedValue(undefined);
@@ -120,5 +134,32 @@ describe("useVault", () => {
 
     expect(mockChangePassphrase).toHaveBeenCalledWith("old", "new");
     expect(mockStatus).toHaveBeenCalledTimes(2);
+  });
+
+  // F3: every page that uses the hook — Security, Contexts, their banners —
+  // has to follow a context switch or a backend-side vault change. Owning the
+  // subscription here is what makes that true for all of them at once.
+  it("refreshes on context-changed, and unsubscribes on unmount", async () => {
+    const { unmount } = renderHook(() => useVault());
+    await waitFor(() => expect(mockStatus).toHaveBeenCalledTimes(1));
+    expect(contextChangedRef.current).not.toBeNull();
+
+    await act(async () => { contextChangedRef.current?.(); });
+    expect(mockStatus).toHaveBeenCalledTimes(2);
+
+    unmount();
+    expect(contextChangedRef.current).toBeNull();
+  });
+
+  it("survives a failing status without an unhandled rejection", async () => {
+    mockStatus.mockRejectedValueOnce(new Error("no active context"));
+    const { result } = renderHook(() => useVault());
+    await waitFor(() => expect(mockStatus).toHaveBeenCalledTimes(1));
+    // The default status stands; nothing threw.
+    expect(result.current.status.exists).toBe(false);
+
+    mockStatus.mockResolvedValue({ exists: true, unlocked: true, biometric: false } as VaultStatus);
+    await act(async () => { await result.current.refresh(); });
+    expect(result.current.status.unlocked).toBe(true);
   });
 });

@@ -120,9 +120,27 @@ vi.mock("./api", () => ({
 
 import App from "./App";
 import { api } from "./api";
+import type { VaultStatus } from "./types";
+
+/**
+ * A COMPLETE `VaultStatus`, so a test only has to spell out what it varies —
+ * the same pattern `Settings.test.tsx` uses.
+ *
+ * Armed with `mockResolvedValue` (never `…Once`) in the global `beforeEach`
+ * below: `useVault` refreshes on mount AND on every `context-changed`, so the
+ * number of calls a test provokes is not something the test controls. A
+ * `…Once` chain would run out and silently fall back to the module-level
+ * default mid-test — the source of the flakes this replaces.
+ */
+const vaultStatus = (overrides: Partial<VaultStatus> = {}): VaultStatus => ({
+  exists: false, unlocked: false, biometric: false, conflict: false,
+  recoveryHolder: true, rotationCode: false, recoveryMissing: false,
+  ...overrides,
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(api.vault.status).mockResolvedValue(vaultStatus());
   mockLoad.mockResolvedValue([]);
   mockSave.mockResolvedValue(undefined);
   mockDeleteFn.mockResolvedValue(undefined);
@@ -219,7 +237,7 @@ const protectedNoteMeta = {
 
 describe("App — editor unlock gate for protected notes", () => {
   it("shows the locked placeholder instead of loading content, and Unlock opens the unlock dialog", async () => {
-    vi.mocked(api.vault.status).mockResolvedValueOnce({ exists: true, unlocked: false, biometric: false });
+    vi.mocked(api.vault.status).mockResolvedValue(vaultStatus({ exists: true, unlocked: false }));
     mockLoad.mockResolvedValueOnce([protectedNoteMeta]);
 
     render(<App />);
@@ -234,7 +252,7 @@ describe("App — editor unlock gate for protected notes", () => {
 
 describe("App — vaultLockScope 'perNote'", () => {
   it("shows the locked placeholder for a not-yet-revealed protected note even though the vault is unlocked", async () => {
-    vi.mocked(api.vault.status).mockResolvedValueOnce({ exists: true, unlocked: true, biometric: false });
+    vi.mocked(api.vault.status).mockResolvedValue(vaultStatus({ exists: true, unlocked: true }));
     vi.mocked(api.settings.load).mockResolvedValueOnce({ vaultLockScope: "perNote" });
     mockLoad.mockResolvedValueOnce([protectedNoteMeta]);
 
@@ -245,7 +263,7 @@ describe("App — vaultLockScope 'perNote'", () => {
   });
 
   it("shows the editor for a protected note when vaultLockScope is 'session' and the vault is unlocked", async () => {
-    vi.mocked(api.vault.status).mockResolvedValueOnce({ exists: true, unlocked: true, biometric: false });
+    vi.mocked(api.vault.status).mockResolvedValue(vaultStatus({ exists: true, unlocked: true }));
     vi.mocked(api.settings.load).mockResolvedValueOnce({ vaultLockScope: "session" });
     mockLoad.mockResolvedValueOnce([protectedNoteMeta]);
 
@@ -258,7 +276,7 @@ describe("App — vaultLockScope 'perNote'", () => {
 
 describe("App — lock vault shortcut", () => {
   it("Mod+Shift+L locks the vault when it exists and is unlocked", async () => {
-    vi.mocked(api.vault.status).mockResolvedValueOnce({ exists: true, unlocked: true, biometric: false });
+    vi.mocked(api.vault.status).mockResolvedValue(vaultStatus({ exists: true, unlocked: true }));
 
     render(<App />);
     await waitFor(() => expect(screen.getByTitle("Neue Notiz")).toBeInTheDocument());
@@ -283,7 +301,7 @@ describe("App — lock vault shortcut", () => {
 
 describe("App — auto-lock idle timer", () => {
   it("locks the vault after autoLockMinutes of inactivity", async () => {
-    vi.mocked(api.vault.status).mockResolvedValueOnce({ exists: true, unlocked: true, biometric: false });
+    vi.mocked(api.vault.status).mockResolvedValue(vaultStatus({ exists: true, unlocked: true }));
     vi.mocked(api.settings.load).mockResolvedValueOnce({ autoLockIdle: "true", autoLockMinutes: "0.01" });
 
     render(<App />);
@@ -369,7 +387,7 @@ describe("App — additional keyboard shortcuts", () => {
   });
 
   it("locks the vault via Mod+Shift+L even while a text input elsewhere has focus", async () => {
-    vi.mocked(api.vault.status).mockResolvedValueOnce({ exists: true, unlocked: true, biometric: false });
+    vi.mocked(api.vault.status).mockResolvedValue(vaultStatus({ exists: true, unlocked: true }));
     render(<App />);
     await waitFor(() => expect(screen.getByTitle("Neue Notiz")).toBeInTheDocument());
 
@@ -403,8 +421,13 @@ describe("App — additional keyboard shortcuts", () => {
     await waitFor(() => screen.getByTitle("Neue Notiz"));
     fireEvent.click(screen.getByTitle("Neue Notiz"));
     await waitFor(() => expect(screen.getByText("Ohne Titel")).toBeInTheDocument());
-    fireEvent.keyDown(document.body, { key: "e", metaKey: true });
-    await waitFor(() => expect(api.notes.setArchived).toHaveBeenCalledWith(expect.any(String), true));
+    // Retried inside the waitFor, like the context-switch shortcut below: the
+    // key handler is re-registered from an effect once the new note is
+    // selected, so the very first dispatch can land on the older closure.
+    await waitFor(() => {
+      fireEvent.keyDown(document.body, { key: "e", metaKey: true });
+      expect(api.notes.setArchived).toHaveBeenCalledWith(expect.any(String), true);
+    });
   });
 
   it("Cmd+Shift+K switches to the next context", async () => {
@@ -698,6 +721,56 @@ describe("App — vault dialogs complete the pending protect action", () => {
     expect(screen.queryByText("Wiederherstellungs-Schlüssel")).not.toBeInTheDocument();
   });
 
+  // F5: the workspace already has a vault (another device seeded it). Setting
+  // up a second one would mint an incompatible DEK, so the user is moved to
+  // the unlock dialog — and the protect they started must survive the switch.
+  it("switches setup to unlock when the workspace already has a vault, keeping the pending protect", async () => {
+    vi.mocked(api.vault.setup).mockRejectedValueOnce(
+      new Error("vault: already set up on the server — unlock with your passphrase"),
+    );
+    render(<App />);
+    await waitFor(() => screen.getByTitle("Neue Notiz"));
+    fireEvent.click(screen.getByTitle("Neue Notiz"));
+    await waitFor(() => expect(screen.getByText("Ohne Titel")).toBeInTheDocument());
+    fireEvent.contextMenu(screen.getByText("Ohne Titel"));
+    fireEvent.click(screen.getByText("Notiz sperren"));
+    await waitFor(() => expect(screen.getByText("Tresor einrichten")).toBeInTheDocument());
+
+    fireEvent.change(screen.getByPlaceholderText("Passwort"), { target: { value: "secret123" } });
+    fireEvent.change(screen.getByPlaceholderText("Passwort bestätigen"), { target: { value: "secret123" } });
+    fireEvent.click(screen.getByText("Einrichten"));
+
+    // The setup dialog is replaced by the unlock one...
+    expect(await screen.findByText("Tresor entsperren")).toBeInTheDocument();
+    expect(screen.queryByText("Tresor einrichten")).not.toBeInTheDocument();
+
+    // ...and the protect the user started still happens once they are in.
+    fireEvent.change(screen.getByPlaceholderText("Passwort"), { target: { value: "secret123" } });
+    fireEvent.click(screen.getByText("Entsperren"));
+    await waitFor(() => expect(api.vault.protectNote).toHaveBeenCalledWith(expect.any(String), true));
+  });
+
+  // R2: a device whose ring is behind the workspace's generation is refused
+  // by the backend. Saying nothing would leave the note looking unchanged.
+  it("explains a refused protect instead of failing silently", async () => {
+    vi.mocked(api.vault.status).mockResolvedValue(vaultStatus({ exists: true, unlocked: true }));
+    vi.mocked(api.vault.protectNote).mockRejectedValueOnce(
+      new Error("vault: key generation outdated — unlock with your passphrase"),
+    );
+    render(<App />);
+    await waitFor(() => screen.getByTitle("Neue Notiz"));
+    fireEvent.click(screen.getByTitle("Neue Notiz"));
+    await waitFor(() => expect(screen.getByText("Ohne Titel")).toBeInTheDocument());
+    fireEvent.contextMenu(screen.getByText("Ohne Titel"));
+    fireEvent.click(screen.getByText("Notiz sperren"));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Dieses Gerät hat den neuesten Tresorschlüssel noch nicht.",
+    );
+    fireEvent.click(screen.getByText("Schließen"));
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+  });
+
   it("cancelling VaultSetup drops the pending protect", async () => {
     render(<App />);
     await waitFor(() => screen.getByTitle("Neue Notiz"));
@@ -712,7 +785,7 @@ describe("App — vault dialogs complete the pending protect action", () => {
   });
 
   it("routes protect through VaultUnlock when the vault exists but is locked, and completes it after unlocking", async () => {
-    vi.mocked(api.vault.status).mockResolvedValueOnce({ exists: true, unlocked: false, biometric: false });
+    vi.mocked(api.vault.status).mockResolvedValue(vaultStatus({ exists: true, unlocked: false }));
     render(<App />);
     await waitFor(() => screen.getByTitle("Neue Notiz"));
     fireEvent.click(screen.getByTitle("Neue Notiz"));
@@ -728,7 +801,7 @@ describe("App — vault dialogs complete the pending protect action", () => {
   });
 
   it("cancelling VaultUnlock drops the pending protect", async () => {
-    vi.mocked(api.vault.status).mockResolvedValueOnce({ exists: true, unlocked: false, biometric: false });
+    vi.mocked(api.vault.status).mockResolvedValue(vaultStatus({ exists: true, unlocked: false }));
     render(<App />);
     await waitFor(() => screen.getByTitle("Neue Notiz"));
     fireEvent.click(screen.getByTitle("Neue Notiz"));
@@ -746,14 +819,7 @@ describe("App — rotation code after a Touch ID unlock", () => {
   // Touch ID types no passphrase, so the unlock dialog cannot redeem the
   // waiting code itself — App has to take that step over, or the member's
   // re-sealed notes stay unreadable with no way back in.
-  const locked = {
-    exists: true, unlocked: false, biometric: true, conflict: false,
-    recoveryHolder: true, rotationCode: true, recoveryMissing: false,
-  };
-
-  afterEach(() => {
-    vi.mocked(api.vault.status).mockResolvedValue({ exists: false, unlocked: false, biometric: false });
-  });
+  const locked = vaultStatus({ exists: true, biometric: true, rotationCode: true });
 
   const unlockViaTouchId = async () => {
     render(<App />);
@@ -880,7 +946,7 @@ describe("App — auto-lock on hide/sleep", () => {
   afterEach(() => setHidden(false));
 
   it("locks the vault when the document is hidden and autoLockOnHide is on (autoLockOnSleep off)", async () => {
-    vi.mocked(api.vault.status).mockResolvedValueOnce({ exists: true, unlocked: true, biometric: false });
+    vi.mocked(api.vault.status).mockResolvedValue(vaultStatus({ exists: true, unlocked: true }));
     vi.mocked(api.settings.load).mockResolvedValueOnce({ autoLockOnHide: "true", autoLockOnSleep: "false" });
     render(<App />);
     // Wait for the vault-status refresh (async) to land before triggering the
@@ -892,7 +958,7 @@ describe("App — auto-lock on hide/sleep", () => {
   });
 
   it("locks the vault when the document is hidden and autoLockOnSleep is on (autoLockOnHide off)", async () => {
-    vi.mocked(api.vault.status).mockResolvedValueOnce({ exists: true, unlocked: true, biometric: false });
+    vi.mocked(api.vault.status).mockResolvedValue(vaultStatus({ exists: true, unlocked: true }));
     vi.mocked(api.settings.load).mockResolvedValueOnce({ autoLockOnHide: "false", autoLockOnSleep: "true" });
     render(<App />);
     await waitFor(() => expect(screen.getByTitle("Jetzt sperren")).toBeInTheDocument());
@@ -902,7 +968,7 @@ describe("App — auto-lock on hide/sleep", () => {
   });
 
   it("does not lock when both autoLockOnHide and autoLockOnSleep are off", async () => {
-    vi.mocked(api.vault.status).mockResolvedValueOnce({ exists: true, unlocked: true, biometric: false });
+    vi.mocked(api.vault.status).mockResolvedValue(vaultStatus({ exists: true, unlocked: true }));
     vi.mocked(api.settings.load).mockResolvedValueOnce({ autoLockOnHide: "false", autoLockOnSleep: "false" });
     render(<App />);
     await waitFor(() => expect(screen.getByTitle("Jetzt sperren")).toBeInTheDocument());

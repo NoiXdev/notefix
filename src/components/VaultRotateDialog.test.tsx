@@ -51,11 +51,14 @@ describe('VaultRotateDialog', () => {
     expect(submit).toBeEnabled();
   });
 
-  it('reports a wrong passphrase, a rejected recovery key and a missing rotation apart', async () => {
+  it('reports every backend refusal in the user\u2019s own language', async () => {
     const cases: [string, string][] = [
       ['wrong passphrase', 'Falsches Passwort'],
-      ['wrong recovery key', 'Schlüsselwechsel fehlgeschlagen: wrong recovery key'],
+      ['wrong recovery key', 'Falscher Wiederherstellungs-Schlüssel'],
       ['no rotation pending', 'Kein Schlüsselwechsel offen'],
+      ['vault locked', 'Entsperre zuerst den Tresor.'],
+      ['vault rotate HTTP 403', 'Nur der Besitzer des Arbeitsbereichs kann den Schlüssel wechseln.'],
+      // Only a genuinely unforeseen failure falls through to the raw text.
       ['members HTTP 500', 'Schlüsselwechsel fehlgeschlagen: members HTTP 500'],
     ];
     for (const [backendError, shown] of cases) {

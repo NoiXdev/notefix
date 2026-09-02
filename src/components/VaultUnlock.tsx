@@ -55,9 +55,6 @@ export default function VaultUnlock({ biometricAvailable, recoveryAvailable = tr
     setError(null);
     try {
       await unlockBiometric();
-      // Touch ID types no passphrase, so the in-dialog rotation step cannot
-      // re-wrap anything — the caller shows the standalone prompt instead.
-      onSuccess(rotationPending ? await rotationPending() : false);
     } catch (e) {
       // The backend refuses a keychain DEK that doesn't belong to this
       // context's vault, and one whose vault predates the ownership check;
@@ -66,7 +63,20 @@ export default function VaultUnlock({ biometricAvailable, recoveryAvailable = tr
       if (msg.includes('different context')) setError(t('vault.biometricOtherContext'));
       else if (msg.includes('upgrading this vault')) setError(t('vault.biometricNeedsPassphrase'));
       else setError(t('vault.biometricFailed'));
+      return;
     }
+    // Asked OUTSIDE the try above: the unlock has already succeeded, and a
+    // failing "is a rotation waiting?" query must not be reported as a failed
+    // Touch ID unlock. Unknown simply means "no extra step for now".
+    let pending = false;
+    try {
+      pending = rotationPending ? await rotationPending() : false;
+    } catch {
+      pending = false;
+    }
+    // Touch ID types no passphrase, so the in-dialog rotation step cannot
+    // re-wrap anything — the caller shows the standalone prompt instead.
+    onSuccess(pending);
   };
 
   // Auto-trigger Touch ID once when the dialog opens, so the common case
@@ -130,8 +140,16 @@ export default function VaultUnlock({ biometricAvailable, recoveryAvailable = tr
     setError(null);
   };
 
+  /**
+   * Dismissing the dialog. In the rotation step the vault is ALREADY unlocked
+   * — the code only fetches the newest key generation — so backing out is a
+   * success, not a cancel: reporting it as a cancel would throw away a
+   * pending protect the user started before ever seeing this step.
+   */
+  const dismiss = () => (mode === 'rotation' ? onSuccess() : onCancel());
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={onCancel}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={dismiss}>
       <div className="w-96 rounded-lg bg-gray-900 border border-gray-700 p-5" onClick={e => e.stopPropagation()}>
         <h2 className="text-gray-100 text-base font-semibold mb-3">
           {mode === 'rotation' ? t('vault.rotation.enterCode') : t('vault.unlockTitle')}
@@ -155,7 +173,7 @@ export default function VaultUnlock({ biometricAvailable, recoveryAvailable = tr
             value={passphrase}
             placeholder={t('vault.passphrase')}
             onChange={e => setPassphrase(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') void submitPassphrase(); else if (e.key === 'Escape') onCancel(); }}
+            onKeyDown={e => { if (e.key === 'Enter') void submitPassphrase(); else if (e.key === 'Escape') dismiss(); }}
             className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 outline-none focus:border-[var(--accent)] mb-2"
           />
         )}
@@ -165,7 +183,7 @@ export default function VaultUnlock({ biometricAvailable, recoveryAvailable = tr
             value={recovery}
             placeholder={t('vault.recoveryKey')}
             onChange={e => setRecovery(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') void submitRecovery(); else if (e.key === 'Escape') onCancel(); }}
+            onKeyDown={e => { if (e.key === 'Enter') void submitRecovery(); else if (e.key === 'Escape') dismiss(); }}
             className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 outline-none focus:border-[var(--accent)] mb-2 font-mono"
           />
         )}
@@ -175,7 +193,7 @@ export default function VaultUnlock({ biometricAvailable, recoveryAvailable = tr
             value={code}
             placeholder={t('vault.rotation.code')}
             onChange={e => setCode(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') void submitRotation(); else if (e.key === 'Escape') onCancel(); }}
+            onKeyDown={e => { if (e.key === 'Enter') void submitRotation(); else if (e.key === 'Escape') dismiss(); }}
             className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 outline-none focus:border-[var(--accent)] mb-2 font-mono"
           />
         )}
@@ -196,10 +214,8 @@ export default function VaultUnlock({ biometricAvailable, recoveryAvailable = tr
         )}
 
         <div className="flex justify-end gap-2">
-          {/* The vault IS unlocked at this point — the code only fetches the
-              newest key generation, so postponing it is a valid choice. */}
           <button
-            onClick={mode === 'rotation' ? () => onSuccess() : onCancel}
+            onClick={dismiss}
             className="px-3 py-1.5 rounded text-sm text-gray-300 hover:bg-gray-800"
           >
             {mode === 'rotation' ? t('vault.rotation.later') : t('vault.cancel')}

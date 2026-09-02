@@ -78,6 +78,45 @@ pub struct SyncStatus {
     pub state: String, // "local" | "unbound" | "syncing" | "synced" | "offline"
     pub last_synced_at: i64,
     pub pending: i64,
+    /// The workspace is waiting for its vault key to be rotated (a member was
+    /// removed). Carried on the status so the sidebar badge does not have to
+    /// re-list every context on every pull.
+    pub vault_rotation_pending: bool,
+}
+
+/// A counter bumped every time the ACTIVE context's database is swapped out
+/// (`commands::swap_store_to`).
+///
+/// The sync cycle reads the active context, then goes to the network without
+/// holding any lock — and a context switch during that window would leave the
+/// cycle writing workspace A's pull (and A's wrapped vault keys) into context
+/// B's database, or uploading B's local vault record to A. Every step that
+/// touches the store AFTER the network compares the epoch it captured at the
+/// start of the cycle against the current one and bails out silently when
+/// they differ; the next cycle simply redoes the work against the right
+/// context.
+///
+/// An atomic rather than a mutex on purpose: it is read while the Store lock
+/// is held, and adding a fourth lock to the Registry -> Store -> VaultState
+/// order would be a needless deadlock risk.
+#[derive(Default)]
+pub struct SyncEpoch(std::sync::atomic::AtomicU64);
+
+impl SyncEpoch {
+    /// The epoch to capture at the start of a cycle.
+    pub fn current(&self) -> u64 {
+        self.0.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Invalidate every in-flight cycle — the active context just changed.
+    pub fn bump(&self) {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Whether the active context changed since `captured` was taken.
+    pub fn changed_since(&self, captured: u64) -> bool {
+        self.current() != captured
+    }
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -145,6 +184,26 @@ pub(crate) fn open_content(dek: &Dek, note_id: &str, stored: &str) -> Result<Str
     String::from_utf8(plaintext).map_err(|e| e.to_string())
 }
 
+/// Refuses to SEAL new content under `generation` while the workspace has
+/// already rotated past it (meta `vault_generation`, written by every pull).
+///
+/// That gap means this device has not redeemed its rotation code yet. Sealing
+/// under its stale newest generation would hand fresh plaintext to whoever
+/// the rotation was meant to lock out — the removed member still knows that
+/// key — and would add another note to the re-seal work list on top. Reading
+/// and UNSEALING stay allowed: existing ciphertext is what the older
+/// generations in the ring are for.
+///
+/// A local context (or a workspace that never rotated) has `vault_generation`
+/// 0 or 1 and is never affected.
+fn guard_seal_generation(store: &Store, generation: u32) -> Result<(), String> {
+    let server = crate::migrate::get_meta_i64(&store.conn, "vault_generation", 0);
+    match server > i64::from(generation) {
+        true => Err("vault: key generation outdated — unlock with your passphrase".to_string()),
+        false => Ok(()),
+    }
+}
+
 /// True if any ancestor folder of `note_id` (not counting the note's own
 /// `protected` flag — see `Store::is_effectively_protected` for that) is
 /// `locked`. Cycle-safe via a visited set, mirroring the walk in
@@ -173,7 +232,7 @@ fn has_locked_ancestor_folder(store: &Store, note_id: &str) -> Result<bool, Stri
 /// `Store::folder_chain_has_lock`.
 fn folder_chain_has_lock(store: &Store, starting_folder_id: Option<&str>) -> Result<bool, String> {
     store
-        .folder_chain_has_lock(starting_folder_id)
+        .folder_chain_has_lock(starting_folder_id, None)
         .map_err(|e| e.to_string())
 }
 
@@ -184,39 +243,17 @@ fn folder_chain_has_lock(store: &Store, starting_folder_id: Option<&str>) -> Res
 /// the database — whether a note would still have a genuinely locked
 /// ancestor (some OTHER folder) once `except` itself becomes unlocked. Doing
 /// this pre-flip, read-only, lets the caller validate every note it would
-/// decrypt (see `Store::note_key_gen` / `VaultState::dek_for`) before
-/// committing anything, instead of flipping `except.locked` first and
-/// discovering a missing generation partway through the per-note loop.
+/// decrypt before committing anything, instead of flipping `except.locked`
+/// first and discovering a missing generation partway through the per-note
+/// loop.
 fn folder_chain_has_lock_except(
     store: &Store,
     starting_folder_id: Option<&str>,
     except: &str,
 ) -> Result<bool, String> {
-    use rusqlite::OptionalExtension;
-    let mut folder_id: Option<String> = starting_folder_id.map(str::to_string);
-    let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
-    while let Some(fid) = folder_id {
-        if !visited.insert(fid.clone()) {
-            break; // cycle detected — stop instead of looping forever
-        }
-        let folder: Option<(bool, Option<String>)> = store
-            .conn
-            .query_row(
-                "SELECT locked, parent_id FROM folders WHERE id = ?1",
-                [&fid],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .optional()
-            .map_err(|e| e.to_string())?;
-        let Some((locked, parent_id)) = folder else {
-            break;
-        };
-        if locked && fid != except {
-            return Ok(true);
-        }
-        folder_id = parent_id;
-    }
-    Ok(false)
+    store
+        .folder_chain_has_lock(starting_folder_id, Some(except))
+        .map_err(|e| e.to_string())
 }
 
 /// [`has_locked_ancestor_folder`]'s counterpart for
@@ -271,15 +308,20 @@ pub(crate) fn encrypt_note_in_place(
     // from the ciphertext.
     let title = crate::storage::note_preview(&plaintext);
     let sealed = seal_content(dek, id, &plaintext);
+    // Ciphertext, its generation stamp, `protected` and the dirty flag are
+    // ONE fact about the row. Written in a single transaction so a crash (or
+    // a failing statement) can never leave the note sealed under `generation`
+    // while `key_gen` still says something else — which `VaultState::dek_for`
+    // would resolve to the wrong DEK and make the note permanently
+    // unopenable. Same pattern as `Store::clear_note_dirty`.
+    let tx = store
+        .conn
+        .unchecked_transaction()
+        .map_err(|e| e.to_string())?;
     store
         .set_content_silent(id, &sealed)
         .map_err(|e| e.to_string())?;
     store.set_title(id, &title).map_err(|e| e.to_string())?;
-    // Record which generation sealed this ciphertext BEFORE flipping
-    // `protected` — a crash between the two must never leave `protected = 1`
-    // with `key_gen` still NULL, which `VaultState::dek_for` would resolve to
-    // generation 1 and could make the note permanently unopenable if it was
-    // actually sealed under a later generation.
     store
         .set_note_key_gen(id, Some(generation))
         .map_err(|e| e.to_string())?;
@@ -290,6 +332,7 @@ pub(crate) fn encrypt_note_in_place(
         .mark_note_dirty_if_syncing(id)
         .map_err(|e| e.to_string())?;
     crate::revisions::delete_revisions(&store.conn, id).map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -420,10 +463,25 @@ pub fn open_note_content(store: &Store, vault: &VaultState, id: &str) -> Result<
         return Err("vault locked".to_string());
     }
     let gen = store.note_key_gen(id).map_err(|e| e.to_string())?;
-    let dek = vault
-        .dek_for(gen)
-        .ok_or_else(|| "key generation not available".to_string())?;
-    open_content(dek, id, &stored)
+    let unavailable = || "key generation not available".to_string();
+    let dek = vault.dek_for(gen).ok_or_else(unavailable)?;
+    match open_content(dek, id, &stored) {
+        Ok(html) => Ok(html),
+        // Belt and braces for a MIS-STAMPED note: a row whose `key_gen` does
+        // not match the key its bytes were actually sealed with (an
+        // interrupted pre-transaction re-seal from an older build, say) would
+        // otherwise be unreadable forever, even though the right DEK is
+        // sitting in the ring. Trying the other generations is cheap (AEAD,
+        // not Argon2) and cannot succeed on the wrong key — the tag has to
+        // verify. The ORIGINAL error stands when none of them opens it, so a
+        // genuinely corrupt blob still reports itself as one.
+        Err(e) => vault
+            .generations()
+            .into_iter()
+            .filter(|g| Some(*g) != gen.or(Some(1)))
+            .find_map(|g| open_content(vault.dek_for(Some(g))?, id, &stored).ok())
+            .ok_or(e),
+    }
 }
 
 /// `notes_search`: full-text search within one context (title-first), with
@@ -473,25 +531,21 @@ pub fn save_note(store: &Store, vault: Option<(&Dek, u32)>, note: &Note) -> Resu
         .map_err(|e| e.to_string())?;
     if protected {
         let (dek, generation) = vault.ok_or_else(|| "vault locked".to_string())?;
+        guard_seal_generation(store, generation)?;
         let mut sealed = note.clone();
         sealed.content = seal_content(dek, &note.id, &note.content);
+        // The `Note` coming in from the frontend (or built via
+        // `..Default::default()`) carries `key_gen: None`, and
+        // `store.save_note`'s `ON CONFLICT` clause would write that NULL —
+        // which `VaultState::dek_for` resolves to generation 1 and could make
+        // the note permanently unopenable when it was actually sealed under a
+        // later generation. Stamp the clone BEFORE it is written, so the
+        // ciphertext and its generation land in the SAME statement and no
+        // crash can separate them.
+        sealed.key_gen = Some(generation);
         store.save_note(&sealed).map_err(|e| e.to_string())?;
         store
             .set_title(&note.id, &title)
-            .map_err(|e| e.to_string())?;
-        // The `Note` coming in from the frontend (or built via
-        // `..Default::default()`) carries `key_gen: None`, so `store.save_note`
-        // above wrote NULL — fix it up explicitly to the generation actually
-        // used to seal, every time, so a later `open_note_content` picks the
-        // matching DEK back out of the ring rather than the newest one.
-        //
-        // Written BEFORE `set_note_protected` below: a crash between the two
-        // must never leave `protected = 1` with `key_gen` still NULL/stale,
-        // which `VaultState::dek_for` would resolve to generation 1 and could
-        // make the note permanently unopenable if it was sealed under a
-        // later generation.
-        store
-            .set_note_key_gen(&note.id, Some(generation))
             .map_err(|e| e.to_string())?;
         store
             .set_note_protected(&note.id, true)
@@ -796,18 +850,38 @@ pub fn ensure_dek_check(store: &Store, record: &VaultRecord, dek: &Dek) {
 
 /// Gate for DEKs that arrive WITHOUT a proof of ownership — today the
 /// biometric keychain item. Refuses a DEK that doesn't open this vault's
-/// check (a key from another context), and refuses to guess when the record
-/// has no check yet: that record must first be unlocked with its passphrase
-/// or recovery key once, which writes the check (`ensure_dek_check`).
-pub fn verify_dek_for_store(store: &Store, dek: &Dek) -> Result<(), String> {
-    let record = load_vault_record(store)?;
-    match crate::vault::verify_dek(&record, dek) {
+/// check (a key from another context), and refuses to guess when nothing can
+/// verify it: such a vault must first be unlocked with its passphrase or
+/// recovery key once, which writes the check (`ensure_dek_check`).
+///
+/// Verified against the source that actually covers `generation`:
+///
+/// - the workspace's cached `mine` entry for that generation, when there is
+///   one. This is the only source once the key has rotated — the local
+///   record only ever mirrors generation 1 — and it is why the keychain item
+///   carries its generation alongside the DEK.
+/// - otherwise, and only for generation 1, this device's own record.
+///
+/// A generation with neither is unverifiable, never "accepted anyway": an
+/// unverified DEK installed into the ring would go on to SEAL new content.
+pub fn verify_dek_for_store(store: &Store, generation: u32, dek: &Dek) -> Result<(), String> {
+    let unverifiable = || {
+        "vault: unlock with your passphrase once to finish upgrading this vault, then re-enable biometric unlock"
+            .to_string()
+    };
+    let judge = |record: &VaultRecord| match crate::vault::verify_dek(record, dek) {
         Ok(true) => Ok(()),
-        Ok(false) => Err(
-            "vault: unlock with your passphrase once to finish upgrading this vault, then re-enable biometric unlock"
-                .to_string(),
-        ),
+        Ok(false) => Err(unverifiable()),
         Err(_) => Err("vault: biometric key belongs to a different context".to_string()),
+    };
+    if let Some(entry) = cached_vault_entries(store)?
+        .and_then(|e| e.mine.into_iter().find(|e| e.generation == generation))
+    {
+        return judge(&entry.record);
+    }
+    match generation {
+        1 => judge(&load_vault_record(store)?),
+        _ => Err(unverifiable()),
     }
 }
 
@@ -939,6 +1013,14 @@ impl From<&MyEntry> for MyEntryWire {
 impl TryFrom<MyEntryWire> for MyEntry {
     type Error = String;
     fn try_from(w: MyEntryWire) -> Result<Self, String> {
+        // These parameters come straight off the wire and go straight into
+        // Argon2. An absurd `m_cost` would have the unlock try to allocate
+        // gigabytes; a zero one is simply invalid. Refuse the entry instead
+        // — `cached_vault_entries` degrades that to "no usable cache" and
+        // falls back to the local record rather than failing hard.
+        if !w.kdf_params.is_within_limits() {
+            return Err("vault: entry has out-of-range key-derivation parameters".to_string());
+        }
         Ok(MyEntry {
             generation: w.generation,
             record: VaultRecord {
@@ -1023,17 +1105,34 @@ impl VaultEntries {
     }
 }
 
+/// How many generations one unlock attempt will derive a KEK for. Each one is
+/// a deliberately expensive Argon2 pass, so an unbounded list — the server
+/// decides how long it is — would turn a single unlock into minutes of work.
+/// Far above any realistic rotation count; the NEWEST generations are the
+/// ones kept, since those are what new content seals under.
+const MAX_UNLOCK_GENERATIONS: usize = 32;
+
+/// The newest [`MAX_UNLOCK_GENERATIONS`] of `items`, back in ascending order.
+/// Sorts rather than trusting the server's ordering.
+fn newest_generations<T>(items: &[T], generation: impl Fn(&T) -> u32) -> Vec<&T> {
+    let mut refs: Vec<&T> = items.iter().collect();
+    refs.sort_by_key(|e| std::cmp::Reverse(generation(e)));
+    refs.truncate(MAX_UNLOCK_GENERATIONS);
+    refs.sort_by_key(|e| generation(e));
+    refs
+}
+
 /// Unwraps every `mine` entry `passphrase` opens, verifying each entry's DEK
 /// check before accepting it (an entry that carries no check is accepted —
 /// the AEAD unwrap already authenticated it). Returns one `(generation,
 /// DEK)` per entry that opened, ascending; `Err("wrong passphrase")` when
-/// none did.
+/// none did. At most [`MAX_UNLOCK_GENERATIONS`] entries are tried.
 pub fn unlock_entries_with_passphrase(
     entries: &VaultEntries,
     passphrase: &str,
 ) -> Result<Vec<(u32, Dek)>, String> {
     let mut out = Vec::new();
-    for e in &entries.mine {
+    for e in newest_generations(&entries.mine, |e| e.generation) {
         if let Ok(dek) = crate::vault::unlock_passphrase(&e.record, passphrase) {
             if crate::vault::verify_dek(&e.record, &dek).is_ok() {
                 out.push((e.generation, dek));
@@ -1054,7 +1153,7 @@ pub fn unlock_entries_with_recovery(
     recovery: &str,
 ) -> Result<Vec<(u32, Dek)>, String> {
     let mut out = Vec::new();
-    for e in &entries.recovery {
+    for e in newest_generations(&entries.recovery, |e| e.generation) {
         let rec = crate::vault::recovery_only_record(
             e.recovery_salt,
             e.dek_wrapped_recovery.clone(),
@@ -1191,7 +1290,10 @@ pub fn server_vault_needs_unlock(store: &Store) -> Result<bool, String> {
     if store.vault_record().map_err(|e| e.to_string())?.is_some() {
         return Ok(false);
     }
-    Ok(cached_vault_entries(store)?.is_some_and(|e| !e.mine.is_empty()))
+    // No record, so "a vault exists" can only mean the workspace's — one
+    // definition of existence, in [`vault_exists`], rather than two copies
+    // that could drift apart.
+    vault_exists(store)
 }
 
 /// The generation-1 entries as a local [`VaultRecord`], merging the
@@ -1298,6 +1400,9 @@ fn same_vault(rec: &VaultRecord, server_dek: &Dek, secret: &VaultSecret<'_>) -> 
 ///   and reconcile.
 /// - The workspace generation-1 DEK provably opens the local record: one
 ///   vault — install the whole ring and reconcile.
+/// - The workspace ring has NO generation 1 (this member joined at a later
+///   generation): nothing to compare against — install the workspace ring,
+///   reconcile nothing.
 /// - Otherwise the two are DIFFERENT vaults. Prefer the local one when the
 ///   same secret opens it (generation 1 only — never mixed with the
 ///   workspace ring), so this device keeps reading its own notes; fall back
@@ -1330,11 +1435,21 @@ pub fn plan_entry_unlock(
             reconciled: true,
         });
     };
-    let same = opened
-        .iter()
-        .find(|(g, _)| *g == 1)
-        .is_some_and(|(_, dek)| same_vault(rec, dek, secret));
-    if same {
+    let Some((_, gen1)) = opened.iter().find(|(g, _)| *g == 1) else {
+        // The workspace ring has no generation 1 at all — this member was
+        // invited at a later generation, so there is nothing here to compare
+        // the local record against. That is UNKNOWN, not a mismatch: prefer
+        // the workspace ring (what this context's notes are actually sealed
+        // under) and reconcile nothing, rather than falling back to a local
+        // generation 1 that the workspace never had. The two rings are never
+        // merged — mixing two vaults' generations is exactly the state
+        // `vault_conflict` exists to prevent.
+        return Ok(VaultUnlockPlan {
+            install: opened,
+            reconciled: false,
+        });
+    };
+    if same_vault(rec, gen1, secret) {
         return Ok(VaultUnlockPlan {
             install: opened,
             reconciled: true,
@@ -1359,15 +1474,24 @@ pub fn plan_entry_unlock(
 /// - No local record (a new device): mirror generation 1 into one, so
 ///   `vault_status`, biometric enrolment and [`ensure_dek_check`] — all of
 ///   which read the local record — keep working.
-/// - A local record: self-heal its DEK check from the generation-1 DEK,
-///   which was just proved to be this record's own.
+/// - A local record unlocked with a PASSPHRASE: rewrap it under that
+///   passphrase. A passphrase change made on another device rewraps the
+///   workspace entries but cannot reach this device's own record, so the OLD
+///   passphrase would keep opening the vault here — exactly what the change
+///   was meant to revoke. The rewrap re-establishes the DEK check on the way
+///   (see `vault::rewrap_passphrase`), so it subsumes [`ensure_dek_check`].
+/// - A local record unlocked with the RECOVERY key: only self-heal its DEK
+///   check. A recovery key is not a passphrase and must not become one.
 ///
-/// A conflicted plan writes nothing at all.
+/// Safe in both cases only because `plan.reconciled` is true: the
+/// generation-1 DEK was just proved to be this record's own. A conflicted
+/// plan writes nothing at all.
 pub fn apply_entry_unlock(
     store: &Store,
     local: Option<&VaultRecord>,
     entries: &VaultEntries,
     plan: &VaultUnlockPlan,
+    secret: &VaultSecret<'_>,
 ) -> Result<(), String> {
     if !plan.reconciled {
         return Ok(());
@@ -1382,12 +1506,41 @@ pub fn apply_entry_unlock(
         }
         Some(rec) => {
             if let Some((_, dek)) = plan.install.iter().find(|(g, _)| *g == 1) {
-                ensure_dek_check(store, rec, dek);
+                match secret {
+                    VaultSecret::Passphrase(p) => store
+                        .set_vault_record(&crate::vault::rewrap_passphrase(rec, dek, p).to_json())
+                        .map_err(|e| e.to_string())?,
+                    VaultSecret::Recovery(_) => ensure_dek_check(store, rec, dek),
+                }
             }
         }
     }
     crate::migrate::delete_meta(&store.conn, "vault_conflict").map_err(|e| e.to_string())?;
     crate::migrate::set_meta_i64(&store.conn, "vault_migrated", 1).map_err(|e| e.to_string())
+}
+
+/// The uploads to send BACK after a passphrase change failed partway through
+/// its PUT loop: the still-cached OLD wrap of every generation whose new wrap
+/// already landed, ascending.
+///
+/// Without this a workspace with N generations can end up split — some
+/// generations wrapped under the new passphrase, the rest under the old — and
+/// no single passphrase would open the whole ring. `uploaded` lists the
+/// generations the loop got through before it failed; a generation the cache
+/// no longer describes is skipped rather than guessed at.
+///
+/// Best-effort by contract: the caller sends these and returns the ORIGINAL
+/// error either way, so a revert that also fails does not mask why the change
+/// was refused in the first place.
+pub fn rewrap_revert_uploads(entries: &VaultEntries, uploaded: &[u32]) -> Vec<MyEntryWire> {
+    let mut out: Vec<MyEntryWire> = entries
+        .mine
+        .iter()
+        .filter(|e| uploaded.contains(&e.generation))
+        .map(MyEntryWire::from)
+        .collect();
+    out.sort_by_key(|e| e.generation);
+    out
 }
 
 /// The result of rewrapping a server context's vault under a new
@@ -1574,6 +1727,12 @@ pub fn make_invite_wrap(dek: &Dek, generation: u32) -> (String, InviteWrap) {
 /// must not reveal *how* it was wrong.
 pub fn open_invite_wrap(wrap: &InviteWrap, code: &str) -> Result<Dek, String> {
     let invalid = || "invalid invite code".to_string();
+    // Server-supplied parameters, so bounded before they reach Argon2 — and
+    // reported as the same generic failure as everything else here, since a
+    // rejected wrap must not say WHY it was rejected.
+    if !wrap.kdf_params.is_within_limits() {
+        return Err(invalid());
+    }
     let normalized = crate::vault::recovery::InviteCode::normalize(code);
     let kek =
         crate::vault::kdf::derive_kek(&normalized, &wrap.kdf_params).map_err(|_| invalid())?;
@@ -1637,6 +1796,15 @@ pub fn parse_invitation_ref(input: &str) -> Result<InvitationRef, String> {
     if token.is_empty() {
         return Err("invitation: no token in that link".to_string());
     }
+    // The token is interpolated straight into a request path, so restrict it
+    // to what an invite token can actually be. Without this, a pasted `../`
+    // (or a space, or a `?`) would reshape the URL the resolve call hits.
+    if !token
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Err("invitation: that does not look like an invitation link".to_string());
+    }
     Ok(InvitationRef::Token(token.to_string()))
 }
 
@@ -1679,8 +1847,10 @@ pub fn merge_my_entry(entries: &VaultEntries, entry: MyEntryWire) -> Result<Vaul
 pub struct AcceptedInvite {
     pub entries: VaultEntries,
     pub record: Option<VaultRecord>,
-    /// Whether `vault_conflict` may be cleared — see [`accept_invite_entry`].
-    pub clear_conflict: bool,
+    /// Whether this accept leaves the device CONFLICTED — see
+    /// [`accept_invite_entry`]. `true` means "set `vault_conflict`, and do
+    /// not claim `vault_migrated`"; `false` means the opposite.
+    pub conflict: bool,
 }
 
 /// Folds `entry` into `cached` and, when `local` is `None`, mirrors the
@@ -1689,13 +1859,18 @@ pub struct AcceptedInvite {
 ///
 /// Accepting an invitation proves nothing about a vault this device set up on
 /// its own: the workspace DEK it just installed and the local record's DEK can
-/// be two different keys. So `clear_conflict` is only true when there is
+/// be two different keys. So the accept is only conflict-FREE when there is
 /// nothing to disagree with (no local record — the mirrored one IS the
 /// workspace's) or when the local record provably holds the same DEK
 /// ([`same_vault`], which falls back to opening the record with the new
-/// passphrase for a record that predates `dek_check`). Otherwise the flag
-/// stays, and its banner keeps telling the truth: notes protected on this
-/// device before joining remain sealed under this device's own key.
+/// passphrase for a record that predates `dek_check`).
+///
+/// Otherwise `conflict` is `true` and the flag is SET rather than merely left
+/// alone: this device now holds two vaults' keys at once, and every sweep
+/// that seals under "the newest generation" — [`reseal_lagging_notes`] above
+/// all — has to know it before it touches a note. Its banner also keeps
+/// telling the truth: notes protected on this device before joining remain
+/// sealed under this device's own key.
 pub fn accept_invite_entry(
     cached: Option<&VaultEntries>,
     local: Option<&VaultRecord>,
@@ -1705,18 +1880,59 @@ pub fn accept_invite_entry(
 ) -> Result<AcceptedInvite, String> {
     let base = cached.cloned().unwrap_or_default();
     let entries = merge_my_entry(&base, entry)?;
-    let (record, clear_conflict) = match local {
-        None => (mirrored_record(&entries), true),
+    let (record, conflict) = match local {
+        None => (mirrored_record(&entries), false),
         Some(rec) => (
             None,
-            same_vault(rec, dek, &VaultSecret::Passphrase(passphrase)),
+            !same_vault(rec, dek, &VaultSecret::Passphrase(passphrase)),
         ),
     };
     Ok(AcceptedInvite {
         entries,
         record,
-        clear_conflict,
+        conflict,
     })
+}
+
+/// Persists everything [`accept_invite_entry`] decided, in one store scope:
+/// the merged cache, the mirrored record (if any), and the two meta flags.
+///
+/// A conflict-free accept claims `vault_migrated` (the workspace holds a key
+/// for this caller, so the migration hook has nothing left to upload) and
+/// clears `vault_conflict`. A CONFLICTED accept does neither: it sets
+/// `vault_conflict` — so the re-seal sweep stands down — and deliberately
+/// leaves `vault_migrated` unset, so the sync hook keeps re-marking the
+/// conflict on every cycle instead of quietly forgetting it.
+pub fn apply_accepted_invite(store: &Store, accepted: &AcceptedInvite) -> Result<(), String> {
+    store
+        .set_vault_entries(&accepted.entries.to_json())
+        .map_err(|e| e.to_string())?;
+    if let Some(record) = &accepted.record {
+        store
+            .set_vault_record(&record.to_json())
+            .map_err(|e| e.to_string())?;
+    }
+    if accepted.conflict {
+        crate::migrate::set_meta_i64(&store.conn, "vault_conflict", 1).map_err(|e| e.to_string())
+    } else {
+        crate::migrate::delete_meta(&store.conn, "vault_conflict").map_err(|e| e.to_string())?;
+        crate::migrate::set_meta_i64(&store.conn, "vault_migrated", 1).map_err(|e| e.to_string())
+    }
+}
+
+/// Persists one redeemed rotation generation: the caller's own wrap folded
+/// into the cache, nothing else.
+///
+/// Deliberately does NOT touch `vault_conflict`. Redeeming a rotation code
+/// proves the caller can open the WORKSPACE's newer key — it says nothing
+/// about whether this device's own record is that same vault, which is
+/// exactly what the flag records. A conflicted device that redeems stays
+/// conflicted, and [`reseal_lagging_notes`] keeps standing down.
+pub fn apply_rotation_redeem(store: &Store, entry: MyEntryWire) -> Result<(), String> {
+    let cached = cached_vault_entries(store)?.unwrap_or_default();
+    store
+        .set_vault_entries(&merge_my_entry(&cached, entry)?.to_json())
+        .map_err(|e| e.to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -1776,6 +1992,36 @@ impl RotatePayload {
                 dek_wrapped: k.dek_wrapped.clone(),
                 dek_check: k.dek_check.clone(),
             })
+    }
+}
+
+/// Who a rotation has to wrap the new key for, and which generation it
+/// becomes — the whole decision the `vault_rotate` command used to make
+/// inline, between two network calls.
+pub struct RotationPlan {
+    /// The generation the new key takes.
+    pub new_generation: u32,
+    /// Every OTHER member, deduplicated and ascending. The caller is excluded
+    /// here rather than inside [`rotation_payload`]: the members listing
+    /// includes them, and wrapping them twice makes the server reject the
+    /// whole rotation.
+    pub others: Vec<u64>,
+}
+
+/// Decides [`RotationPlan`] from the workspace's current generation and its
+/// member list.
+///
+/// `current` is what the last pull cached (meta `vault_generation`); the new
+/// generation is the next one up, saturating rather than wrapping — a `u32`
+/// that reached its maximum would otherwise roll back to a generation whose
+/// key some ex-member still knows.
+pub fn rotation_plan(current: u32, members: &[u64], me: u64) -> RotationPlan {
+    let mut others: Vec<u64> = members.iter().copied().filter(|id| *id != me).collect();
+    others.sort_unstable();
+    others.dedup();
+    RotationPlan {
+        new_generation: current.saturating_add(1),
+        others,
     }
 }
 
@@ -2015,11 +2261,25 @@ pub fn merge_recovery_entry(
 /// open (a member who joined at a later generation never sees the older DEKs)
 /// and a row that will not open are skipped rather than failing the batch —
 /// the note keeps its old generation and simply stays on the work list.
+///
+/// **Refuses to run at all while meta `vault_conflict` is set.** On a
+/// conflicted device the ring can hold BOTH this device's own generation-1
+/// DEK and the workspace's newer generations, and "newest" is then the
+/// workspace's — re-sealing would silently move this device's private notes
+/// under the workspace key, handing them to every workspace member. Nothing
+/// is re-sealed until an unlock proves the two are one vault (which clears
+/// the flag) or the (deferred) merge lands.
 pub fn reseal_lagging_notes(
     store: &Store,
     vault: &VaultState,
     batch: usize,
 ) -> Result<usize, String> {
+    if crate::migrate::get_meta_i64_opt(&store.conn, "vault_conflict")
+        .map_err(|e| e.to_string())?
+        .is_some()
+    {
+        return Ok(0);
+    }
     let (Some(newest_dek), Some(newest)) = (vault.dek(), vault.newest_generation()) else {
         return Ok(0);
     };
@@ -2046,6 +2306,14 @@ pub fn reseal_lagging_notes(
         let Ok(plaintext) = open_content(old_dek, &id, &stored) else {
             continue;
         };
+        // One transaction per note: the new ciphertext, its generation stamp
+        // and the dirty flag land together or not at all. A note left with
+        // generation N's ciphertext and a stamp of N+1 would be unopenable
+        // for good.
+        let tx = store
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| e.to_string())?;
         store
             .set_content_silent(&id, &seal_content(newest_dek, &id, &plaintext))
             .map_err(|e| e.to_string())?;
@@ -2055,6 +2323,7 @@ pub fn reseal_lagging_notes(
         store
             .mark_note_dirty_if_syncing(&id)
             .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
         done += 1;
     }
     Ok(done)
@@ -2113,7 +2382,7 @@ pub fn vault_status_flags(
         .and_then(|json| VaultRecord::from_json(json).ok());
     let entries = cached_vault_entries(store)?;
     Ok(VaultStatusFlags {
-        exists: raw_record.is_some() || entries.as_ref().is_some_and(|e| !e.mine.is_empty()),
+        exists: vault_exists(store)?,
         conflict: crate::migrate::get_meta_i64_opt(&store.conn, "vault_conflict")
             .map_err(|e| e.to_string())?
             .is_some(),
@@ -2214,14 +2483,19 @@ pub fn change_context_vault_passphrase(
 /// `note_set_protected`: encrypts or decrypts one note's stored content in
 /// place, keeping `notes.protected` in sync with the physical content state.
 ///
-/// `protected = true` seals under the ring's NEWEST generation (same as
-/// every other sealing path) and refuses with `Err("vault locked")` if the
-/// ring is empty. `protected = false` opens under the DEK the note was
-/// ACTUALLY sealed with — see [`decrypt_note_in_place`] for its
-/// `"vault locked"` / `"key generation not available"` split — and is also
-/// refused while the note is inside a `locked` folder: the folder is the
-/// source of truth for that note's protection until the folder itself is
-/// unlocked.
+/// `protected = true` seals under the ring's NEWEST generation (same as every
+/// other sealing path). It refuses with `Err("vault locked")` when the ring is
+/// empty and with `Err("vault: key generation outdated …")` when the
+/// workspace has rotated past that generation (see [`guard_seal_generation`])
+/// — but only when there is something to seal: a note that is ALREADY
+/// protected is a no-op, checked before either guard, so re-asserting the
+/// flag on a locked vault succeeds rather than erroring.
+///
+/// `protected = false` opens under the DEK the note was ACTUALLY sealed with
+/// — see [`decrypt_note_in_place`] for its `"vault locked"` / `"key
+/// generation not available"` split — and is also refused while the note is
+/// inside a `locked` folder: the folder is the source of truth for that
+/// note's protection until the folder itself is unlocked.
 ///
 /// Transitioning to `protected = true` discards the note's existing revision
 /// history (see [`encrypt_note_in_place`]) — v1 behavior, since
@@ -2238,6 +2512,7 @@ pub fn set_note_protected(
                 .dek()
                 .zip(vault.newest_generation())
                 .ok_or_else(|| "vault locked".to_string())?;
+            guard_seal_generation(store, generation)?;
             // Seal + flip `protected` + mark dirty + purge the plaintext
             // revision history (v1: keeping it would defeat
             // encryption-at-rest, since note_revisions is unencrypted).
@@ -2258,16 +2533,19 @@ pub fn set_note_protected(
 /// notes in its subtree to match.
 ///
 /// `locked = true` seals every currently-plaintext subtree note under the
-/// ring's NEWEST generation, refusing with `Err("vault locked")` up front if
-/// the ring is empty (matching every other sealing path).
+/// ring's NEWEST generation, refusing up front with `Err("vault locked")` if
+/// the ring is empty and with `Err("vault: key generation outdated …")` if the
+/// workspace has rotated past that generation (matching every other sealing
+/// path — see [`guard_seal_generation`]).
 ///
 /// `locked = false` opens each note under the DEK it was ACTUALLY sealed
-/// with. Which notes need decrypting — and whether the ring actually holds
-/// every one of their generations — is determined and validated BEFORE `id`
-/// itself is flipped to unlocked in the database: `Err("vault locked")` (ring
-/// empty) or `Err("key generation not available")` (ring lacks a note's
-/// generation) leaves `id.locked` and every note exactly as they were,
-/// rather than committing the folder open while a note fails to decrypt.
+/// with. Which notes need decrypting — and whether each one really opens — is
+/// determined and validated BEFORE `id` itself is flipped to unlocked in the
+/// database: `Err("vault locked")` (ring empty) or `Err("key generation not
+/// available")` (the ring lacks a note's generation, or the DEK it holds for
+/// that generation belongs to another vault) leaves `id.locked` and every
+/// note exactly as they were, rather than committing the folder open while a
+/// note fails to decrypt.
 ///
 /// v1 limitation: `notes.protected` tracks only physical ciphertext state,
 /// not a separate "individually locked" intent, so unlocking a folder
@@ -2290,6 +2568,7 @@ pub fn set_folder_locked(
             .dek()
             .zip(vault.newest_generation())
             .ok_or_else(|| "vault locked".to_string())?;
+        guard_seal_generation(store, generation)?;
         store
             .set_folder_locked(id, true)
             .map_err(|e| e.to_string())?;
@@ -2314,18 +2593,29 @@ pub fn set_folder_locked(
                 to_decrypt.push(note_id);
             }
         }
-        // Validate every one of them has its sealing generation available in
-        // the ring — BEFORE touching a single row — so a missing generation
-        // refuses the whole operation up front instead of surfacing partway
-        // through the per-note loop below, with `id.locked` already false.
+        // Validate every one of them ACTUALLY OPENS — BEFORE touching a
+        // single row — so a note the ring cannot decrypt refuses the whole
+        // operation up front instead of surfacing partway through the
+        // per-note loop below, with `id.locked` already false.
+        //
+        // A generation lookup alone is not enough: on a device that holds two
+        // vaults' keys at once (meta `vault_conflict`) the ring can carry a
+        // generation number whose DEK belongs to the OTHER vault, so
+        // `dek_for` answers `Some` and the AEAD open still fails. Trial-open
+        // each note instead — it is a cheap symmetric operation, unlike the
+        // Argon2 derivations the unlock paths avoid holding locks across.
         if !to_decrypt.is_empty() && !vault.is_unlocked() {
             return Err("vault locked".to_string());
         }
         for note_id in &to_decrypt {
             let gen = store.note_key_gen(note_id).map_err(|e| e.to_string())?;
-            if vault.dek_for(gen).is_none() {
-                return Err("key generation not available".to_string());
-            }
+            let unavailable = || "key generation not available".to_string();
+            let dek = vault.dek_for(gen).ok_or_else(unavailable)?;
+            let stored = store
+                .load_note_content(note_id)
+                .map_err(|e| e.to_string())?
+                .unwrap_or_default();
+            open_content(dek, note_id, &stored).map_err(|_| unavailable())?;
         }
 
         store
@@ -2587,11 +2877,13 @@ pub fn sync_status_local(reg: &Registry) -> Option<SyncStatus> {
             state: "local".into(),
             last_synced_at: 0,
             pending: 0,
+            vault_rotation_pending: false,
         }),
         Some(ctx) if ctx.workspace_id.is_empty() => Some(SyncStatus {
             state: "unbound".into(),
             last_synced_at: 0,
             pending: 0,
+            vault_rotation_pending: false,
         }),
         Some(_) => None,
     }
@@ -2611,6 +2903,14 @@ pub fn sync_status_synced(store: &Store) -> Result<SyncStatus, String> {
         state: state.into(),
         last_synced_at: last,
         pending,
+        // Read here rather than by re-listing every context from the
+        // frontend on every pull — the badge that shows it lives next to the
+        // sync state anyway.
+        vault_rotation_pending: crate::migrate::get_meta_i64(
+            &store.conn,
+            "vault_rotation_pending",
+            0,
+        ) != 0,
     })
 }
 
@@ -2964,6 +3264,15 @@ mod test_support {
         s
     }
 
+    /// A `VaultState` holding exactly one generation — the shape almost
+    /// every op test needs. Lived as four identical copies across the test
+    /// modules before.
+    pub fn unlocked_at(generation: u32, dek: Dek) -> VaultState {
+        let mut v = VaultState::default();
+        v.unlock(generation, dek);
+        v
+    }
+
     pub fn note(id: &str, content: &str) -> Note {
         Note {
             id: id.into(),
@@ -3010,15 +3319,15 @@ mod test_support {
         crate::revisions::list_revisions(&s.conn, id).unwrap().len()
     }
 
-    /// `Result::unwrap_err` needs `T: Debug`, which `Dek`/`VaultRecord`
-    /// deliberately do not implement (a Debug impl on key material is exactly
-    /// what must never exist). This gets at the error without that bound.
     /// The persisted vault record, as the commands load it before running the
     /// KDF outside the store lock.
     pub fn record(s: &Store) -> crate::vault::VaultRecord {
         super::load_vault_record(s).unwrap()
     }
 
+    /// `Result::unwrap_err` needs `T: Debug`, which `Dek`/`VaultRecord`
+    /// deliberately do not implement (a Debug impl on key material is exactly
+    /// what must never exist). This gets at the error without that bound.
     pub fn err_of<T>(r: Result<T, String>) -> String {
         match r {
             Ok(_) => panic!("expected an error, got Ok"),
@@ -3265,12 +3574,6 @@ mod backfill_tests {
     use super::test_support::*;
     use super::*;
 
-    fn unlocked_at(generation: u32, dek: Dek) -> VaultState {
-        let mut v = VaultState::default();
-        v.unlock(generation, dek);
-        v
-    }
-
     #[test]
     fn fills_in_empty_titles_after_unlock() {
         let s = store();
@@ -3374,12 +3677,6 @@ mod note_read_tests {
     use super::test_support::*;
     use super::*;
 
-    fn unlocked_at(generation: u32, dek: Dek) -> VaultState {
-        let mut v = VaultState::default();
-        v.unlock(generation, dek);
-        v
-    }
-
     #[test]
     fn missing_note_reads_as_empty_string() {
         let s = store();
@@ -3441,6 +3738,29 @@ mod note_read_tests {
         assert!(!err.is_empty());
     }
 
+    /// A row whose `key_gen` disagrees with the key its bytes were sealed
+    /// with must still open when the right DEK IS in the ring — the stamp is
+    /// a hint, the AEAD tag is the proof.
+    #[test]
+    fn a_mis_stamped_note_still_opens_under_whichever_generation_actually_seals_it() {
+        let s = store();
+        let (d1, d2) = (Dek::random(), Dek::random());
+        seed(&s, "n1", "<p>secret</p>");
+        encrypt_note_in_place(&s, "n1", &d2, 2).unwrap();
+        // Corrupt only the stamp, never the bytes.
+        s.set_note_key_gen("n1", Some(1)).unwrap();
+
+        let mut ring = VaultState::default();
+        ring.unlock(1, d1);
+        ring.unlock(2, d2);
+        assert_eq!(open_note_content(&s, &ring, "n1").unwrap(), "<p>secret</p>");
+
+        // A ring without generation 2 still cannot open it, and says so
+        // without leaking anything.
+        let err = open_note_content(&s, &unlocked_at(1, Dek::random()), "n1").unwrap_err();
+        assert!(!err.contains("secret") && !err.is_empty());
+    }
+
     #[test]
     fn protected_note_is_refused_when_its_generation_is_not_in_the_ring() {
         // The vault is unlocked, but only at a generation OTHER than the one
@@ -3473,6 +3793,7 @@ mod note_read_tests {
 
 #[cfg(test)]
 mod key_ring_tests {
+    use super::test_support::*;
     use super::*;
 
     /// End-to-end across `VaultState`'s ring and the `ops` sealing/opening
@@ -3530,6 +3851,126 @@ mod key_ring_tests {
             open_note_content(&s, &VaultState::default(), "new").unwrap_err(),
             "vault locked"
         );
+    }
+
+    /// R2: a device whose ring is behind the workspace's generation has not
+    /// redeemed its rotation code. It must not seal anything new under its
+    /// stale key — that key is exactly the one the rotation locked out.
+    /// Reading and unsealing stay allowed.
+    #[test]
+    fn an_outdated_ring_may_not_seal_new_content() {
+        let s = store();
+        let d1 = Dek::random();
+        let vault = unlocked_at(1, d1.clone());
+        seed(&s, "n1", "<p>plain</p>");
+        crate::folders::create_folder(&s.conn, "f", "F", None).unwrap();
+        // The last pull says the workspace is on generation 2; the ring is on 1.
+        crate::migrate::set_meta_i64(&s.conn, "vault_generation", 2).unwrap();
+
+        let outdated = "vault: key generation outdated — unlock with your passphrase";
+        assert_eq!(
+            set_note_protected(&s, &vault, "n1", true).unwrap_err(),
+            outdated
+        );
+        assert_eq!(
+            set_folder_locked(&s, &vault, "f", true).unwrap_err(),
+            outdated
+        );
+        assert!(!s.note_protected("n1").unwrap());
+        assert!(!s.folder_locked("f").unwrap());
+
+        // Editing an ALREADY protected note is refused for the same reason.
+        seed(&s, "n2", "<p>x</p>");
+        encrypt_note_in_place(&s, "n2", &d1, 1).unwrap();
+        assert_eq!(
+            save_note(&s, Some((&d1, 1)), &note("n2", "<p>edited</p>")).unwrap_err(),
+            outdated
+        );
+        assert_eq!(
+            open_note_content(&s, &vault, "n2").unwrap(),
+            "<p>x</p>",
+            "the refused edit wrote nothing"
+        );
+        // A plaintext note is untouched by the rule — nothing is being sealed.
+        save_note(&s, Some((&d1, 1)), &note("n3", "<p>plain</p>")).unwrap();
+
+        // Caught up (the code was redeemed): sealing works again.
+        let mut ring = VaultState::default();
+        ring.unlock(1, d1);
+        ring.unlock(2, Dek::random());
+        set_note_protected(&s, &ring, "n1", true).unwrap();
+        assert_eq!(s.note_key_gen("n1").unwrap(), Some(2));
+    }
+
+    /// R5: the generation stamp rides along in the SAME statement that writes
+    /// the ciphertext, so no window exists in which the row holds generation
+    /// N's bytes under a NULL (⇒ generation 1) or stale stamp.
+    #[test]
+    fn a_protected_save_stamps_its_generation_with_the_ciphertext() {
+        let s = store();
+        let d3 = Dek::random();
+        let mut vault = VaultState::default();
+        vault.unlock(3, d3.clone());
+        seed(&s, "n1", "<p>plain</p>");
+        s.set_note_protected("n1", true).unwrap();
+
+        let note = Note {
+            id: "n1".into(),
+            content: "<p>secret</p>".into(),
+            updated_at: 5,
+            // Exactly what the frontend sends: no generation of its own.
+            ..Default::default()
+        };
+        save_note(&s, Some((&d3, 3)), &note).unwrap();
+
+        assert_eq!(s.note_key_gen("n1").unwrap(), Some(3));
+        assert_eq!(
+            open_note_content(&s, &vault, "n1").unwrap(),
+            "<p>secret</p>"
+        );
+    }
+
+    /// R5: a statement failing partway through a seal must leave NOTHING
+    /// behind — not ciphertext with no `protected` flag, and not a stamp
+    /// without the matching bytes. Provoked by removing the revisions table
+    /// the transaction's last write touches.
+    #[test]
+    fn a_failing_seal_rolls_back_completely() {
+        let s = store();
+        let dek = Dek::random();
+        seed(&s, "n1", "<p>plain</p>");
+        s.conn.execute_batch("DROP TABLE note_revisions").unwrap();
+
+        assert!(encrypt_note_in_place(&s, "n1", &dek, 2).is_err());
+
+        assert!(!s.note_protected("n1").unwrap(), "flag rolled back");
+        assert_eq!(s.note_key_gen("n1").unwrap(), None, "stamp rolled back");
+        assert_eq!(
+            s.load_note_content("n1").unwrap().unwrap(),
+            "<p>plain</p>",
+            "content rolled back — never ciphertext without its flag"
+        );
+    }
+
+    /// R5: the same guarantee for the lazy sweep — a note is never left with
+    /// one generation's ciphertext under another generation's stamp.
+    #[test]
+    fn a_resealed_note_always_opens_under_the_stamp_it_carries() {
+        let s = store();
+        let (d1, d2) = (Dek::random(), Dek::random());
+        seed(&s, "n1", "<p>secret</p>");
+        encrypt_note_in_place(&s, "n1", &d1, 1).unwrap();
+
+        let mut ring = VaultState::default();
+        ring.unlock(1, d1);
+        ring.unlock(2, d2.clone());
+        assert_eq!(reseal_lagging_notes(&s, &ring, 10).unwrap(), 1);
+
+        let stamp = s.note_key_gen("n1").unwrap();
+        assert_eq!(stamp, Some(2));
+        // Opened with the stamp's OWN key, not the ring's convenience.
+        let stored = s.load_note_content("n1").unwrap().unwrap();
+        assert_eq!(open_content(&d2, "n1", &stored).unwrap(), "<p>secret</p>");
     }
 }
 
@@ -4732,6 +5173,139 @@ mod vault_entries_tests {
         }
     }
 
+    /// R4: an entry whose KDF parameters are out of range is unopenable, not
+    /// an invitation to allocate a gigabyte inside an unlock.
+    #[test]
+    fn an_entry_with_absurd_kdf_parameters_is_refused() {
+        let dek = Dek::random();
+        let mut wire = my_entry_for(&dek, 1, "pw");
+        wire.kdf_params.m_cost = u32::MAX;
+        assert!(err_of(MyEntry::try_from(wire.clone())).contains("key-derivation parameters"));
+
+        wire.kdf_params.m_cost = 19_456;
+        wire.kdf_params.t_cost = 0;
+        assert!(MyEntry::try_from(wire).is_err());
+
+        // A whole cache is only as good as its entries: one bad one makes the
+        // cache unusable, and the unlock falls back to the local record.
+        let s = store();
+        s.set_vault_entries(
+            &serde_json::json!({
+                "mine": [{
+                    "generation": 1,
+                    "kdfParams": { "salt": vec![0u8; 16], "mCost": u32::MAX, "tCost": 2, "pCost": 1 },
+                    "dekWrapped": "",
+                    "dekCheck": "",
+                }],
+                "recovery": [],
+                "rotation": [],
+            })
+            .to_string(),
+        )
+        .unwrap();
+        assert!(cached_vault_entries(&s).unwrap().is_none());
+    }
+
+    /// R4: an invite wrap is server-supplied too, and its refusal must stay
+    /// indistinguishable from "wrong code".
+    #[test]
+    fn an_invite_wrap_with_absurd_kdf_parameters_is_refused_as_invalid() {
+        let dek = Dek::random();
+        let (code, mut wrap) = make_invite_wrap(&dek, 1);
+        wrap.kdf_params.m_cost = u32::MAX;
+        assert_eq!(
+            err_of(open_invite_wrap(&wrap, &code)),
+            "invalid invite code"
+        );
+    }
+
+    /// R4: one unlock derives at most 32 KEKs, keeping the NEWEST generations
+    /// — a server cannot turn a single unlock into minutes of Argon2.
+    #[test]
+    fn an_unlock_only_ever_tries_the_newest_thirty_two_generations() {
+        let gens: Vec<u32> = (1..=100).collect();
+        let kept = newest_generations(&gens, |g| *g);
+        assert_eq!(kept.len(), MAX_UNLOCK_GENERATIONS);
+        assert_eq!(*kept[0], 69, "the newest 32 of 1..=100");
+        assert_eq!(*kept[31], 100);
+        assert!(
+            kept.windows(2).all(|w| w[0] < w[1]),
+            "handed back ascending"
+        );
+
+        // A short list is kept whole, and the server's ordering is not trusted.
+        let jumbled = vec![3u32, 1, 2];
+        assert_eq!(
+            newest_generations(&jumbled, |g| *g)
+                .into_iter()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+    }
+
+    /// R2: the biometric gate has to verify against the source that covers
+    /// the generation the keychain item was enrolled at — the local record
+    /// only ever mirrors generation 1.
+    #[test]
+    fn the_biometric_gate_verifies_against_the_generation_it_was_enrolled_at() {
+        let s = store();
+        let (rec1, _rk, d1) = crate::vault::setup("pw").unwrap();
+        s.set_vault_record(&rec1.to_json()).unwrap();
+
+        // Generation 1: the local record is enough.
+        assert!(verify_dek_for_store(&s, 1, &d1).is_ok());
+        assert!(err_of(verify_dek_for_store(&s, 1, &Dek::random())).contains("different context"));
+
+        // Generation 2 has no source at all yet — refused, never guessed.
+        let d2 = Dek::random();
+        assert!(err_of(verify_dek_for_store(&s, 2, &d2)).contains("unlock with your passphrase"));
+
+        // Once the workspace's wrap for generation 2 is cached, it is the
+        // source — and generation 1 still answers from its own entry.
+        let entries = VaultEntries {
+            mine: vec![
+                MyEntry::try_from(my_entry_for(&d1, 1, "pw")).unwrap(),
+                MyEntry::try_from(my_entry_for(&d2, 2, "pw")).unwrap(),
+            ],
+            recovery: vec![],
+            rotation: vec![],
+        };
+        s.set_vault_entries(&entries.to_json()).unwrap();
+        assert!(verify_dek_for_store(&s, 2, &d2).is_ok());
+        assert!(verify_dek_for_store(&s, 1, &d1).is_ok());
+        assert!(err_of(verify_dek_for_store(&s, 2, &d1)).contains("different context"));
+    }
+
+    /// A member who joined at generation 2 mirrors no local record at all —
+    /// the cache is their only verification source, and generation 1 (which
+    /// they never held) must not fall through to a missing record.
+    #[test]
+    fn the_biometric_gate_works_without_a_local_record() {
+        let s = store();
+        let d2 = Dek::random();
+        let entries = VaultEntries {
+            mine: vec![MyEntry::try_from(my_entry_for(&d2, 2, "pw")).unwrap()],
+            recovery: vec![],
+            rotation: vec![],
+        };
+        s.set_vault_entries(&entries.to_json()).unwrap();
+        assert!(verify_dek_for_store(&s, 2, &d2).is_ok());
+        assert!(err_of(verify_dek_for_store(&s, 1, &d2)).contains("not set up"));
+    }
+
+    /// An entry that predates `dek_check` proves nothing; the DEK must not be
+    /// accepted on the strength of "nothing said no".
+    #[test]
+    fn the_biometric_gate_refuses_an_entry_with_no_check() {
+        let s = store();
+        let (rec, _rk, dek) = crate::vault::setup("pw").unwrap();
+        let mut checkless = rec.clone();
+        checkless.dek_check = None;
+        s.set_vault_record(&checkless.to_json()).unwrap();
+        assert!(err_of(verify_dek_for_store(&s, 1, &dek)).contains("unlock with your passphrase"));
+    }
+
     #[test]
     fn entries_unlock_every_generation_the_passphrase_opens() {
         let (rec1, _rk, d1) = crate::vault::setup("pw").unwrap();
@@ -4842,7 +5416,7 @@ mod vault_entries_tests {
         };
         let plan = plan_entry_unlock(None, &entries, &VaultSecret::Passphrase("pw")).unwrap();
         assert!(plan.reconciled, "nothing local to disagree with");
-        apply_entry_unlock(&s, None, &entries, &plan).unwrap();
+        apply_entry_unlock(&s, None, &entries, &plan, &VaultSecret::Passphrase("pw")).unwrap();
 
         // The mirrored record opens with BOTH the passphrase and the recovery
         // key, so biometric enrolment and `ensure_dek_check` keep working.
@@ -4900,7 +5474,14 @@ mod vault_entries_tests {
             "a second device must get every generation"
         );
         assert_eq!(plan.install[0].1.expose(), dek.expose());
-        apply_entry_unlock(&s, Some(&local), &entries, &plan).unwrap();
+        apply_entry_unlock(
+            &s,
+            Some(&local),
+            &entries,
+            &plan,
+            &VaultSecret::Passphrase("pw"),
+        )
+        .unwrap();
         assert_eq!(meta(&s, "vault_conflict"), None, "same vault: resolved");
         assert_eq!(meta(&s, "vault_migrated"), Some(1));
     }
@@ -4923,7 +5504,14 @@ mod vault_entries_tests {
             plan.reconciled,
             "no check to verify against -> the DEKs themselves are compared"
         );
-        apply_entry_unlock(&s, Some(&local), &entries, &plan).unwrap();
+        apply_entry_unlock(
+            &s,
+            Some(&local),
+            &entries,
+            &plan,
+            &VaultSecret::Passphrase("pw"),
+        )
+        .unwrap();
         assert!(
             load_vault_record(&s).unwrap().dek_check.is_some(),
             "healed from a DEK proved to be this record's own"
@@ -4948,7 +5536,14 @@ mod vault_entries_tests {
 
         assert!(plan.reconciled);
         assert_eq!(plan.install[0].1.expose(), dek.expose());
-        apply_entry_unlock(&s, Some(&local), &entries, &plan).unwrap();
+        apply_entry_unlock(
+            &s,
+            Some(&local),
+            &entries,
+            &plan,
+            &VaultSecret::Recovery(rk.as_str()),
+        )
+        .unwrap();
         assert_eq!(meta(&s, "vault_conflict"), None);
         assert_eq!(meta(&s, "vault_migrated"), Some(1));
     }
@@ -4980,7 +5575,14 @@ mod vault_entries_tests {
             local_dek.expose(),
             "this device keeps reading its OWN protected notes"
         );
-        apply_entry_unlock(&s, Some(&local), &entries, &plan).unwrap();
+        apply_entry_unlock(
+            &s,
+            Some(&local),
+            &entries,
+            &plan,
+            &VaultSecret::Passphrase("pw"),
+        )
+        .unwrap();
         assert_eq!(
             s.vault_record().unwrap().unwrap(),
             before,
@@ -5014,7 +5616,14 @@ mod vault_entries_tests {
 
         assert!(!plan.reconciled);
         assert_eq!(plan.install[0].1.expose(), server_dek.expose());
-        apply_entry_unlock(&s, Some(&local), &entries, &plan).unwrap();
+        apply_entry_unlock(
+            &s,
+            Some(&local),
+            &entries,
+            &plan,
+            &VaultSecret::Passphrase("pw"),
+        )
+        .unwrap();
         assert_eq!(s.vault_record().unwrap().unwrap(), before);
         assert_eq!(meta(&s, "vault_conflict"), Some(1));
         assert_eq!(meta(&s, "vault_migrated"), None);
@@ -5040,7 +5649,14 @@ mod vault_entries_tests {
         assert!(!plan.reconciled);
         assert_eq!(plan.install.len(), 1);
         assert_eq!(plan.install[0].1.expose(), local_dek.expose());
-        apply_entry_unlock(&s, Some(&local), &entries, &plan).unwrap();
+        apply_entry_unlock(
+            &s,
+            Some(&local),
+            &entries,
+            &plan,
+            &VaultSecret::Passphrase("mine"),
+        )
+        .unwrap();
         assert_eq!(meta(&s, "vault_conflict"), Some(1));
         assert_eq!(meta(&s, "vault_migrated"), None);
 
@@ -5052,6 +5668,138 @@ mod vault_entries_tests {
                 &VaultSecret::Passphrase("neither")
             )),
             "wrong passphrase"
+        );
+    }
+
+    /// R6: a member invited at generation 2 sees a workspace ring with no
+    /// generation 1 in it. That is UNKNOWN, not a mismatch with their local
+    /// record — installing the local generation 1 instead would leave them
+    /// unable to read the workspace's notes at all.
+    #[test]
+    fn a_workspace_ring_without_generation_one_is_preferred_over_the_local_record() {
+        let s = store();
+        // Same passphrase on both sides, two different vaults.
+        let (local, _rk, local_dek) = crate::vault::setup("pw").unwrap();
+        s.set_vault_record(&local.to_json()).unwrap();
+        let ws_dek = Dek::random();
+        let entries = VaultEntries {
+            mine: vec![MyEntry::try_from(my_entry_for(&ws_dek, 2, "pw")).unwrap()],
+            recovery: vec![],
+            rotation: vec![],
+        };
+
+        let plan =
+            plan_entry_unlock(Some(&local), &entries, &VaultSecret::Passphrase("pw")).unwrap();
+
+        assert_eq!(
+            plan.install.iter().map(|(g, _)| *g).collect::<Vec<_>>(),
+            vec![2],
+            "the workspace ring, never mixed with a local generation 1"
+        );
+        assert_eq!(plan.install[0].1.expose(), ws_dek.expose());
+        assert_ne!(plan.install[0].1.expose(), local_dek.expose());
+        assert!(
+            !plan.reconciled,
+            "nothing proved the two are one vault — nothing may be written"
+        );
+
+        let before = s.vault_record().unwrap().unwrap();
+        apply_entry_unlock(
+            &s,
+            Some(&local),
+            &entries,
+            &plan,
+            &VaultSecret::Passphrase("pw"),
+        )
+        .unwrap();
+        assert_eq!(s.vault_record().unwrap().unwrap(), before, "untouched");
+    }
+
+    /// R7: a passphrase change on another device rewraps the WORKSPACE
+    /// entries. This device's own record is out of that loop, so the old
+    /// passphrase would keep opening the vault locally — the one thing the
+    /// change was supposed to stop. A reconciled passphrase unlock rewraps it.
+    #[test]
+    fn a_reconciled_passphrase_unlock_revokes_the_old_passphrase_locally() {
+        let s = store();
+        let (local, rk, dek) = crate::vault::setup("current").unwrap();
+        s.set_vault_record(&local.to_json()).unwrap();
+        // Another device already moved the workspace to "next".
+        let entries = VaultEntries {
+            mine: vec![mine(
+                1,
+                crate::vault::rewrap_passphrase(&local, &dek, "next"),
+            )],
+            recovery: vec![recovery_of(1, &local)],
+            rotation: vec![],
+        };
+
+        let plan =
+            plan_entry_unlock(Some(&local), &entries, &VaultSecret::Passphrase("next")).unwrap();
+        assert!(plan.reconciled, "the same DEK — provably one vault");
+        apply_entry_unlock(
+            &s,
+            Some(&local),
+            &entries,
+            &plan,
+            &VaultSecret::Passphrase("next"),
+        )
+        .unwrap();
+
+        let stored = load_vault_record(&s).unwrap();
+        assert!(
+            vault_unlock_passphrase(&stored, "current").is_err(),
+            "the old passphrase no longer opens this device's record"
+        );
+        assert_eq!(
+            vault_unlock_passphrase(&stored, "next").unwrap().expose(),
+            dek.expose()
+        );
+        // The recovery key is untouched by a passphrase change.
+        assert_eq!(
+            vault_unlock_recovery(&stored, rk.as_str())
+                .unwrap()
+                .expose(),
+            dek.expose()
+        );
+    }
+
+    /// ...but a RECOVERY unlock only heals the check. A recovery key is not a
+    /// passphrase and must never quietly become one.
+    #[test]
+    fn a_reconciled_recovery_unlock_leaves_the_passphrase_alone() {
+        let s = store();
+        let (rec, rk, dek) = crate::vault::setup("pw").unwrap();
+        let mut checkless = rec.clone();
+        checkless.dek_check = None;
+        s.set_vault_record(&checkless.to_json()).unwrap();
+        let entries = VaultEntries {
+            mine: vec![mine(1, rec.clone())],
+            recovery: vec![recovery_of(1, &rec)],
+            rotation: vec![],
+        };
+
+        let plan = plan_entry_unlock(
+            Some(&checkless),
+            &entries,
+            &VaultSecret::Recovery(rk.as_str()),
+        )
+        .unwrap();
+        apply_entry_unlock(
+            &s,
+            Some(&checkless),
+            &entries,
+            &plan,
+            &VaultSecret::Recovery(rk.as_str()),
+        )
+        .unwrap();
+
+        let stored = load_vault_record(&s).unwrap();
+        assert!(stored.dek_check.is_some(), "the check was healed");
+        assert_eq!(
+            vault_unlock_passphrase(&stored, "pw").unwrap().expose(),
+            dek.expose(),
+            "the passphrase still opens it — nothing was rewrapped"
         );
     }
 
@@ -5185,6 +5933,51 @@ mod vault_entries_tests {
         );
     }
 
+    /// R3: a PUT loop that fails on generation 3 of 3 has to put generations
+    /// 1 and 2 back under the OLD passphrase, or no single passphrase opens
+    /// the whole ring any more.
+    #[test]
+    fn a_partial_rewrap_upload_reverts_exactly_the_generations_that_landed() {
+        let (rec, _rk, dek) = crate::vault::setup("old").unwrap();
+        let entries = VaultEntries {
+            mine: (1..=3)
+                .map(|g| mine(g, crate::vault::rewrap_passphrase(&rec, &dek, "old")))
+                .collect(),
+            recovery: vec![],
+            rotation: vec![],
+        };
+
+        // Nothing landed yet: nothing to undo.
+        assert!(rewrap_revert_uploads(&entries, &[]).is_empty());
+
+        // Generations 1 and 2 landed before the failure.
+        let revert = rewrap_revert_uploads(&entries, &[2, 1]);
+        assert_eq!(
+            revert.iter().map(|e| e.generation).collect::<Vec<_>>(),
+            vec![1, 2],
+            "ascending, whatever order they were uploaded in"
+        );
+        // And what goes back is the OLD wrap — it still opens with "old".
+        let reverted = VaultEntries {
+            mine: revert
+                .into_iter()
+                .map(MyEntry::try_from)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap(),
+            recovery: vec![],
+            rotation: vec![],
+        };
+        assert_eq!(
+            unlock_entries_with_passphrase(&reverted, "old")
+                .unwrap()
+                .len(),
+            2
+        );
+
+        // A generation the cache does not describe is skipped, not guessed.
+        assert!(rewrap_revert_uploads(&entries, &[9]).is_empty());
+    }
+
     #[test]
     fn rewrap_for_server_refuses_a_wrong_current_passphrase() {
         let (local, _rk, dek) = crate::vault::setup("old").unwrap();
@@ -5297,7 +6090,7 @@ mod vault_entries_tests {
 /// invitee's device settles locally once the server accepted their own wrap.
 #[cfg(test)]
 mod vault_invite_tests {
-    use super::test_support::err_of;
+    use super::test_support::{err_of, store};
     use super::*;
 
     #[test]
@@ -5410,6 +6203,28 @@ mod vault_invite_tests {
             parse_invitation_ref("https://notes.example.com/invite/").unwrap_err(),
             "invitation: no token in that link"
         );
+
+        // The token is interpolated into a request path, so anything that
+        // could reshape that path is refused rather than sent.
+        for odd in [
+            "../../admin",
+            "abc 123",
+            "abc/def",
+            "abc?x=1",
+            "abc#frag",
+            "https://notes.example.com/invite/../../admin",
+        ] {
+            assert_eq!(
+                parse_invitation_ref(odd).unwrap_err(),
+                "invitation: that does not look like an invitation link",
+                "{odd} must not reach the URL"
+            );
+        }
+        // What a real token looks like still goes through untouched.
+        assert_eq!(
+            parse_invitation_ref("aB3_x-Y9").unwrap(),
+            InvitationRef::Token("aB3_x-Y9".into())
+        );
     }
 
     #[test]
@@ -5495,20 +6310,20 @@ mod vault_invite_tests {
     }
 
     #[test]
-    fn accepting_clears_the_conflict_only_when_the_two_vaults_are_provably_one() {
+    fn accepting_flags_the_conflict_unless_the_two_vaults_are_provably_one() {
         // (a) No local record: the mirrored one IS the workspace's key.
         let dek = Dek::random();
         assert!(
-            accept_invite_entry(None, None, my_entry_for(&dek, 1, "pw"), &dek, "pw")
+            !accept_invite_entry(None, None, my_entry_for(&dek, 1, "pw"), &dek, "pw")
                 .unwrap()
-                .clear_conflict
+                .conflict
         );
 
         // (b) A local record whose DEK is the one the invite handed over —
         // `dek_check` settles it without needing the local passphrase.
         let (local, _rk, local_dek) = crate::vault::setup("local-pw").unwrap();
         assert!(
-            accept_invite_entry(
+            !accept_invite_entry(
                 None,
                 Some(&local),
                 my_entry_for(&local_dek, 1, "member-pw"),
@@ -5516,13 +6331,14 @@ mod vault_invite_tests {
                 "member-pw"
             )
             .unwrap()
-            .clear_conflict
+            .conflict
         );
 
-        // (c) A local record holding a DIFFERENT vault: the flag stays, so the
-        // banner keeps saying the pre-join notes are sealed under another key.
+        // (c) A local record holding a DIFFERENT vault: the accept is
+        // conflicted, so the flag is SET — the re-seal sweep stands down and
+        // the banner keeps saying the pre-join notes are under another key.
         assert!(
-            !accept_invite_entry(
+            accept_invite_entry(
                 None,
                 Some(&local),
                 my_entry_for(&dek, 1, "member-pw"),
@@ -5530,7 +6346,7 @@ mod vault_invite_tests {
                 "member-pw"
             )
             .unwrap()
-            .clear_conflict
+            .conflict
         );
 
         // (d) A record predating `dek_check` falls back to opening it with the
@@ -5538,7 +6354,7 @@ mod vault_invite_tests {
         let mut checkless = crate::vault::rewrap_passphrase(&local, &local_dek, "member-pw");
         checkless.dek_check = None;
         assert!(
-            accept_invite_entry(
+            !accept_invite_entry(
                 None,
                 Some(&checkless),
                 my_entry_for(&local_dek, 1, "member-pw"),
@@ -5546,10 +6362,10 @@ mod vault_invite_tests {
                 "member-pw"
             )
             .unwrap()
-            .clear_conflict
+            .conflict
         );
         assert!(
-            !accept_invite_entry(
+            accept_invite_entry(
                 None,
                 Some(&checkless),
                 my_entry_for(&dek, 1, "member-pw"),
@@ -5557,7 +6373,65 @@ mod vault_invite_tests {
                 "member-pw"
             )
             .unwrap()
-            .clear_conflict
+            .conflict
+        );
+    }
+
+    /// C1(b): the two store-side branches of an accept, end to end.
+    #[test]
+    fn applying_an_accept_settles_the_conflict_and_migrated_flags() {
+        let dek = Dek::random();
+
+        // Conflict-free: `vault_migrated` claimed, `vault_conflict` cleared.
+        let s = store();
+        crate::migrate::set_meta_i64(&s.conn, "vault_conflict", 1).unwrap();
+        let clean =
+            accept_invite_entry(None, None, my_entry_for(&dek, 1, "pw"), &dek, "pw").unwrap();
+        apply_accepted_invite(&s, &clean).unwrap();
+        assert!(crate::migrate::get_meta_i64_opt(&s.conn, "vault_conflict")
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            crate::migrate::get_meta_i64_opt(&s.conn, "vault_migrated").unwrap(),
+            Some(1)
+        );
+        assert!(s.vault_record().unwrap().is_some(), "generation 1 mirrored");
+
+        // Conflicted: `vault_conflict` SET, `vault_migrated` deliberately not
+        // claimed, so the sync hook keeps re-marking the conflict.
+        let s2 = store();
+        let (local, _rk, _d) = crate::vault::setup("local-pw").unwrap();
+        s2.set_vault_record(&local.to_json()).unwrap();
+        let clashing =
+            accept_invite_entry(None, Some(&local), my_entry_for(&dek, 1, "pw"), &dek, "pw")
+                .unwrap();
+        apply_accepted_invite(&s2, &clashing).unwrap();
+        assert_eq!(
+            crate::migrate::get_meta_i64_opt(&s2.conn, "vault_conflict").unwrap(),
+            Some(1)
+        );
+        assert!(crate::migrate::get_meta_i64_opt(&s2.conn, "vault_migrated")
+            .unwrap()
+            .is_none());
+    }
+
+    /// C1(b): redeeming a rotation code never clears a conflict — it proves
+    /// nothing about this device's own record.
+    #[test]
+    fn redeeming_a_rotation_leaves_the_conflict_flag_alone() {
+        let s = store();
+        crate::migrate::set_meta_i64(&s.conn, "vault_conflict", 1).unwrap();
+        let dek = Dek::random();
+        apply_rotation_redeem(&s, my_entry_for(&dek, 2, "pw")).unwrap();
+        assert_eq!(
+            crate::migrate::get_meta_i64_opt(&s.conn, "vault_conflict").unwrap(),
+            Some(1),
+            "a redeem must not clear the conflict"
+        );
+        let cached = cached_vault_entries(&s).unwrap().unwrap();
+        assert_eq!(
+            cached.mine.iter().map(|e| e.generation).collect::<Vec<_>>(),
+            vec![2]
         );
     }
 
@@ -5613,7 +6487,7 @@ mod vault_invite_tests {
 
     #[test]
     fn vault_status_flags_read_existence_the_conflict_and_the_recovery_question() {
-        let s = test_support::store();
+        let s = store();
         let flags = vault_status_flags(&s, true).unwrap();
         assert!(!flags.exists && !flags.conflict && !flags.recovery_holder);
 
@@ -5624,7 +6498,7 @@ mod vault_invite_tests {
         assert!(flags.exists && flags.conflict && flags.recovery_holder);
 
         // An invitee's device: cached `mine` only, no record at all.
-        let s2 = test_support::store();
+        let s2 = store();
         let dek = Dek::random();
         s2.set_vault_entries(
             &serde_json::json!({"mine": [my_entry_for(&dek, 2, "pw")], "recovery": []}).to_string(),
@@ -5646,7 +6520,7 @@ mod vault_invite_tests {
     fn setting_up_again_is_refused_once_the_workspace_holds_a_key_for_this_caller() {
         // The generation-2 case that has no local record to trip over: without
         // this guard `vault_setup` would mint a SECOND, incompatible DEK.
-        let s = test_support::store();
+        let s = store();
         let dek = Dek::random();
         s.set_vault_entries(
             &serde_json::json!({"mine": [my_entry_for(&dek, 2, "member-pw")], "recovery": []})
@@ -5797,6 +6671,26 @@ mod vault_rotation_tests {
         // ...and a cache written before rotation wraps existed still parses.
         let old = VaultEntries::from_json(r#"{"mine":[],"recovery":[]}"#).unwrap();
         assert!(old.rotation.is_empty());
+    }
+
+    /// The rotation's bookkeeping, out of the command body and into a place
+    /// a test can reach.
+    #[test]
+    fn a_rotation_plan_excludes_the_caller_and_steps_the_generation() {
+        let plan = rotation_plan(2, &[7, 3, 9, 3], 7);
+        assert_eq!(plan.new_generation, 3);
+        assert_eq!(plan.others, vec![3, 9], "no self, no duplicates, ascending");
+
+        // A workspace with no vault yet (generation 0) rotates to 1.
+        assert_eq!(rotation_plan(0, &[7], 7).new_generation, 1);
+        assert!(rotation_plan(0, &[7], 7).others.is_empty(), "a lone member");
+
+        // A member the listing does not include cannot be excluded twice.
+        assert_eq!(rotation_plan(1, &[3, 9], 7).others, vec![3, 9]);
+
+        // Saturating, never wrapping: rolling back to a generation an
+        // ex-member still knows the key for would undo the whole rotation.
+        assert_eq!(rotation_plan(u32::MAX, &[7], 7).new_generation, u32::MAX);
     }
 
     #[test]
@@ -6066,7 +6960,7 @@ mod vault_rotation_tests {
 
     #[test]
     fn the_status_flags_surface_a_pending_code_and_a_missing_recovery_wrap() {
-        let s = test_support::store();
+        let s = store();
         let d1 = Dek::random();
         let (base, _rk) = creator_entries(&d1, "owner-pw");
 
@@ -6087,7 +6981,7 @@ mod vault_rotation_tests {
         );
 
         // A member waiting to redeem their rotation code.
-        let s2 = test_support::store();
+        let s2 = store();
         let (_code, wrap) = make_invite_wrap(&Dek::random(), 2);
         s2.set_vault_entries(
             &serde_json::json!({
@@ -6236,7 +7130,7 @@ mod vault_rotation_tests {
 
     #[test]
     fn reseal_skips_a_locked_vault_and_generations_this_ring_cannot_open() {
-        let s = test_support::store();
+        let s = store();
         let d1 = Dek::random();
         seed(&s, "a", "<p>a</p>");
         s.set_note_protected("a", true).unwrap();
@@ -6255,9 +7149,40 @@ mod vault_rotation_tests {
         assert_eq!(s.note_key_gen("a").unwrap(), Some(1), "left untouched");
     }
 
+    /// C1(a): a conflicted device holds two vaults' keys at once. Its own
+    /// notes must never move under the workspace's newer generation — that
+    /// would hand every workspace member the private notes it protected
+    /// before joining.
+    #[test]
+    fn reseal_stands_down_entirely_on_a_conflicted_device() {
+        let s = store();
+        let local_dek = Dek::random();
+        seed(&s, "private", "<p>mine</p>");
+        s.set_note_protected("private", true).unwrap();
+        encrypt_note_in_place(&s, "private", &local_dek, 1).unwrap();
+        let sealed = content_of(&s, "private");
+
+        // The ring: this device's own generation 1 plus the workspace's
+        // generation 2. Without the flag the sweep would happily re-seal.
+        let ws_dek = Dek::random();
+        let mut vault = VaultState::default();
+        vault.unlock(1, local_dek.clone());
+        vault.unlock(2, ws_dek);
+
+        crate::migrate::set_meta_i64(&s.conn, "vault_conflict", 1).unwrap();
+        assert_eq!(reseal_lagging_notes(&s, &vault, 10).unwrap(), 0);
+        assert_eq!(s.note_key_gen("private").unwrap(), Some(1));
+        assert_eq!(content_of(&s, "private"), sealed, "ciphertext untouched");
+
+        // Cleared (an unlock proved the two are one vault): the sweep runs.
+        crate::migrate::delete_meta(&s.conn, "vault_conflict").unwrap();
+        assert_eq!(reseal_lagging_notes(&s, &vault, 10).unwrap(), 1);
+        assert_eq!(s.note_key_gen("private").unwrap(), Some(2));
+    }
+
     #[test]
     fn a_cache_only_device_is_told_to_unlock_rather_than_set_up() {
-        let s = test_support::store();
+        let s = store();
         assert!(!server_vault_needs_unlock(&s).unwrap());
 
         s.set_vault_entries(
@@ -6267,7 +7192,7 @@ mod vault_rotation_tests {
         assert!(server_vault_needs_unlock(&s).unwrap());
 
         // A device with a record of its own is not in that situation.
-        let s2 = test_support::store();
+        let s2 = store();
         vault_setup(&s2, "pw").unwrap();
         assert!(!server_vault_needs_unlock(&s2).unwrap());
     }
@@ -6387,12 +7312,6 @@ mod context_vault_change_passphrase_tests {
 mod note_protection_tests {
     use super::test_support::*;
     use super::*;
-
-    fn unlocked_at(generation: u32, dek: Dek) -> VaultState {
-        let mut v = VaultState::default();
-        v.unlock(generation, dek);
-        v
-    }
 
     #[test]
     fn protecting_seals_the_content_and_purges_revisions() {
@@ -6582,12 +7501,6 @@ mod folder_lock_tests {
     use super::test_support::*;
     use super::*;
 
-    fn unlocked_at(generation: u32, dek: Dek) -> VaultState {
-        let mut v = VaultState::default();
-        v.unlock(generation, dek);
-        v
-    }
-
     #[test]
     fn locking_encrypts_every_note_in_the_subtree() {
         let s = store();
@@ -6761,6 +7674,29 @@ mod folder_lock_tests {
             s.note_protected("n1").unwrap(),
             "the note must stay sealed — nothing was committed"
         );
+    }
+
+    /// C1(d): on a conflicted device the ring can carry a generation number
+    /// whose DEK belongs to the OTHER vault — `dek_for` answers `Some` and
+    /// the AEAD open still fails. Trial-opening every note up front is what
+    /// stops the folder from being committed open over sealed notes.
+    #[test]
+    fn unlocking_fails_when_the_ring_holds_a_foreign_dek_for_the_notes_generation() {
+        let s = store();
+        let d1 = Dek::random();
+        folder(&s, "f", None);
+        seed_in(&s, "n1", "<p>secret</p>", "f");
+        set_folder_locked(&s, &unlocked_at(1, d1), "f", true).unwrap();
+        let sealed = content_of(&s, "n1");
+
+        // Generation 1 IS in the ring — but it is another vault's key.
+        let impostor = unlocked_at(1, Dek::random());
+        let err = set_folder_locked(&s, &impostor, "f", false).unwrap_err();
+
+        assert_eq!(err, "key generation not available");
+        assert!(s.folder_locked("f").unwrap(), "folder stays locked");
+        assert!(s.note_protected("n1").unwrap(), "note stays sealed");
+        assert_eq!(content_of(&s, "n1"), sealed, "ciphertext untouched");
     }
 }
 
@@ -7316,6 +8252,38 @@ mod sync_status_tests {
         let status = sync_status_synced(&s).unwrap();
         assert_eq!(status.state, "synced");
         assert_eq!(status.last_synced_at, 1_700_000);
+    }
+
+    /// F8: the badge reads the pending rotation off the sync status instead
+    /// of re-listing every context after every pull.
+    #[test]
+    fn the_status_carries_the_workspaces_pending_key_rotation() {
+        let s = syncing_store();
+        assert!(!sync_status_synced(&s).unwrap().vault_rotation_pending);
+        crate::migrate::set_meta_i64(&s.conn, "vault_rotation_pending", 1).unwrap();
+        assert!(sync_status_synced(&s).unwrap().vault_rotation_pending);
+
+        // A local/unbound context has no workspace, so never a rotation.
+        let r = Registry::default_for("/d.db");
+        assert!(!sync_status_local(&r).unwrap().vault_rotation_pending);
+    }
+
+    /// R1: the guard the sync cycle uses to notice a context switch that
+    /// happened while it was on the network.
+    #[test]
+    fn the_sync_epoch_invalidates_a_cycle_captured_before_a_swap() {
+        let epoch = SyncEpoch::default();
+        let captured = epoch.current();
+        assert!(!epoch.changed_since(captured), "nothing swapped yet");
+
+        epoch.bump(); // `swap_store_to` does exactly this
+        assert!(epoch.changed_since(captured));
+
+        // A cycle started after the swap is unaffected by the earlier one.
+        let fresh = epoch.current();
+        assert!(!epoch.changed_since(fresh));
+        epoch.bump();
+        assert!(epoch.changed_since(fresh) && epoch.changed_since(captured));
     }
 
     #[test]

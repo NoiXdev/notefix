@@ -19,9 +19,19 @@ interface Props {
 export default function VaultRotationCodesDialog({ codes, onClose }: Props) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState<number | null>(null);
+  // Which member's copy failed, if any — see `VaultInviteCodeDialog`: a code
+  // is shown once, so a silent clipboard failure loses it for good.
+  const [failed, setFailed] = useState<number | null>(null);
 
-  const copy = (c: RotationCode) => {
-    void navigator.clipboard?.writeText(c.code);
+  const copy = async (c: RotationCode) => {
+    try {
+      await navigator.clipboard.writeText(c.code);
+    } catch {
+      setCopied(null);
+      setFailed(c.userId);
+      return;
+    }
+    setFailed(null);
     setCopied(c.userId);
     setTimeout(() => setCopied(null), 1500);
   };
@@ -36,13 +46,20 @@ export default function VaultRotationCodesDialog({ codes, onClose }: Props) {
             <div key={c.userId} className="mb-3">
               <div className="flex items-center justify-between gap-2 mb-1">
                 <span className="text-xs text-gray-400">{t('vault.rotation.codeFor', { id: c.userId })}</span>
-                <button onClick={() => copy(c)} className="px-2 py-0.5 rounded text-xs text-gray-300 hover:bg-gray-800">
+                <button
+                  onClick={() => void copy(c)}
+                  aria-label={`${t('vault.invite.copy')} — ${t('vault.rotation.codeFor', { id: c.userId })}`}
+                  className="px-2 py-0.5 rounded text-xs text-gray-300 hover:bg-gray-800"
+                >
                   {copied === c.userId ? t('vault.invite.copied') : t('vault.invite.copy')}
                 </button>
               </div>
               <div className="font-mono text-sm text-gray-100 bg-gray-800 border border-gray-700 rounded px-3 py-2 break-all">
                 {c.code}
               </div>
+              {failed === c.userId && (
+                <div className="text-xs text-red-400 mt-1" role="alert">{t('common.copyFailed')}</div>
+              )}
             </div>
           ))}
           {codes.length === 0 && <p className="text-gray-400 text-sm">{t('vault.rotation.done')}</p>}

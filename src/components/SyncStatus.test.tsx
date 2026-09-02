@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import SyncStatus from './SyncStatus';
 import type { SyncStatus as S } from '../syncStatus';
@@ -34,7 +34,7 @@ beforeEach(() => {
   mockList.mockResolvedValue([context()]);
 });
 
-const status = (overrides: Partial<S> = {}): S => ({ state: 'synced', lastSyncedAt: 0, pending: 0, ...overrides });
+const status = (overrides: Partial<S> = {}): S => ({ state: 'synced', lastSyncedAt: 0, pending: 0, vaultRotationPending: false, ...overrides });
 
 describe('SyncStatus', () => {
   it('renders nothing before the initial status resolves', () => {
@@ -110,18 +110,35 @@ describe('SyncStatus', () => {
     changed?.();
     expect(await screen.findByText('Kein Workspace')).toBeInTheDocument();
   });
-  it('shows the pending key change of the active context', async () => {
-    mockSyncStatus.mockResolvedValue(status({ state: 'synced' }));
-    mockList.mockResolvedValue([context({ vaultRotationPending: true })]);
+  it('shows the pending key change carried on the sync status', async () => {
+    mockSyncStatus.mockResolvedValue(status({ state: 'synced', vaultRotationPending: true }));
     render(<SyncStatus />);
     expect(await screen.findByText('Schlüsselwechsel offen')).toBeInTheDocument();
   });
 
-  it('ignores a pending key change on a context that is not active', async () => {
+  it('hides the badge when the status reports no pending key change', async () => {
     mockSyncStatus.mockResolvedValue(status({ state: 'synced' }));
-    mockList.mockResolvedValue([context({ active: false, vaultRotationPending: true })]);
     render(<SyncStatus />);
     expect(await screen.findByText('Synchronisiert')).toBeInTheDocument();
     expect(screen.queryByText('Schlüsselwechsel offen')).not.toBeInTheDocument();
+  });
+
+  it('never re-lists the contexts just to learn about a rotation', async () => {
+    mockSyncStatus.mockResolvedValue(status({ state: 'synced', vaultRotationPending: true }));
+    render(<SyncStatus />);
+    expect(await screen.findByText('Schlüsselwechsel offen')).toBeInTheDocument();
+    expect(mockList).not.toHaveBeenCalled();
+  });
+
+  it('follows the flag on a pushed sync-status event', async () => {
+    let push: ((s: S) => void) | undefined;
+    mockOnSyncStatus.mockImplementation(cb => { push = cb; return () => {}; });
+    mockSyncStatus.mockResolvedValue(status({ state: 'synced' }));
+    render(<SyncStatus />);
+    expect(await screen.findByText('Synchronisiert')).toBeInTheDocument();
+    expect(screen.queryByText('Schlüsselwechsel offen')).not.toBeInTheDocument();
+
+    act(() => push?.(status({ state: 'synced', vaultRotationPending: true })));
+    expect(await screen.findByText('Schlüsselwechsel offen')).toBeInTheDocument();
   });
 });

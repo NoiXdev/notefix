@@ -355,13 +355,20 @@ function SecurityPage({ settings, onSetSetting }: {
           style={{ borderColor: "#d97706", background: "#fffbeb", color: "#7c2d12" }}
         >
           <span>{t("vault.recovery.missing")}</span>
-          <button
-            onClick={() => { setRecoveryNotice(null); setShowRecoveryFollowup(true); }}
-            className="px-3 py-1 rounded text-xs font-medium border"
-            style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}
-          >
-            {t("vault.recovery.submit")}
-          </button>
+          {/* The follow-up wraps DEKs taken from the live ring, so a locked
+              vault would be refused by the backend with "vault locked" —
+              offer the hint rather than a button that cannot work. */}
+          {vault.status.unlocked ? (
+            <button
+              onClick={() => { setRecoveryNotice(null); setShowRecoveryFollowup(true); }}
+              className="px-3 py-1 rounded text-xs font-medium border"
+              style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}
+            >
+              {t("vault.recovery.submit")}
+            </button>
+          ) : (
+            <span className="text-xs">{t("vault.lockedHint")}</span>
+          )}
         </div>
       )}
       {recoveryNotice && (
@@ -491,7 +498,14 @@ function SecurityPage({ settings, onSetSetting }: {
               await vault.recoveryFollowup(key);
               setRecoveryNotice(t("vault.recovery.added"));
             } catch (e) {
-              setRecoveryNotice(t("vault.recovery.failed", { error: e instanceof Error ? e.message : String(e) }));
+              const msg = e instanceof Error ? e.message : String(e ?? "");
+              setRecoveryNotice(
+                msg.includes("vault locked")
+                  ? t("vault.lockedHint")
+                  : msg.includes("wrong recovery key")
+                    ? t("vault.wrongRecoveryKey")
+                    : t("vault.recovery.failed", { error: msg }),
+              );
             }
           }}
           onCancel={() => setShowRecoveryFollowup(false)}
@@ -1065,6 +1079,10 @@ function ContextsPage() {
   const [error, setError] = useState<string | null>(null);
   const [inviteCode, setInviteCode] = useState<string | null>(null);
   const [rotationCodes, setRotationCodes] = useState<RotationCode[] | null>(null);
+  const [sharing, setSharing] = useState(false);
+  // Kept apart from `error` (the add-a-context flow's, shown at the bottom):
+  // a failed share belongs next to the row whose button started it.
+  const [shareError, setShareError] = useState<string | null>(null);
 
   // The invite commands act on the ACTIVE server context (they resolve their
   // workspace and tokens from it), so they are only offered on that row —
@@ -1072,11 +1090,23 @@ function ContextsPage() {
   const canInvite = (c: ContextInfo) => c.active && c.kind === "server" && c.workspaceId !== "";
 
   /**
-   * Rotating needs the same active server context as an invite, plus a vault
-   * that is actually open: the new key is minted here and installed into the
-   * live ring, which a locked vault has no place for.
+   * Sharing wraps the ring's newest DEK under a one-time code, so the vault
+   * has to be open — the backend refuses a locked one with "vault locked",
+   * and by then the user has already pasted an invitation link.
    */
-  const canRotate = (c: ContextInfo) => canInvite(c) && c.vaultExists && vault.status.unlocked;
+  const canShare = (c: ContextInfo) => canInvite(c) && c.vaultExists && vault.status.unlocked;
+
+  /**
+   * Rotating needs everything sharing needs, plus a workspace that is
+   * actually asking for it: the backend refuses with "no rotation pending"
+   * otherwise, and the new key is minted here and installed into the live
+   * ring, which a locked vault has no place for.
+   */
+  const canRotate = (c: ContextInfo) => canShare(c) && c.vaultRotationPending;
+
+  /** Whether a vault action is hidden purely because the vault is locked. */
+  const lockedOnly = (c: ContextInfo) =>
+    canInvite(c) && c.vaultExists && !vault.status.unlocked;
 
   /**
    * Resolve whatever was pasted into an invitation id, then attach the key.
@@ -1087,18 +1117,26 @@ function ContextsPage() {
    */
   const shareVault = async (reference: string) => {
     close();
-    setError(null);
-    let id: number;
+    setShareError(null);
+    setSharing(true);
     try {
-      id = await api.contexts.vaultInviteResolve(reference);
-    } catch {
-      setError(t("vault.invite.resolveFailed"));
-      return;
-    }
-    try {
-      setInviteCode(await api.contexts.vaultInviteShare(id));
-    } catch (e) {
-      setError(t("vault.invite.shareFailed", { error: e instanceof Error ? e.message : String(e) }));
+      let id: number;
+      try {
+        id = await api.contexts.vaultInviteResolve(reference);
+      } catch {
+        setShareError(t("vault.invite.resolveFailed"));
+        return;
+      }
+      try {
+        setInviteCode(await api.contexts.vaultInviteShare(id));
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e ?? "");
+        // A locked vault is the one failure with an obvious next step, so it
+        // never goes through the raw-text interpolation.
+        setShareError(msg.includes("vault locked") ? t("vault.lockedHint") : t("vault.invite.shareFailed", { error: msg }));
+      }
+    } finally {
+      setSharing(false);
     }
   };
 
@@ -1166,15 +1204,18 @@ function ContextsPage() {
                 )}
               </div>
             </div>
-            <div className="flex shrink-0 items-center gap-2">
+            {/* Wraps on a narrow window: five actions never fit one line on
+                a phone, and an un-wrapped row pushes the label off screen. */}
+            <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
               {c.vaultExists && (
                 <button onClick={() => setDialog({ mode: "vault", c })} className="px-3 py-1 rounded text-xs font-medium border" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>{t("contexts.vault.changePassphrase")}</button>
               )}
-              {canInvite(c) && c.vaultExists && (
-                <button onClick={() => { setError(null); setDialog({ mode: "inviteShare", c }); }} className="px-3 py-1 rounded text-xs font-medium border" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>{t("vault.invite.share")}</button>
+              {/* Sharing and rotating both take the DEK out of the live ring,
+                  so both are hidden while the vault is locked — with the hint
+                  below saying why, rather than a button the backend refuses. */}
+              {canShare(c) && (
+                <button onClick={() => { setShareError(null); setDialog({ mode: "inviteShare", c }); }} className="px-3 py-1 rounded text-xs font-medium border" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>{t("vault.invite.share")}</button>
               )}
-              {/* Rotation mints a new DEK from the live one, so the vault has
-                  to be unlocked — and it always acts on the active context. */}
               {canRotate(c) && (
                 <button onClick={() => { setError(null); setDialog({ mode: "rotate", c }); }} className="px-3 py-1 rounded text-xs font-medium border" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>{t("vault.rotation.run")}</button>
               )}
@@ -1183,6 +1224,9 @@ function ContextsPage() {
               )}
               <button onClick={() => setDialog({ mode: "rename", c })} className="px-3 py-1 rounded text-xs font-medium border" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>{t("contexts.rename")}</button>
               <button onClick={() => setDialog({ mode: "remove", c })} disabled={c.active} className="px-3 py-1 rounded text-xs font-medium border disabled:opacity-40 disabled:cursor-not-allowed" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>{t("contexts.remove")}</button>
+              {lockedOnly(c) && <span className="text-xs text-gray-500 w-full text-right">{t("vault.lockedHint")}</span>}
+              {sharing && c.active && <span className="text-xs text-gray-500">{t("contexts.connecting")}</span>}
+              {shareError && c.active && <span className="text-xs text-red-600 w-full text-right" role="alert">{shareError}</span>}
             </div>
           </div>
         ))}
@@ -1227,6 +1271,7 @@ function ContextsPage() {
           title={t("vault.invite.share")}
           confirmLabel={t("vault.invite.share")}
           placeholder={t("vault.invite.reference")}
+          hint={t("vault.invite.shareHintDetail")}
           onSubmit={reference => void shareVault(reference)}
           onCancel={close}
         />

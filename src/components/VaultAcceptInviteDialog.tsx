@@ -84,7 +84,9 @@ export default function VaultAcceptInviteDialog({ resolve, accept, onSuccess, on
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={onCancel}>
-      <div className="w-96 rounded-lg bg-gray-900 border border-gray-700 p-5" onClick={e => e.stopPropagation()}>
+      {/* Four fields plus hint and error do not fit a phone in landscape —
+          scroll inside the panel rather than off the bottom of the screen. */}
+      <div className="w-96 max-h-[90vh] overflow-y-auto rounded-lg bg-gray-900 border border-gray-700 p-5" onClick={e => e.stopPropagation()}>
         <h2 className="text-gray-100 text-base font-semibold mb-2">{t('vault.invite.enter')}</h2>
         <p className="text-gray-400 text-sm mb-3">{t('vault.invite.enterHint')}</p>
         <input

@@ -16,6 +16,16 @@ pub struct KdfParams {
     pub p_cost: u32,
 }
 
+/// Upper bounds for KDF parameters that arrive over the wire (the workspace
+/// key cache, an invite wrap). Generous next to `new_default`'s 19 MiB / t=2 /
+/// p=1 — a future server may legitimately raise the cost — but finite: a
+/// server that sent `m_cost: u32::MAX` would otherwise have this device try to
+/// allocate 4 TiB inside an unlock. Zero is rejected too; Argon2 refuses it,
+/// and treating the entry as unopenable is the honest answer either way.
+const MAX_M_COST: u32 = 1_048_576; // KiB, i.e. 1 GiB
+const MAX_T_COST: u32 = 16;
+const MAX_P_COST: u32 = 8;
+
 #[allow(dead_code)]
 impl KdfParams {
     pub fn new_default() -> Self {
@@ -27,6 +37,15 @@ impl KdfParams {
             t_cost: 2,
             p_cost: 1,
         }
+    }
+
+    /// Whether these parameters are within the bounds above. Everything that
+    /// parses SERVER-supplied parameters checks this before they can reach
+    /// Argon2 — see `ops::MyEntry::try_from` and `ops::open_invite_wrap`.
+    pub fn is_within_limits(&self) -> bool {
+        (1..=MAX_M_COST).contains(&self.m_cost)
+            && (1..=MAX_T_COST).contains(&self.t_cost)
+            && (1..=MAX_P_COST).contains(&self.p_cost)
     }
 }
 
@@ -75,6 +94,31 @@ mod tests {
         let out = unwrap_dek(&kek, &wrapped).unwrap();
         assert_eq!(out.expose(), dek.expose());
     }
+    /// R4: parameters that arrive from a server must not be able to make an
+    /// unlock allocate gigabytes or run for minutes.
+    #[test]
+    fn wire_parameters_outside_the_limits_are_rejected() {
+        let base = KdfParams::new_default();
+        assert!(base.is_within_limits());
+
+        let with = |m: u32, t: u32, p: u32| KdfParams {
+            salt: base.salt,
+            m_cost: m,
+            t_cost: t,
+            p_cost: p,
+        };
+        // Upper bounds hold; one step past each one does not.
+        assert!(with(MAX_M_COST, MAX_T_COST, MAX_P_COST).is_within_limits());
+        assert!(!with(MAX_M_COST + 1, 2, 1).is_within_limits());
+        assert!(!with(19_456, MAX_T_COST + 1, 1).is_within_limits());
+        assert!(!with(19_456, 2, MAX_P_COST + 1).is_within_limits());
+        assert!(!with(u32::MAX, 2, 1).is_within_limits());
+        // Zero is not "cheap", it is invalid.
+        assert!(!with(0, 2, 1).is_within_limits());
+        assert!(!with(19_456, 0, 1).is_within_limits());
+        assert!(!with(19_456, 2, 0).is_within_limits());
+    }
+
     #[test]
     fn wrong_passphrase_fails() {
         let p = KdfParams::new_default();

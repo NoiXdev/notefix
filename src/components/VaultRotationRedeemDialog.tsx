@@ -41,8 +41,13 @@ export default function VaultRotationRedeemDialog({ redeem, onSuccess, onCancel 
     }
   };
 
+  // Exactly the condition the submit button is disabled on, so Enter cannot
+  // fire a request the button refuses — an empty code would come back as
+  // "invalid rotation code" and read as if the real code had been spent.
+  const canSubmit = !busy && !!code.trim() && !!passphrase;
+
   const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') void submit();
+    if (e.key === 'Enter') { if (canSubmit) void submit(); }
     else if (e.key === 'Escape') onCancel();
   };
   const field = 'w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 outline-none focus:border-[var(--accent)] mb-2';
@@ -79,7 +84,7 @@ export default function VaultRotationRedeemDialog({ redeem, onSuccess, onCancel 
           </button>
           <button
             onClick={() => void submit()}
-            disabled={busy || !code.trim() || !passphrase}
+            disabled={!canSubmit}
             className="px-3 py-1.5 rounded text-sm font-medium disabled:opacity-40"
             style={{ background: 'var(--line)', color: '#1c1917' }}
           >

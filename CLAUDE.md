@@ -31,13 +31,30 @@ Touch ID via `LocalAuthentication`. On mobile and Linux `is_available()`
 simply returns `false` (mobile biometric via a plugin is deferred), so gate
 the biometric UI on that check rather than on `isMobilePlatform` alone.
 
+### Two different "mobile" signals — don't confuse them
+
+- `useIsMobile()` (`src/hooks/useIsMobile.ts`) — **viewport width** (≤640px).
+  Drives responsive *layout* (single-column, larger touch targets). A narrow
+  desktop window is `isMobile` and *should* get the mobile layout.
+- `isMobilePlatform` (`src/platform.ts`) — **the OS** (Android/iOS), from the
+  WebView user agent. Gates desktop-only *capabilities*. A narrow desktop
+  window is NOT `isMobilePlatform` and keeps its desktop features.
+
+## Protected notes and workspace vaults
+
+None of the vault commands is desktop-only — setup, unlock, sharing, rotation
+and the passphrase change all exist on mobile. Touch ID remains the only gated
+part (see above).
+
 The biometric keychain item is **per context** (`vault-dek:<context id>`) —
 every context is its own vault with its own DEK, so an app-wide item would
-hand one context another's key. The `VaultRecord` carries a `dek_check`
-(magic sealed under the DEK); every unlock path verifies a candidate DEK
-against it before installing it, and records that predate the check gain it
-on their next passphrase/recovery unlock. The pre-per-context item is
-deleted once at startup; users re-enable Touch ID per context.
+hand one context another's key. The item stores the key generation alongside
+the DEK, so an enrolment made after a rotation installs itself at the right
+generation. The `VaultRecord` carries a `dek_check` (magic sealed under the
+DEK); every unlock path verifies a candidate DEK against it before installing
+it, and records that predate the check gain it on their next
+passphrase/recovery unlock. The pre-per-context item is deleted once at
+startup; users re-enable Touch ID per context.
 
 For a **server context** the vault belongs to the workspace: the server keeps
 one wrapped copy of each key generation per member (`workspace_vault_keys`),
@@ -49,14 +66,13 @@ endpoints (`vaultKeys` missing on pull) is flagged `vault_server_legacy` and
 keeps the local-only vault. Never send a DEK, passphrase, recovery key or
 invite code to the server — only wraps.
 
-### Two different "mobile" signals — don't confuse them
+Two rules the whole feature rests on:
 
-- `useIsMobile()` (`src/hooks/useIsMobile.ts`) — **viewport width** (≤640px).
-  Drives responsive *layout* (single-column, larger touch targets). A narrow
-  desktop window is `isMobile` and *should* get the mobile layout.
-- `isMobilePlatform` (`src/platform.ts`) — **the OS** (Android/iOS), from the
-  WebView user agent. Gates desktop-only *capabilities*. A narrow desktop
-  window is NOT `isMobilePlatform` and keeps its desktop features.
+- A device that holds **two vaults' keys at once** (meta `vault_conflict`)
+  re-seals nothing and merges nothing. Merging is a follow-up.
+- A note whose generation the ring lacks is shown as a **read-only locked
+  placeholder**, never as a blank editable document — the first keystroke
+  would re-seal over ciphertext nobody could read back.
 
 ## Mobile layout
 

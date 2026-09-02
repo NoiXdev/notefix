@@ -17,16 +17,32 @@ describe('VaultRotationCodesDialog', () => {
     expect(screen.getByText('CCCCC-DDDDD')).toBeInTheDocument();
   });
 
+  it('labels each copy button with the member it belongs to', () => {
+    render(<VaultRotationCodesDialog codes={codes} onClose={vi.fn()} />);
+    expect(screen.getByRole('button', { name: 'Kopieren — Mitglied 2' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Kopieren — Mitglied 3' })).toBeInTheDocument();
+  });
+
   it('copies one member’s code and shows the confirmation only on that row', async () => {
     const writeText = vi.fn(() => Promise.resolve());
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
     render(<VaultRotationCodesDialog codes={codes} onClose={vi.fn()} />);
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Kopieren' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Kopieren — Mitglied 2' }));
     expect(writeText).toHaveBeenCalledWith('AAAAA-BBBBB');
     await waitFor(() => expect(screen.getByText('Kopiert')).toBeInTheDocument());
     // The other row keeps its copy button.
-    expect(screen.getAllByRole('button', { name: 'Kopieren' })).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Kopieren — Mitglied 3' })).toBeInTheDocument();
+  });
+
+  it('reports a refused clipboard write instead of claiming success', async () => {
+    const writeText = vi.fn(() => Promise.reject(new Error('denied')));
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    render(<VaultRotationCodesDialog codes={codes} onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Kopieren — Mitglied 2' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Kopieren fehlgeschlagen');
+    expect(screen.queryByText('Kopiert')).not.toBeInTheDocument();
   });
 
   it('says the key changed when a lone member rotated for themselves', () => {

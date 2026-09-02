@@ -171,6 +171,19 @@ impl std::fmt::Display for SyncError {
     }
 }
 
+/// A transport failure as an `Offline` error, WITHOUT the URL reqwest puts
+/// into its `Display` ("error sending request for url (https://…/invite/<the
+/// token>)"). One of these URLs carries an invitation token, another the
+/// workspace id, and this string is surfaced to the user, logged by the sync
+/// loop, and interpolated into UI copy.
+///
+/// reqwest exposes the URL as a field, so the sanitising is exact rather than
+/// a search for the string: `without_url()` returns the same error with it
+/// removed, and its `Display` then stops at the cause.
+fn offline(e: reqwest::Error) -> SyncError {
+    SyncError::Offline(e.without_url().to_string())
+}
+
 fn client() -> Result<reqwest::Client, SyncError> {
     reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(20))
@@ -232,7 +245,7 @@ pub async fn fetch_workspaces(
         .header("Accept", "application/json")
         .send()
         .await
-        .map_err(|e| SyncError::Offline(e.to_string()))?;
+        .map_err(offline)?;
     classify_status(resp.status(), "workspaces")?;
     let body: Value = resp
         .json()
@@ -303,7 +316,7 @@ pub async fn pull(
         .header("Accept", "application/json")
         .send()
         .await
-        .map_err(|e| SyncError::Offline(e.to_string()))?;
+        .map_err(offline)?;
     classify_status(resp.status(), "pull")?;
     let body: Value = resp
         .json()
@@ -342,7 +355,7 @@ pub async fn push(
         .json(&json!({ "folders": folders, "notes": notes }))
         .send()
         .await
-        .map_err(|e| SyncError::Offline(e.to_string()))?;
+        .map_err(offline)?;
     classify_status(resp.status(), "push")?;
     let body: Value = resp
         .json()
@@ -433,7 +446,7 @@ pub async fn vault_create(
         .json(payload)
         .send()
         .await
-        .map_err(|e| SyncError::Offline(e.to_string()))?;
+        .map_err(offline)?;
     classify_vault_create(resp.status())
 }
 
@@ -452,7 +465,7 @@ pub async fn vault_put_my_key(
         .json(entry)
         .send()
         .await
-        .map_err(|e| SyncError::Offline(e.to_string()))?;
+        .map_err(offline)?;
     classify_status(resp.status(), "vault key")
 }
 
@@ -472,7 +485,7 @@ pub async fn vault_attach_invite(
         .json(wrap)
         .send()
         .await
-        .map_err(|e| SyncError::Offline(e.to_string()))?;
+        .map_err(offline)?;
     classify_status(resp.status(), "vault invite")
 }
 
@@ -491,7 +504,7 @@ pub async fn vault_fetch_invite(
         .header("Accept", "application/json")
         .send()
         .await
-        .map_err(|e| SyncError::Offline(e.to_string()))?;
+        .map_err(offline)?;
     classify_status(resp.status(), "vault invite")?;
     resp.json()
         .await
@@ -515,7 +528,7 @@ pub async fn vault_accept_invite(
         .json(entry)
         .send()
         .await
-        .map_err(|e| SyncError::Offline(e.to_string()))?;
+        .map_err(offline)?;
     classify_status(resp.status(), "vault invite accept")
 }
 
@@ -534,7 +547,7 @@ pub async fn vault_resolve_invite(
         .header("Accept", "application/json")
         .send()
         .await
-        .map_err(|e| SyncError::Offline(e.to_string()))?;
+        .map_err(offline)?;
     classify_status(resp.status(), "vault invite lookup")?;
     let body: Value = resp
         .json()
@@ -576,7 +589,7 @@ pub async fn fetch_me(server_url: &str, token: &str) -> Result<u64, SyncError> {
         .header("Accept", "application/json")
         .send()
         .await
-        .map_err(|e| SyncError::Offline(e.to_string()))?;
+        .map_err(offline)?;
     classify_status(resp.status(), "user")?;
     let body: Value = resp
         .json()
@@ -599,7 +612,7 @@ pub async fn fetch_members(
         .header("Accept", "application/json")
         .send()
         .await
-        .map_err(|e| SyncError::Offline(e.to_string()))?;
+        .map_err(offline)?;
     classify_status(resp.status(), "members")?;
     let body: Value = resp
         .json()
@@ -625,7 +638,7 @@ pub async fn vault_rotate(
         .json(payload)
         .send()
         .await
-        .map_err(|e| SyncError::Offline(e.to_string()))?;
+        .map_err(offline)?;
     classify_status(resp.status(), "vault rotate")?;
     let body: Value = resp
         .json()
@@ -663,7 +676,7 @@ pub async fn vault_post_recovery(
         .json(&body)
         .send()
         .await
-        .map_err(|e| SyncError::Offline(e.to_string()))?;
+        .map_err(offline)?;
     if resp.status() == reqwest::StatusCode::CONFLICT {
         return Ok(());
     }
@@ -959,6 +972,24 @@ mod tests {
     fn base_trims_trailing_slash() {
         assert_eq!(base("https://sync.test/"), "https://sync.test");
         assert_eq!(base("https://sync.test"), "https://sync.test");
+    }
+
+    /// A transport failure must never surface the URL it was for: the invite
+    /// endpoints carry a one-time token in their path, and this string
+    /// reaches the UI and the sync log.
+    #[tokio::test]
+    async fn a_transport_failure_never_carries_the_url_it_was_for() {
+        // Port 1 on loopback refuses immediately — no network, no timeout.
+        let err = vault_resolve_invite("http://127.0.0.1:1", "tok", "ws-1", "SECRET-INVITE-TOKEN")
+            .await
+            .expect_err("a refused connection must fail");
+        let msg = err.to_string();
+        assert!(matches!(err, SyncError::Offline(_)), "retryable: {msg}");
+        assert!(
+            !msg.contains("SECRET-INVITE-TOKEN"),
+            "leaked the token: {msg}"
+        );
+        assert!(!msg.contains("127.0.0.1"), "leaked the URL: {msg}");
     }
 
     #[test]

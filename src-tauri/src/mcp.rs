@@ -769,7 +769,7 @@ impl NoteStore for StoreAccess {
         let st = self.app.state::<Mutex<crate::storage::Store>>();
         let store = st.lock().unwrap();
         store
-            .folder_chain_has_lock(folder_id)
+            .folder_chain_has_lock(folder_id, None)
             .map_err(|e| e.to_string())
     }
     fn is_effectively_mcp_hidden(&self, id: &str) -> Result<bool, String> {
@@ -806,9 +806,16 @@ impl NoteStore for StoreAccess {
         let store = st.lock().unwrap();
         let vault = vst.lock().unwrap();
         let gen = store.note_key_gen(id).map_err(|e| e.to_string())?;
+        // Same two-error contract as `ops::open_note_content`: an EMPTY ring
+        // is "vault locked", but a ring that simply lacks this note's
+        // generation is "key generation not available" — reporting that as
+        // "locked" would send an operator off to unlock an already-open vault.
+        if !vault.is_unlocked() {
+            return Err("vault locked".to_string());
+        }
         let dek = vault
             .dek_for(gen)
-            .ok_or_else(|| "vault locked".to_string())?;
+            .ok_or_else(|| "key generation not available".to_string())?;
         crate::commands::open_content(dek, id, ciphertext)
     }
     fn write_protected(&self, id: &str, plaintext_html: &str) -> Result<(), String> {

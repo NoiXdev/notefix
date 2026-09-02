@@ -6,6 +6,9 @@ interface Props {
   confirmLabel: string;
   initialValue?: string;
   placeholder?: string;
+  /** One line of explanation above the field, for prompts whose label alone
+   *  cannot say where the value is meant to come from. */
+  hint?: string;
   onSubmit: (value: string) => void;
   onCancel: () => void;
 }
@@ -14,7 +17,7 @@ interface Props {
  * In-app text-input dialog. Replaces window.prompt(), which does nothing in
  * Tauri's WKWebView (it returns null without showing a panel).
  */
-export default function PromptDialog({ title, confirmLabel, initialValue = '', placeholder, onSubmit, onCancel }: Props) {
+export default function PromptDialog({ title, confirmLabel, initialValue = '', placeholder, hint, onSubmit, onCancel }: Props) {
   const { t } = useTranslation();
   const [value, setValue] = useState(initialValue);
   const submit = () => { const v = value.trim(); if (v) onSubmit(v); };
@@ -22,6 +25,7 @@ export default function PromptDialog({ title, confirmLabel, initialValue = '', p
     <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={onCancel}>
       <div className="w-96 rounded-lg bg-gray-900 border border-gray-700 p-5" onClick={e => e.stopPropagation()}>
         <h2 className="text-gray-100 text-base font-semibold mb-3">{title}</h2>
+        {hint && <p className="text-gray-400 text-sm mb-3">{hint}</p>}
         <input
           autoFocus
           value={value}

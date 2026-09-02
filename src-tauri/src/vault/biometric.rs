@@ -54,20 +54,45 @@ pub fn clear_legacy() -> Result<(), VaultError> {
     map_clear_result(entry.delete_credential())
 }
 
-/// Base64-encode a DEK for keychain storage. The returned `String` holds key
-/// material — callers must zeroize it once written.
-fn encode_dek(dek: &Dek) -> String {
-    STANDARD.encode(dek.expose())
+/// Base64-encode a key generation + DEK for keychain storage: four big-endian
+/// generation bytes followed by the 32 key bytes. The returned `String` holds
+/// key material — callers must zeroize it once written.
+///
+/// The generation travels WITH the key because the ring is keyed by it: an
+/// item enrolled after a rotation carries a DEK that generation 1 can neither
+/// verify nor open, and installing it as generation 1 (as this module did
+/// before) made biometric unlock fail permanently with "belongs to a
+/// different context".
+fn encode_dek(generation: u32, dek: &Dek) -> String {
+    let mut bytes = Vec::with_capacity(36);
+    bytes.extend_from_slice(&generation.to_be_bytes());
+    bytes.extend_from_slice(dek.expose());
+    let b64 = STANDARD.encode(&bytes);
+    bytes.zeroize();
+    b64
 }
 
-/// Decode a base64 DEK read back from the keychain, zeroizing transient byte
-/// buffers on every path. Wrong length ⇒ [`VaultError::Corrupt`]; invalid
-/// base64 ⇒ [`VaultError::Crypto`].
-fn decode_dek(b64: &str) -> Result<Dek, VaultError> {
+/// Decode a base64 keychain payload, zeroizing transient byte buffers on
+/// every path. 36 bytes is a generation-tagged item; a bare 32-byte item
+/// predates the tag and is generation 1 (the only generation that existed
+/// then). Any other length ⇒ [`VaultError::Corrupt`]; invalid base64 ⇒
+/// [`VaultError::Crypto`].
+fn decode_dek(b64: &str) -> Result<(u32, Dek), VaultError> {
     let mut bytes = STANDARD
         .decode(b64)
         .map_err(|e| VaultError::Crypto(e.to_string()))?;
-    let mut arr: [u8; 32] = match bytes.as_slice().try_into() {
+    let (generation, key) = match bytes.len() {
+        32 => (1u32, &bytes[..]),
+        36 => (
+            u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
+            &bytes[4..],
+        ),
+        _ => {
+            bytes.zeroize();
+            return Err(VaultError::Corrupt);
+        }
+    };
+    let mut arr: [u8; 32] = match key.try_into() {
         Ok(a) => a,
         Err(_) => {
             bytes.zeroize();
@@ -77,7 +102,7 @@ fn decode_dek(b64: &str) -> Result<Dek, VaultError> {
     let dek = Dek::from_bytes(arr);
     arr.zeroize();
     bytes.zeroize();
-    Ok(dek)
+    Ok((generation, dek))
 }
 
 /// Map the result of a keychain `set_password` call to our domain error.
@@ -87,10 +112,11 @@ fn map_store_result(res: Result<(), keyring::Error>) -> Result<(), VaultError> {
     res.map_err(|e| VaultError::Io(e.to_string()))
 }
 
-/// Writes the base64-encoded DEK to the `vault-dek` keychain entry.
-pub fn store_dek(context_id: &str, dek: &Dek) -> Result<(), VaultError> {
+/// Writes the base64-encoded generation + DEK to the `vault-dek` keychain
+/// entry.
+pub fn store_dek(context_id: &str, generation: u32, dek: &Dek) -> Result<(), VaultError> {
     let entry = biometric_entry(context_id)?;
-    let mut b64 = encode_dek(dek);
+    let mut b64 = encode_dek(generation, dek);
     let res = map_store_result(entry.set_password(&b64));
     b64.zeroize();
     res
@@ -100,7 +126,7 @@ pub fn store_dek(context_id: &str, dek: &Dek) -> Result<(), VaultError> {
 /// outcome: no entry ⇒ `Ok(None)`, other keychain error ⇒ `Err(Io)`, entry
 /// found ⇒ base64-decode it. Pulled out of [`load_dek`] so this mapping and
 /// decoding logic is testable without a real keychain read.
-fn map_load_result(res: Result<String, keyring::Error>) -> Result<Option<Dek>, VaultError> {
+fn map_load_result(res: Result<String, keyring::Error>) -> Result<Option<(u32, Dek)>, VaultError> {
     let mut b64 = match res {
         Ok(s) => s,
         Err(keyring::Error::NoEntry) => return Ok(None),
@@ -111,9 +137,10 @@ fn map_load_result(res: Result<String, keyring::Error>) -> Result<Option<Dek>, V
     dek.map(Some)
 }
 
-/// Reads and base64-decodes the `vault-dek` keychain entry. Returns
-/// `Ok(None)` when no entry exists (biometric unlock not enrolled).
-pub fn load_dek(context_id: &str) -> Result<Option<Dek>, VaultError> {
+/// Reads and base64-decodes the `vault-dek` keychain entry into the key
+/// generation it was enrolled at and its DEK. Returns `Ok(None)` when no
+/// entry exists (biometric unlock not enrolled).
+pub fn load_dek(context_id: &str) -> Result<Option<(u32, Dek)>, VaultError> {
     let entry = biometric_entry(context_id)?;
     map_load_result(entry.get_password())
 }
@@ -251,11 +278,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn encode_decode_roundtrips() {
+    fn encode_decode_roundtrips_the_generation_and_the_key() {
         let dek = Dek::random();
-        let encoded = encode_dek(&dek);
-        let decoded = decode_dek(&encoded).unwrap();
-        assert_eq!(dek.expose(), decoded.expose());
+        for generation in [1u32, 2, 7, u32::MAX] {
+            let encoded = encode_dek(generation, &dek);
+            let (g, decoded) = decode_dek(&encoded).unwrap();
+            assert_eq!(g, generation);
+            assert_eq!(dek.expose(), decoded.expose());
+        }
+    }
+
+    /// R2: an item written before the generation tag existed is a bare
+    /// 32-byte key, and generation 1 is the only one that existed then.
+    #[test]
+    fn a_legacy_untagged_item_reads_back_as_generation_one() {
+        let dek = Dek::random();
+        let legacy = STANDARD.encode(dek.expose());
+        let (generation, decoded) = decode_dek(&legacy).unwrap();
+        assert_eq!(generation, 1);
+        assert_eq!(decoded.expose(), dek.expose());
     }
 
     #[test]
@@ -286,9 +327,10 @@ mod tests {
     #[test]
     fn map_load_result_decodes_the_found_entry() {
         let dek = Dek::random();
-        let encoded = encode_dek(&dek);
-        let out = map_load_result(Ok(encoded)).unwrap();
-        assert_eq!(out.unwrap().expose(), dek.expose());
+        let encoded = encode_dek(3, &dek);
+        let (generation, out) = map_load_result(Ok(encoded)).unwrap().unwrap();
+        assert_eq!(generation, 3);
+        assert_eq!(out.expose(), dek.expose());
     }
 
     #[test]

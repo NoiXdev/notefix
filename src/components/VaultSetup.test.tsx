@@ -5,8 +5,23 @@ import VaultSetup from './VaultSetup';
 function renderSetup(setupFn = vi.fn<(passphrase: string) => Promise<string[]>>()) {
   const onSuccess = vi.fn();
   const onCancel = vi.fn();
-  render(<VaultSetup setup={setupFn} onSuccess={onSuccess} onCancel={onCancel} />);
-  return { setupFn, onSuccess, onCancel };
+  const onAlreadyExists = vi.fn();
+  render(
+    <VaultSetup
+      setup={setupFn}
+      onSuccess={onSuccess}
+      onCancel={onCancel}
+      onAlreadyExists={onAlreadyExists}
+    />,
+  );
+  return { setupFn, onSuccess, onCancel, onAlreadyExists };
+}
+
+/** Fill both fields with the same passphrase and submit. */
+function submitSetup(passphrase = 'abc123') {
+  fireEvent.change(screen.getByPlaceholderText('Passwort'), { target: { value: passphrase } });
+  fireEvent.change(screen.getByPlaceholderText('Passwort bestätigen'), { target: { value: passphrase } });
+  fireEvent.click(screen.getByText('Einrichten'));
 }
 
 describe('VaultSetup', () => {
@@ -83,6 +98,48 @@ describe('VaultSetup', () => {
     const { onCancel } = renderSetup();
     fireEvent.click(screen.getByText('Tresor einrichten'));
     expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  // F5: the workspace already has a vault. Setting up a second one would mint
+  // an incompatible DEK, so the user is sent to unlock instead.
+  it('routes an already-set-up workspace to the unlock flow', async () => {
+    const setupFn = vi
+      .fn<(passphrase: string) => Promise<string[]>>()
+      .mockRejectedValue(new Error('vault: already set up on the server — unlock with your passphrase'));
+    const { onAlreadyExists, onSuccess } = renderSetup(setupFn);
+    submitSetup();
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Für diesen Arbeitsbereich gibt es bereits einen Tresor. Entsperre ihn mit deinem Passwort.',
+    );
+    expect(onAlreadyExists).toHaveBeenCalledOnce();
+    expect(onSuccess).not.toHaveBeenCalled();
+  });
+
+  it('wraps any other failure in translated copy rather than showing it raw', async () => {
+    const setupFn = vi
+      .fn<(passphrase: string) => Promise<string[]>>()
+      .mockRejectedValue(new Error('error sending request for url'));
+    const { onAlreadyExists } = renderSetup(setupFn);
+    submitSetup();
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Der Tresor konnte nicht eingerichtet werden: error sending request for url',
+    );
+    expect(onAlreadyExists).not.toHaveBeenCalled();
+  });
+
+  it('reports a refused clipboard write instead of claiming the key was copied', async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error('denied'));
+    Object.assign(navigator, { clipboard: { writeText } });
+    const setupFn = vi.fn<(passphrase: string) => Promise<string[]>>().mockResolvedValue(['ABCDE', 'FGHIJ']);
+    renderSetup(setupFn);
+    submitSetup();
+
+    await waitFor(() => expect(screen.getByText('ABCDE-FGHIJ')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('Kopieren'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Kopieren fehlgeschlagen');
+    expect(screen.queryByText('Kopiert')).not.toBeInTheDocument();
   });
 
   it('copies the recovery key to the clipboard and shows "copied" temporarily', async () => {

@@ -217,6 +217,9 @@ pub fn run() {
             // Notify the background sync loop (Task 7) when an edit or manual
             // trigger wants an out-of-cycle sync.
             app.manage(std::sync::Arc::new(tokio::sync::Notify::new()));
+            // Invalidates in-flight sync cycles when the active context is
+            // swapped — see `ops::SyncEpoch`.
+            app.manage(ops::SyncEpoch::default());
 
             if mcp_enabled {
                 let handle = app.handle().clone();

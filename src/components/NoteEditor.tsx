@@ -121,6 +121,11 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
   const [findOpen, setFindOpen] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [loadingNote, setLoadingNote] = useState(false);
+  // Why a note could not be loaded, if it could not. `'generation'` is the
+  // backend's "key generation not available": the vault is open but this
+  // device's ring lacks the key this note was sealed with. Either way the
+  // editor is NOT mounted — see the early return below.
+  const [loadError, setLoadError] = useState<null | 'generation' | 'failed'>(null);
   const pendingSave = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipNextUpdate = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -232,6 +237,7 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
     setMdMode(false);
     setSaveState('saved');
     setLastSavedAt(null);
+    setLoadError(null);
 
     let cancelled = false;
     // Delayed spinner: only show the overlay if the fetch/parse is actually slow,
@@ -263,7 +269,20 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
           apply(content);
         }
       })
-      .catch(() => apply('<p></p>'));
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        clearTimeout(spinnerTimer);
+        setLoadingNote(false);
+        // NEVER fall back to an empty document. A protected note whose key
+        // generation this ring does not hold still HAS its ciphertext on
+        // disk; showing it as a blank, editable note would let the first
+        // keystroke autosave over it — re-sealed under the newest key, with
+        // the original plaintext gone for good. The same goes for any other
+        // load failure: an empty editor is indistinguishable from a note the
+        // user emptied themselves.
+        const msg = e instanceof Error ? e.message : String(e ?? '');
+        setLoadError(msg.includes('key generation not available') ? 'generation' : 'failed');
+      });
 
     return () => { cancelled = true; clearTimeout(spinnerTimer); };
   }, [note.id, editor]);
@@ -281,7 +300,9 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
         if (editor.getHTML() === incoming) return;
         skipNextUpdate.current = true;
         editor.commands.setContent(incoming);
-      });
+      // A failed refresh leaves what is already on screen alone — same rule
+      // as the initial load: never replace a note with an empty document.
+      }).catch(() => {});
     });
     return off;
   }, [note.id, editor]);
@@ -379,6 +400,19 @@ export default function NoteEditor({ note, onChange, isWindow = false, onSetDue,
     bottomRight: 'right-2 bottom-14',
     bottomLeft: 'left-2 bottom-14',
   }[countPos];
+
+  // The note could not be loaded. Render a read-only placeholder INSTEAD of
+  // the editor — no writable surface, no toolbar, no autosave — so nothing
+  // this component does can overwrite content it never managed to read.
+  if (loadError) {
+    return (
+      <div className="flex flex-col h-full items-center justify-center px-8" style={{ background: 'var(--paper)' }}>
+        <div className="max-w-sm text-center text-sm" style={{ color: 'var(--ink-muted)' }} role="status">
+          {loadError === 'generation' ? t('vault.generationUnavailable') : t('editor.loadFailed')}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full relative" style={{ background: 'var(--paper)' }}>

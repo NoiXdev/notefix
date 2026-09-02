@@ -141,16 +141,24 @@ vi.mock("../platform", () => ({
 import Settings from "./Settings";
 import { api } from "../api";
 import type { AppSettings } from "../hooks/useSettings";
+import type { VaultStatus } from "../types";
+
+/** A COMPLETE `VaultStatus`, so a test only has to spell out what it varies. */
+const vaultStatus = (overrides: Partial<VaultStatus> = {}): VaultStatus => ({
+  exists: false, unlocked: false, biometric: false, conflict: false,
+  recoveryHolder: true, rotationCode: false, recoveryMissing: false,
+  ...overrides,
+});
+
+/** An unlocked vault on a workspace — what every vault ACTION needs. */
+const unlockedVault = (overrides: Partial<VaultStatus> = {}) =>
+  vaultStatus({ exists: true, unlocked: true, ...overrides });
 
 beforeEach(() => {
   vi.clearAllMocks();
   mockUseIsMobile.mockReturnValue(false);
   platformState.isMobilePlatform = false;
-  // The full status shape, so a test only has to spell out what it varies.
-  mockVaultStatus.mockResolvedValue({
-    exists: false, unlocked: false, biometric: false, conflict: false,
-    recoveryHolder: true, rotationCode: false, recoveryMissing: false,
-  });
+  mockVaultStatus.mockResolvedValue(vaultStatus());
 });
 
 /** Every AppSettings field at its default (mirrors useSettings.ts DEFAULTS), so new tests don't need to hand-roll the whole shape. */
@@ -482,7 +490,7 @@ describe("Settings — Security", () => {
     fireEvent.change(keyField, { target: { value: "nope" } });
     fireEvent.keyDown(keyField, { key: "Enter" });
 
-    expect(await screen.findByText(/konnte nicht ergänzt werden/)).toBeInTheDocument();
+    expect(await screen.findByText("Falscher Wiederherstellungs-Schlüssel")).toBeInTheDocument();
   });
 
   it("shows no recovery-wrap hint when every generation has one", async () => {
@@ -1056,6 +1064,7 @@ describe("Settings — Contexts page", () => {
   });
 
   it("offers the invite actions only on the active workspace context", async () => {
+    mockVaultStatus.mockResolvedValue(unlockedVault());
     mockContextsList.mockResolvedValueOnce(serverActive);
     render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
     fireEvent.click(screen.getByText("Kontexte"));
@@ -1138,6 +1147,36 @@ describe("Settings — Contexts page", () => {
     expect(screen.queryByText("AAAAA-BBBBB")).not.toBeInTheDocument();
   });
 
+  // F2: sharing takes the DEK out of the live ring, so a locked vault gets the
+  // hint instead of a button the backend would refuse.
+  it("hides sharing and rotating behind the unlock hint while the vault is locked", async () => {
+    mockContextsList.mockResolvedValue(serverActive); // rotation pending, vault exists
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Kontexte"));
+    await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+
+    expect(screen.queryByRole("button", { name: "Tresor freigeben" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Schlüssel jetzt wechseln" })).not.toBeInTheDocument();
+    expect(screen.getByText("Entsperre zuerst den Tresor.")).toBeInTheDocument();
+    // Accepting an invitation needs no open vault, so it stays.
+    expect(screen.getByRole("button", { name: "Einladungs-Code eingeben" })).toBeInTheDocument();
+  });
+
+  // F2: rotating is also pointless unless the workspace is asking for it.
+  it("offers the key change only while a rotation is actually pending", async () => {
+    mockVaultStatus.mockResolvedValue(unlockedVault());
+    mockContextsList.mockResolvedValue(
+      serverActive.map(c => ({ ...c, vaultRotationPending: false })),
+    );
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Kontexte"));
+    await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+
+    expect(screen.queryByRole("button", { name: "Schlüssel jetzt wechseln" })).not.toBeInTheDocument();
+    // Sharing does not depend on a pending rotation.
+    expect(screen.getByRole("button", { name: "Tresor freigeben" })).toBeInTheDocument();
+  });
+
   it("hides the invite actions when no server context is active", async () => {
     mockContextsList.mockResolvedValueOnce(contexts); // c-local is the active one
     render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
@@ -1149,6 +1188,7 @@ describe("Settings — Contexts page", () => {
   });
 
   it("resolves a pasted invitation link, attaches the key and shows the one-time code", async () => {
+    mockVaultStatus.mockResolvedValue(unlockedVault());
     mockContextsList.mockResolvedValueOnce(serverActive);
     render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
     fireEvent.click(screen.getByText("Kontexte"));
@@ -1172,6 +1212,7 @@ describe("Settings — Contexts page", () => {
   it("copies the one-time code to the clipboard", async () => {
     const writeText = vi.fn(() => Promise.resolve());
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    mockVaultStatus.mockResolvedValue(unlockedVault());
     mockContextsList.mockResolvedValueOnce(serverActive);
     render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
     fireEvent.click(screen.getByText("Kontexte"));
@@ -1207,6 +1248,7 @@ describe("Settings — Contexts page", () => {
   });
 
   it("reports an invitation it cannot resolve instead of minting a code", async () => {
+    mockVaultStatus.mockResolvedValue(unlockedVault());
     mockContextsList.mockResolvedValueOnce(serverActive);
     mockInviteResolve.mockRejectedValueOnce(new Error("404"));
     render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
@@ -1223,6 +1265,7 @@ describe("Settings — Contexts page", () => {
   });
 
   it("reports an attach failure in the backend's own words, not as a missing invitation", async () => {
+    mockVaultStatus.mockResolvedValue(unlockedVault());
     mockContextsList.mockResolvedValueOnce(serverActive);
     mockInviteShare.mockRejectedValueOnce(new Error("vault invite HTTP 410"));
     render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
@@ -1517,9 +1560,10 @@ describe("Settings — remaining behaviors", () => {
     fireEvent.keyDown(screen.getByPlaceholderText("Server-URL (z. B. https://notes.example.com)"), { key: "Enter" });
     expect(await screen.findByText("Verbinde…")).toBeInTheDocument();
 
-    // Simulate the `context-changed` event that fires once the notefix:// auth callback lands.
-    const onContextChangedCallback = mockOnContextChanged.mock.calls[0][0];
-    onContextChangedCallback();
+    // Simulate the `context-changed` event that fires once the notefix:// auth
+    // callback lands. Several components subscribe (the page itself, and
+    // `useVault`), and the real event reaches all of them.
+    for (const [cb] of mockOnContextChanged.mock.calls) cb();
 
     await waitFor(() => expect(screen.queryByText("Verbinde…")).not.toBeInTheDocument());
     expect(mockContextsList).toHaveBeenCalledTimes(2);

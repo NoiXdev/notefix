@@ -699,8 +699,19 @@ impl Store {
     /// True if `folder_id` — or any of its ancestors — is `locked`. `None`
     /// (root) is never locked. Cycle-safe via a visited set, matching
     /// `is_effectively_protected`'s walk. Shared by the MCP write-guard and,
-    /// via `commands::folder_chain_has_lock`, the move/reorder encrypt policy.
-    pub fn folder_chain_has_lock(&self, folder_id: Option<&str>) -> rusqlite::Result<bool> {
+    /// via `ops::folder_chain_has_lock`, the move/reorder encrypt policy.
+    ///
+    /// `except` names one folder to treat as UNLOCKED regardless of its
+    /// persisted flag. `ops::set_folder_locked`'s unlock branch needs to know
+    /// — before it flips that folder's own row — whether a note would still
+    /// have a genuinely locked ancestor once it is open, so it can validate
+    /// every note it would decrypt before committing anything. Pass `None`
+    /// for the plain question.
+    pub fn folder_chain_has_lock(
+        &self,
+        folder_id: Option<&str>,
+        except: Option<&str>,
+    ) -> rusqlite::Result<bool> {
         use rusqlite::OptionalExtension;
         let mut folder_id: Option<String> = folder_id.map(str::to_string);
         let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -719,7 +730,7 @@ impl Store {
             let Some((locked, parent_id)) = folder else {
                 break;
             };
-            if locked {
+            if locked && Some(fid.as_str()) != except {
                 return Ok(true);
             }
             folder_id = parent_id;
