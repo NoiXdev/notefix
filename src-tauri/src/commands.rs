@@ -86,8 +86,10 @@ pub fn notes_load(store: State<'_, Mutex<Store>>) -> Result<Vec<NoteMeta>, Strin
 }
 
 /// The full HTML content of one note (empty string if it no longer exists).
-/// Protected notes require the vault to be unlocked — `Err("vault locked")`
-/// otherwise — and are decrypted before returning.
+/// A protected note requires the vault to hold the DEK it was actually
+/// sealed with — `Err("vault locked")` when the ring is empty, `Err("key
+/// generation not available")` when it's unlocked but lacks that note's
+/// generation — and is decrypted before returning.
 #[tauri::command]
 pub fn notes_load_one(
     store: State<'_, Mutex<Store>>,
@@ -96,17 +98,17 @@ pub fn notes_load_one(
 ) -> Result<String, String> {
     let store = store.lock().map_err(|e| e.to_string())?;
     // Recover from a poisoned `VaultState` instead of propagating the poison,
-    // the way `swap_store_to` does. `VaultState` is an `Option<Dek>` plus a
+    // the way `swap_store_to` does. `VaultState` is a ring of DEKs plus a
     // timestamp, mutated only by whole-field assignments, so a panic elsewhere
     // cannot leave it half-updated. Without this, a single panic anywhere
     // holding that mutex would break reads of UNPROTECTED notes too — this is
     // the one read on the hot path, and its guard is taken unconditionally.
     // The protected path is unchanged: a locked vault still yields
-    // `Err("vault locked")` from `ops::load_note_content`.
+    // `Err("vault locked")` from `ops::open_note_content`.
     let vault = vault
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    ops::load_note_content(&store, vault.dek(), &id)
+    ops::open_note_content(&store, &vault, &id)
 }
 
 /// Full-text search within the active context (title-first), with snippets.
@@ -134,7 +136,7 @@ pub fn notes_save(
     {
         let store = store.lock().map_err(|e| e.to_string())?;
         let vault = vault.lock().map_err(|e| e.to_string())?;
-        ops::save_note(&store, vault.dek(), &note)?;
+        ops::save_note(&store, vault.dek().zip(vault.newest_generation()), &note)?;
     }
     notify(&app, &webview);
     Ok(())
@@ -446,7 +448,12 @@ pub fn notes_set_folder(
     {
         let store = store.lock().map_err(|e| e.to_string())?;
         let vault = vault.lock().map_err(|e| e.to_string())?;
-        ops::reconcile_folder_move(&store, &id, folder_id.as_deref(), vault.dek())?;
+        ops::reconcile_folder_move(
+            &store,
+            &id,
+            folder_id.as_deref(),
+            vault.dek().zip(vault.newest_generation()),
+        )?;
     }
     notify(&app, &webview);
     Ok(())
@@ -467,7 +474,12 @@ pub fn notes_reorder(
     {
         let store = store.lock().map_err(|e| e.to_string())?;
         let vault = vault.lock().map_err(|e| e.to_string())?;
-        ops::reconcile_reorder(&store, folder_id.as_deref(), &ids, vault.dek())?;
+        ops::reconcile_reorder(
+            &store,
+            folder_id.as_deref(),
+            &ids,
+            vault.dek().zip(vault.newest_generation()),
+        )?;
     }
     notify(&app, &webview);
     Ok(())
@@ -737,8 +749,12 @@ pub async fn server_auth_complete(
 // and never the reverse. Registry -> Store is nested by `sync_status` and by
 // `widgetshare::publish`; Store -> VaultState is nested by `notes_load_one`,
 // `notes_save`, `notes_set_folder`, `notes_reorder`, `note_set_protected`,
-// `folder_set_locked` and `mcp::StoreAccess::write_protected`. Nothing takes
-// Store before Registry, or VaultState before Store, while holding the other.
+// `folder_set_locked`, `vault_unlock_biometric`/`vault_unlock`/
+// `vault_unlock_recovery` (each locks Store, then re-locks VaultState inside
+// that block to read the live ring for `ops::backfill_protected_titles`),
+// `mcp::StoreAccess::decrypt_protected` and `mcp::StoreAccess::write_protected`.
+// Nothing takes Store before Registry, or VaultState before Store, while
+// holding the other.
 //
 // `swap_store_to` below is the one place VaultState is touched before the
 // Store — but it takes and DROPS that guard in its own block first, so the two
@@ -1307,10 +1323,12 @@ pub async fn vault_unlock_biometric(
         let store = store.lock().map_err(|e| e.to_string())?;
         ops::verify_dek_for_store(&store, &dek)?;
     }
-    let backfill_dek = dek.clone();
-    vault.lock().map_err(|e| e.to_string())?.unlock(dek);
+    vault.lock().map_err(|e| e.to_string())?.unlock(1, dek);
     if let Ok(store) = store.lock() {
-        ops::backfill_protected_titles(&store, &backfill_dek);
+        // Store -> VaultState, per the lock-order convention near `swap_store_to`.
+        if let Ok(v) = vault.lock() {
+            ops::backfill_protected_titles(&store, &v);
+        }
     }
     Ok(())
 }
@@ -1328,7 +1346,7 @@ pub fn vault_setup(
         let store = store.lock().map_err(|e| e.to_string())?;
         ops::vault_setup(&store, &passphrase)?
     };
-    vault.lock().map_err(|e| e.to_string())?.unlock(dek);
+    vault.lock().map_err(|e| e.to_string())?.unlock(1, dek);
     Ok(groups)
 }
 
@@ -1346,10 +1364,13 @@ pub fn vault_unlock(
     };
     let dek = ops::vault_unlock_passphrase(&record, &passphrase)?;
     let backfill_dek = dek.clone();
-    vault.lock().map_err(|e| e.to_string())?.unlock(dek);
+    vault.lock().map_err(|e| e.to_string())?.unlock(1, dek);
     if let Ok(store) = store.lock() {
         ops::ensure_dek_check(&store, &record, &backfill_dek);
-        ops::backfill_protected_titles(&store, &backfill_dek);
+        // Store -> VaultState, per the lock-order convention near `swap_store_to`.
+        if let Ok(v) = vault.lock() {
+            ops::backfill_protected_titles(&store, &v);
+        }
     }
     Ok(())
 }
@@ -1367,10 +1388,13 @@ pub fn vault_unlock_recovery(
     };
     let dek = ops::vault_unlock_recovery(&record, &recovery)?;
     let backfill_dek = dek.clone();
-    vault.lock().map_err(|e| e.to_string())?.unlock(dek);
+    vault.lock().map_err(|e| e.to_string())?.unlock(1, dek);
     if let Ok(store) = store.lock() {
         ops::ensure_dek_check(&store, &record, &backfill_dek);
-        ops::backfill_protected_titles(&store, &backfill_dek);
+        // Store -> VaultState, per the lock-order convention near `swap_store_to`.
+        if let Ok(v) = vault.lock() {
+            ops::backfill_protected_titles(&store, &v);
+        }
     }
     Ok(())
 }
@@ -1400,7 +1424,7 @@ pub fn vault_change_passphrase(
         let store = store.lock().map_err(|e| e.to_string())?;
         ops::vault_change_passphrase(&store, &current, &next)?
     };
-    vault.lock().map_err(|e| e.to_string())?.unlock(dek);
+    vault.lock().map_err(|e| e.to_string())?.unlock(1, dek);
     Ok(())
 }
 
@@ -1446,8 +1470,7 @@ pub fn note_set_protected(
     {
         let store = store.lock().map_err(|e| e.to_string())?;
         let vault = vault.lock().map_err(|e| e.to_string())?;
-        let dek = vault.dek().ok_or_else(|| "vault locked".to_string())?;
-        ops::set_note_protected(&store, dek, &id, protected)?;
+        ops::set_note_protected(&store, &vault, &id, protected)?;
     }
     notify(&app, &webview);
     Ok(())
@@ -1467,8 +1490,7 @@ pub fn folder_set_locked(
     {
         let store = store.lock().map_err(|e| e.to_string())?;
         let vault = vault.lock().map_err(|e| e.to_string())?;
-        let dek = vault.dek().ok_or_else(|| "vault locked".to_string())?;
-        ops::set_folder_locked(&store, dek, &id, locked)?;
+        ops::set_folder_locked(&store, &vault, &id, locked)?;
     }
     notify(&app, &webview);
     Ok(())

@@ -25,6 +25,7 @@ use base64::Engine;
 use crate::profiles::{ContextEntry, Registry};
 use crate::storage::{Note, SearchHit, Store};
 use crate::vault::aead::Dek;
+use crate::vault::state::VaultState;
 use crate::vault::VaultRecord;
 
 // ---------------------------------------------------------------------------
@@ -151,6 +152,71 @@ fn folder_chain_has_lock(store: &Store, starting_folder_id: Option<&str>) -> Res
         .map_err(|e| e.to_string())
 }
 
+/// Like [`folder_chain_has_lock`], but treats `except` as always unlocked
+/// regardless of its persisted `locked` flag. Used by
+/// [`set_folder_locked`]'s `locked = false` branch to work out — BEFORE
+/// `except` (the folder actually being unlocked) has its own flag flipped in
+/// the database — whether a note would still have a genuinely locked
+/// ancestor (some OTHER folder) once `except` itself becomes unlocked. Doing
+/// this pre-flip, read-only, lets the caller validate every note it would
+/// decrypt (see `Store::note_key_gen` / `VaultState::dek_for`) before
+/// committing anything, instead of flipping `except.locked` first and
+/// discovering a missing generation partway through the per-note loop.
+fn folder_chain_has_lock_except(
+    store: &Store,
+    starting_folder_id: Option<&str>,
+    except: &str,
+) -> Result<bool, String> {
+    use rusqlite::OptionalExtension;
+    let mut folder_id: Option<String> = starting_folder_id.map(str::to_string);
+    let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
+    while let Some(fid) = folder_id {
+        if !visited.insert(fid.clone()) {
+            break; // cycle detected — stop instead of looping forever
+        }
+        let folder: Option<(bool, Option<String>)> = store
+            .conn
+            .query_row(
+                "SELECT locked, parent_id FROM folders WHERE id = ?1",
+                [&fid],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        let Some((locked, parent_id)) = folder else {
+            break;
+        };
+        if locked && fid != except {
+            return Ok(true);
+        }
+        folder_id = parent_id;
+    }
+    Ok(false)
+}
+
+/// [`has_locked_ancestor_folder`]'s counterpart for
+/// [`folder_chain_has_lock_except`]: true if `note_id`'s folder chain has a
+/// locked ancestor OTHER than `except`.
+fn has_locked_ancestor_folder_except(
+    store: &Store,
+    note_id: &str,
+    except: &str,
+) -> Result<bool, String> {
+    use rusqlite::OptionalExtension;
+
+    let folder_id: Option<String> = store
+        .conn
+        .query_row(
+            "SELECT folder_id FROM notes WHERE id = ?1",
+            [note_id],
+            |r| r.get::<_, Option<String>>(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .flatten();
+    folder_chain_has_lock_except(store, folder_id.as_deref(), except)
+}
+
 /// Encrypt one currently-plaintext note in place under `dek`: seal its content
 /// (binding the note id as AEAD associated data), flip `protected`, mark it
 /// dirty so the ciphertext + `protected = 1` propagate on sync, and purge its
@@ -164,7 +230,12 @@ fn folder_chain_has_lock(store: &Store, starting_folder_id: Option<&str>) -> Res
 /// "readwrite" and the vault is unlocked, a write tool writes its new plaintext
 /// into `content` (still under the same store lock) and immediately calls this
 /// to reseal it — see `mcp::StoreAccess::write_protected`.
-pub(crate) fn encrypt_note_in_place(store: &Store, id: &str, dek: &Dek) -> Result<(), String> {
+pub(crate) fn encrypt_note_in_place(
+    store: &Store,
+    id: &str,
+    dek: &Dek,
+    generation: u32,
+) -> Result<(), String> {
     let plaintext = store
         .load_note_content(id)
         .map_err(|e| e.to_string())?
@@ -179,6 +250,14 @@ pub(crate) fn encrypt_note_in_place(store: &Store, id: &str, dek: &Dek) -> Resul
         .set_content_silent(id, &sealed)
         .map_err(|e| e.to_string())?;
     store.set_title(id, &title).map_err(|e| e.to_string())?;
+    // Record which generation sealed this ciphertext BEFORE flipping
+    // `protected` — a crash between the two must never leave `protected = 1`
+    // with `key_gen` still NULL, which `VaultState::dek_for` would resolve to
+    // generation 1 and could make the note permanently unopenable if it was
+    // actually sealed under a later generation.
+    store
+        .set_note_key_gen(id, Some(generation))
+        .map_err(|e| e.to_string())?;
     store
         .set_note_protected(id, true)
         .map_err(|e| e.to_string())?;
@@ -189,16 +268,34 @@ pub(crate) fn encrypt_note_in_place(store: &Store, id: &str, dek: &Dek) -> Resul
     Ok(())
 }
 
-/// Decrypt one currently-encrypted note in place under `dek`: open its stored
-/// ciphertext, write back the plaintext, and clear `protected`. The inverse of
-/// [`encrypt_note_in_place`], shared by `note_set_protected(false)` and
-/// `folder_set_locked(false)`.
+/// Decrypt one currently-encrypted note in place: open its stored ciphertext
+/// under the DEK it was ACTUALLY sealed with — `vault.dek_for(note_key_gen)`,
+/// never just the ring's newest — write back the plaintext, and clear
+/// `protected`. The inverse of [`encrypt_note_in_place`], shared by
+/// `note_set_protected(false)` and `folder_set_locked(false)`.
+///
+/// A note sealed under an OLDER generation than the ring's newest (the normal
+/// state mid-rotation) must still open under ITS OWN generation — reaching
+/// for `vault.dek()` (newest) here, as an earlier revision of this function
+/// did, would make such a note permanently un-unprotectable once the vault
+/// rotates past its generation.
+///
+/// `Err("vault locked")` when the ring is empty, `Err("key generation not
+/// available")` when it's unlocked but lacks this note's specific generation
+/// — same two-error contract as [`open_note_content`].
 ///
 /// Deliberately does NOT restore revision history (it was purged on the way in)
 /// and does NOT re-mark the row dirty beyond what `set_content_silent` /
 /// `set_note_protected` already do — matching the pre-refactor behavior of both
 /// callers exactly.
-fn decrypt_note_in_place(store: &Store, id: &str, dek: &Dek) -> Result<(), String> {
+fn decrypt_note_in_place(store: &Store, vault: &VaultState, id: &str) -> Result<(), String> {
+    if !vault.is_unlocked() {
+        return Err("vault locked".to_string());
+    }
+    let gen = store.note_key_gen(id).map_err(|e| e.to_string())?;
+    let dek = vault
+        .dek_for(gen)
+        .ok_or_else(|| "key generation not available".to_string())?;
     let ciphertext = store
         .load_note_content(id)
         .map_err(|e| e.to_string())?
@@ -209,6 +306,11 @@ fn decrypt_note_in_place(store: &Store, id: &str, dek: &Dek) -> Result<(), Strin
         .map_err(|e| e.to_string())?;
     store
         .set_note_protected(id, false)
+        .map_err(|e| e.to_string())?;
+    // The note is plaintext again — clear the generation marker along with
+    // `protected`, so it doesn't linger as stale metadata on an unsealed row.
+    store
+        .set_note_key_gen(id, None)
         .map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -223,11 +325,12 @@ fn decrypt_note_in_place(store: &Store, id: &str, dek: &Dek) -> Result<(), Strin
 /// after the DEK becomes available.
 ///
 /// Best-effort by design: a note whose content fails to decrypt (corrupt
-/// blob, foreign/mismatched key) is silently skipped rather than aborting
-/// the unlock, and nothing here ever logs key or plaintext material. Only
-/// `title` is written — `content` is read but never rewritten, preserving
-/// the `content ciphertext ⟺ protected = 1` invariant.
-pub fn backfill_protected_titles(store: &Store, dek: &Dek) {
+/// blob, foreign/mismatched key, or a generation not currently in `vault`'s
+/// ring) is silently skipped rather than aborting the unlock, and nothing
+/// here ever logs key or plaintext material. Only `title` is written —
+/// `content` is read but never rewritten, preserving the
+/// `content ciphertext ⟺ protected = 1` invariant.
+pub fn backfill_protected_titles(store: &Store, vault: &VaultState) {
     let ids: Vec<String> = {
         let mut stmt = match store
             .conn
@@ -247,6 +350,13 @@ pub fn backfill_protected_titles(store: &Store, dek: &Dek) {
         let stored = match store.load_note_content(&id) {
             Ok(Some(c)) => c,
             _ => continue,
+        };
+        let generation = match store.note_key_gen(&id) {
+            Ok(g) => g,
+            Err(_) => continue,
+        };
+        let Some(dek) = vault.dek_for(generation) else {
+            continue; // that generation isn't unlocked — skip, never abort
         };
         let plaintext = match open_content(dek, &id, &stored) {
             Ok(p) => p,
@@ -268,19 +378,27 @@ pub fn backfill_protected_titles(store: &Store, dek: &Dek) {
 // ---------------------------------------------------------------------------
 
 /// `notes_load_one`: the full HTML content of one note (empty string if it no
-/// longer exists). Protected notes require an unlocked vault — `dek: None`
-/// yields `Err("vault locked")` — and are decrypted before returning.
-pub fn load_note_content(store: &Store, dek: Option<&Dek>, id: &str) -> Result<String, String> {
+/// longer exists). A protected note requires the vault to hold the DEK it was
+/// actually sealed with: `Err("vault locked")` when the ring is empty,
+/// `Err("key generation not available")` when the ring is unlocked but lacks
+/// that particular generation (e.g. a key rotation the ring hasn't caught up
+/// to). `None`/missing `key_gen` means generation 1 — see `VaultState::dek_for`.
+pub fn open_note_content(store: &Store, vault: &VaultState, id: &str) -> Result<String, String> {
     let stored = match store.load_note_content(id).map_err(|e| e.to_string())? {
         Some(c) => c,
         None => return Ok(String::new()),
     };
-    if store.note_protected(id).map_err(|e| e.to_string())? {
-        let dek = dek.ok_or_else(|| "vault locked".to_string())?;
-        open_content(dek, id, &stored)
-    } else {
-        Ok(stored)
+    if !store.note_protected(id).map_err(|e| e.to_string())? {
+        return Ok(stored);
     }
+    if !vault.is_unlocked() {
+        return Err("vault locked".to_string());
+    }
+    let gen = store.note_key_gen(id).map_err(|e| e.to_string())?;
+    let dek = vault
+        .dek_for(gen)
+        .ok_or_else(|| "key generation not available".to_string())?;
+    open_content(dek, id, &stored)
 }
 
 /// `notes_search`: full-text search within one context (title-first), with
@@ -313,21 +431,42 @@ pub fn search_all_contexts(
 /// the body is secret), so it must never be derived from the sealed content.
 ///
 /// A note that is effectively protected (its own flag or a locked ancestor
-/// folder) is refused with `Err("vault locked")` when `dek` is `None`, is
-/// stored as ciphertext, and never contributes a plaintext revision — any
-/// revisions recorded before the transition are purged on every protected save.
-pub fn save_note(store: &Store, dek: Option<&Dek>, note: &Note) -> Result<(), String> {
+/// folder) is refused with `Err("vault locked")` when `vault` is `None`, is
+/// stored as ciphertext under the given generation's DEK, and never
+/// contributes a plaintext revision — any revisions recorded before the
+/// transition are purged on every protected save.
+///
+/// `vault` is `Some((dek, generation))` rather than a bare `&Dek`: every
+/// sealing write records `generation` into `notes.key_gen` (see
+/// `Store::save_note`'s `ON CONFLICT` clause, which otherwise defaults it to
+/// the incoming `Note`'s — usually `None` — value), so a later open picks the
+/// SAME DEK back out of the ring rather than always reaching for the newest.
+pub fn save_note(store: &Store, vault: Option<(&Dek, u32)>, note: &Note) -> Result<(), String> {
     let title = crate::storage::note_preview(&note.content);
     let protected = store
         .is_effectively_protected(&note.id)
         .map_err(|e| e.to_string())?;
     if protected {
-        let dek = dek.ok_or_else(|| "vault locked".to_string())?;
+        let (dek, generation) = vault.ok_or_else(|| "vault locked".to_string())?;
         let mut sealed = note.clone();
         sealed.content = seal_content(dek, &note.id, &note.content);
         store.save_note(&sealed).map_err(|e| e.to_string())?;
         store
             .set_title(&note.id, &title)
+            .map_err(|e| e.to_string())?;
+        // The `Note` coming in from the frontend (or built via
+        // `..Default::default()`) carries `key_gen: None`, so `store.save_note`
+        // above wrote NULL — fix it up explicitly to the generation actually
+        // used to seal, every time, so a later `open_note_content` picks the
+        // matching DEK back out of the ring rather than the newest one.
+        //
+        // Written BEFORE `set_note_protected` below: a crash between the two
+        // must never leave `protected = 1` with `key_gen` still NULL/stale,
+        // which `VaultState::dek_for` would resolve to generation 1 and could
+        // make the note permanently unopenable if it was sealed under a
+        // later generation.
+        store
+            .set_note_key_gen(&note.id, Some(generation))
             .map_err(|e| e.to_string())?;
         store
             .set_note_protected(&note.id, true)
@@ -442,8 +581,9 @@ pub fn folder_set_sort(store: &Store, id: &str, sort: &str) -> Result<(), String
     touch_folder_if_syncing(store, id)
 }
 
-/// Core reconciliation logic behind `notes_set_folder`: `dek` is `None` to
-/// represent a locked vault, `Some(&dek)` unlocked.
+/// Core reconciliation logic behind `notes_set_folder`: `vault` is `None` to
+/// represent a locked vault, `Some((dek, generation))` unlocked — sealing
+/// always uses the newest ring generation, same as [`save_note`].
 ///
 /// Moves only ever ADD protection, never remove it:
 /// - Already-encrypted notes stay encrypted regardless of destination — the
@@ -451,7 +591,7 @@ pub fn folder_set_sort(store: &Store, id: &str, sort: &str) -> Result<(), String
 ///   NOT auto-decrypt it (the user can explicitly unprotect it).
 /// - A currently-plaintext note moving into a location with a locked
 ///   ancestor folder must become encrypted. That check — and the
-///   `dek.is_some()` requirement it implies — happens BEFORE the move is
+///   `vault.is_some()` requirement it implies — happens BEFORE the move is
 ///   performed, so a locked vault never leaves the note relocated into a
 ///   locked folder while still plaintext: this returns `Err("vault
 ///   locked")` and the note stays where (and as) it was.
@@ -463,15 +603,15 @@ pub fn reconcile_folder_move(
     store: &Store,
     id: &str,
     folder_id: Option<&str>,
-    dek: Option<&Dek>,
+    vault: Option<(&Dek, u32)>,
 ) -> Result<(), String> {
     let already_protected = store.note_protected(id).map_err(|e| e.to_string())?;
     let needs_encryption = !already_protected && folder_chain_has_lock(store, folder_id)?;
 
     if needs_encryption {
-        let dek = dek.ok_or_else(|| "vault locked".to_string())?;
+        let (dek, generation) = vault.ok_or_else(|| "vault locked".to_string())?;
         store.set_folder(id, folder_id).map_err(|e| e.to_string())?;
-        encrypt_note_in_place(store, id, dek)?;
+        encrypt_note_in_place(store, id, dek, generation)?;
     } else {
         store.set_folder(id, folder_id).map_err(|e| e.to_string())?;
     }
@@ -479,8 +619,8 @@ pub fn reconcile_folder_move(
 }
 
 /// Core reconciliation behind `notes_reorder`, sharing
-/// [`reconcile_folder_move`]'s convention: `dek` is `None` for a locked vault,
-/// `Some(&dek)` unlocked.
+/// [`reconcile_folder_move`]'s convention: `vault` is `None` for a locked
+/// vault, `Some((dek, generation))` unlocked.
 ///
 /// Drag-and-drop reorder assigns every id to `folder_id`. If that destination
 /// has a locked ancestor, any currently-plaintext note among `ids` would land
@@ -499,7 +639,7 @@ pub fn reconcile_reorder(
     store: &Store,
     folder_id: Option<&str>,
     ids: &[String],
-    dek: Option<&Dek>,
+    vault: Option<(&Dek, u32)>,
 ) -> Result<(), String> {
     if !folder_chain_has_lock(store, folder_id)? {
         return store
@@ -527,16 +667,16 @@ pub fn reconcile_reorder(
 
     // Refuse the entire op up front if we'd strand a plaintext note in a locked
     // folder without an unlocked DEK — nothing is mutated on this path.
-    if !to_encrypt.is_empty() && dek.is_none() {
+    if !to_encrypt.is_empty() && vault.is_none() {
         return Err("vault locked".to_string());
     }
 
     store
         .reorder_notes(folder_id, ids)
         .map_err(|e| e.to_string())?;
-    if let Some(dek) = dek {
+    if let Some((dek, generation)) = vault {
         for id in to_encrypt {
-            encrypt_note_in_place(store, id, dek)?;
+            encrypt_note_in_place(store, id, dek, generation)?;
         }
     }
     Ok(())
@@ -677,7 +817,7 @@ pub fn context_vault_exists(path: &Path) -> bool {
 /// The active context is refused: rewrapping it out from under the live
 /// `VaultState`/`Store` split here would desync the two. The command layer
 /// special-cases that id and reuses the existing `vault_change_passphrase`
-/// command path instead (managed store + `vault.unlock(dek)`).
+/// command path instead (managed store + `vault.unlock(1, dek)`).
 pub fn change_context_vault_passphrase(
     reg: &Registry,
     context_id: &str,
@@ -700,42 +840,61 @@ pub fn change_context_vault_passphrase(
 
 /// `note_set_protected`: encrypts or decrypts one note's stored content in
 /// place, keeping `notes.protected` in sync with the physical content state.
-/// Requires an unlocked vault (`dek`) — the command refuses with
-/// `Err("vault locked")` before ever reaching here.
 ///
-/// `protected = false` is refused while the note is inside a `locked` folder —
-/// the folder is the source of truth for that note's protection until the
-/// folder itself is unlocked.
+/// `protected = true` seals under the ring's NEWEST generation (same as
+/// every other sealing path) and refuses with `Err("vault locked")` if the
+/// ring is empty. `protected = false` opens under the DEK the note was
+/// ACTUALLY sealed with — see [`decrypt_note_in_place`] for its
+/// `"vault locked"` / `"key generation not available"` split — and is also
+/// refused while the note is inside a `locked` folder: the folder is the
+/// source of truth for that note's protection until the folder itself is
+/// unlocked.
 ///
 /// Transitioning to `protected = true` discards the note's existing revision
 /// history (see [`encrypt_note_in_place`]) — v1 behavior, since
 /// `note_revisions` is unencrypted.
 pub fn set_note_protected(
     store: &Store,
-    dek: &Dek,
+    vault: &VaultState,
     id: &str,
     protected: bool,
 ) -> Result<(), String> {
     if protected {
         if !store.note_protected(id).map_err(|e| e.to_string())? {
+            let (dek, generation) = vault
+                .dek()
+                .zip(vault.newest_generation())
+                .ok_or_else(|| "vault locked".to_string())?;
             // Seal + flip `protected` + mark dirty + purge the plaintext
             // revision history (v1: keeping it would defeat
             // encryption-at-rest, since note_revisions is unencrypted).
-            encrypt_note_in_place(store, id, dek)?;
+            encrypt_note_in_place(store, id, dek, generation)?;
         }
     } else {
         if has_locked_ancestor_folder(store, id)? {
             return Err("note is protected by its folder".to_string());
         }
         if store.note_protected(id).map_err(|e| e.to_string())? {
-            decrypt_note_in_place(store, id, dek)?;
+            decrypt_note_in_place(store, vault, id)?;
         }
     }
     Ok(())
 }
 
 /// `folder_set_locked`: locks or unlocks a folder, encrypting/decrypting the
-/// notes in its subtree to match. Requires an unlocked vault (`dek`).
+/// notes in its subtree to match.
+///
+/// `locked = true` seals every currently-plaintext subtree note under the
+/// ring's NEWEST generation, refusing with `Err("vault locked")` up front if
+/// the ring is empty (matching every other sealing path).
+///
+/// `locked = false` opens each note under the DEK it was ACTUALLY sealed
+/// with. Which notes need decrypting — and whether the ring actually holds
+/// every one of their generations — is determined and validated BEFORE `id`
+/// itself is flipped to unlocked in the database: `Err("vault locked")` (ring
+/// empty) or `Err("key generation not available")` (ring lacks a note's
+/// generation) leaves `id.locked` and every note exactly as they were,
+/// rather than committing the folder open while a note fails to decrypt.
 ///
 /// v1 limitation: `notes.protected` tracks only physical ciphertext state,
 /// not a separate "individually locked" intent, so unlocking a folder
@@ -745,10 +904,19 @@ pub fn set_note_protected(
 ///
 /// Locking (not unlocking) also discards each newly-encrypted note's
 /// existing revision history, same rationale as [`set_note_protected`].
-pub fn set_folder_locked(store: &Store, dek: &Dek, id: &str, locked: bool) -> Result<(), String> {
+pub fn set_folder_locked(
+    store: &Store,
+    vault: &VaultState,
+    id: &str,
+    locked: bool,
+) -> Result<(), String> {
     let note_ids = store.note_ids_in_subtree(id).map_err(|e| e.to_string())?;
 
     if locked {
+        let (dek, generation) = vault
+            .dek()
+            .zip(vault.newest_generation())
+            .ok_or_else(|| "vault locked".to_string())?;
         store
             .set_folder_locked(id, true)
             .map_err(|e| e.to_string())?;
@@ -757,18 +925,41 @@ pub fn set_folder_locked(store: &Store, dek: &Dek, id: &str, locked: bool) -> Re
                 // Same transition as set_note_protected(id, true): seal +
                 // flip `protected` + mark dirty + discard this note's now
                 // encryption-defeating plaintext revision history.
-                encrypt_note_in_place(store, note_id, dek)?;
+                encrypt_note_in_place(store, note_id, dek, generation)?;
             }
         }
     } else {
+        // Which notes will actually need decrypting once `id` itself is
+        // unlocked? `..._except(id)` answers that WITHOUT `id`'s own `locked`
+        // flag having been flipped yet — a note stays sealed only if some
+        // OTHER ancestor is still locked.
+        let mut to_decrypt: Vec<&String> = Vec::new();
+        for note_id in &note_ids {
+            if store.note_protected(note_id).map_err(|e| e.to_string())?
+                && !has_locked_ancestor_folder_except(store, note_id, id)?
+            {
+                to_decrypt.push(note_id);
+            }
+        }
+        // Validate every one of them has its sealing generation available in
+        // the ring — BEFORE touching a single row — so a missing generation
+        // refuses the whole operation up front instead of surfacing partway
+        // through the per-note loop below, with `id.locked` already false.
+        if !to_decrypt.is_empty() && !vault.is_unlocked() {
+            return Err("vault locked".to_string());
+        }
+        for note_id in &to_decrypt {
+            let gen = store.note_key_gen(note_id).map_err(|e| e.to_string())?;
+            if vault.dek_for(gen).is_none() {
+                return Err("key generation not available".to_string());
+            }
+        }
+
         store
             .set_folder_locked(id, false)
             .map_err(|e| e.to_string())?;
-        for note_id in &note_ids {
-            let still_locked = has_locked_ancestor_folder(store, note_id)?;
-            if store.note_protected(note_id).map_err(|e| e.to_string())? && !still_locked {
-                decrypt_note_in_place(store, note_id, dek)?;
-            }
+        for note_id in to_decrypt {
+            decrypt_note_in_place(store, vault, note_id)?;
         }
     }
     Ok(())
@@ -1558,7 +1749,7 @@ mod encrypt_primitive_tests {
         let dek = Dek::random();
         seed(&s, "n1", "<p>Secret Title</p><p>body</p>");
 
-        encrypt_note_in_place(&s, "n1", &dek).unwrap();
+        encrypt_note_in_place(&s, "n1", &dek, 1).unwrap();
 
         let stored = content_of(&s, "n1");
         assert!(!stored.contains("Secret"));
@@ -1575,7 +1766,7 @@ mod encrypt_primitive_tests {
         let dek = Dek::random();
         seed(&s, "n1", "<p>Secret Title</p><p>body</p>");
 
-        encrypt_note_in_place(&s, "n1", &dek).unwrap();
+        encrypt_note_in_place(&s, "n1", &dek, 1).unwrap();
 
         let meta = &s.load_notes_meta().unwrap()[0];
         assert_eq!(
@@ -1599,7 +1790,7 @@ mod encrypt_primitive_tests {
         crate::revisions::add_revision(&s.conn, "b", "<p>v1</p>", 50).unwrap();
         assert_eq!(revision_count(&s, "a"), 1);
 
-        encrypt_note_in_place(&s, "a", &dek).unwrap();
+        encrypt_note_in_place(&s, "a", &dek, 1).unwrap();
 
         assert_eq!(revision_count(&s, "a"), 0);
         assert_eq!(
@@ -1619,7 +1810,7 @@ mod encrypt_primitive_tests {
         seed(&s, "n1", "<p>secret</p>");
         clear_dirty(&s);
 
-        encrypt_note_in_place(&s, "n1", &dek).unwrap();
+        encrypt_note_in_place(&s, "n1", &dek, 1).unwrap();
 
         let dirty = s.load_dirty_notes().unwrap();
         assert_eq!(dirty.len(), 1);
@@ -1637,7 +1828,7 @@ mod encrypt_primitive_tests {
         let dek = Dek::random();
         seed(&s, "n1", "<p>secret</p>");
 
-        encrypt_note_in_place(&s, "n1", &dek).unwrap();
+        encrypt_note_in_place(&s, "n1", &dek, 1).unwrap();
 
         assert!(
             s.load_dirty_notes().unwrap().is_empty(),
@@ -1651,7 +1842,7 @@ mod encrypt_primitive_tests {
         let dek = Dek::random();
         // Nothing to seal and no row to update: every statement matches zero
         // rows, so no phantom note is created and nothing is left half-done.
-        encrypt_note_in_place(&s, "ghost", &dek).unwrap();
+        encrypt_note_in_place(&s, "ghost", &dek, 1).unwrap();
         assert!(s.load_notes().unwrap().is_empty());
         assert!(s.load_note_content("ghost").unwrap().is_none());
     }
@@ -1662,6 +1853,12 @@ mod backfill_tests {
     use super::test_support::*;
     use super::*;
 
+    fn unlocked_at(generation: u32, dek: Dek) -> VaultState {
+        let mut v = VaultState::default();
+        v.unlock(generation, dek);
+        v
+    }
+
     #[test]
     fn fills_in_empty_titles_after_unlock() {
         let s = store();
@@ -1671,7 +1868,7 @@ mod backfill_tests {
         s.set_note_protected("n1", true).unwrap();
         assert_eq!(title_of(&s, "n1"), "");
 
-        backfill_protected_titles(&s, &dek);
+        backfill_protected_titles(&s, &unlocked_at(1, dek));
 
         assert_eq!(title_of(&s, "n1"), "Old Secret");
         assert!(
@@ -1694,7 +1891,7 @@ mod backfill_tests {
         s.set_note_protected("n1", true).unwrap();
         clear_dirty(&s);
 
-        backfill_protected_titles(&s, &dek);
+        backfill_protected_titles(&s, &unlocked_at(1, dek));
 
         let dirty = s.load_dirty_notes().unwrap();
         assert_eq!(dirty.len(), 1);
@@ -1716,7 +1913,7 @@ mod backfill_tests {
         s.set_note_protected("n1", true).unwrap();
 
         // Unlocking with the WRONG dek must not panic or abort — just skip.
-        backfill_protected_titles(&s, &wrong);
+        backfill_protected_titles(&s, &unlocked_at(1, wrong));
 
         assert_eq!(title_of(&s, "n1"), "", "skipped note keeps its empty title");
         assert!(s.note_protected("n1").unwrap());
@@ -1731,7 +1928,7 @@ mod backfill_tests {
         s.set_note_protected("n1", true).unwrap();
         s.set_title("n1", "Handpicked").unwrap();
 
-        backfill_protected_titles(&s, &dek);
+        backfill_protected_titles(&s, &unlocked_at(1, dek));
 
         assert_eq!(title_of(&s, "n1"), "Handpicked");
     }
@@ -1742,7 +1939,7 @@ mod backfill_tests {
         let dek = Dek::random();
         seed(&s, "n1", "<p>plain</p>"); // `save_note` leaves `title` empty
 
-        backfill_protected_titles(&s, &dek);
+        backfill_protected_titles(&s, &unlocked_at(1, dek));
 
         assert_eq!(
             title_of(&s, "n1"),
@@ -1755,7 +1952,7 @@ mod backfill_tests {
     #[test]
     fn is_a_no_op_on_an_empty_database() {
         let s = store();
-        backfill_protected_titles(&s, &Dek::random());
+        backfill_protected_titles(&s, &unlocked_at(1, Dek::random()));
         assert!(s.load_notes().unwrap().is_empty());
     }
 }
@@ -1765,17 +1962,29 @@ mod note_read_tests {
     use super::test_support::*;
     use super::*;
 
+    fn unlocked_at(generation: u32, dek: Dek) -> VaultState {
+        let mut v = VaultState::default();
+        v.unlock(generation, dek);
+        v
+    }
+
     #[test]
     fn missing_note_reads_as_empty_string() {
         let s = store();
-        assert_eq!(load_note_content(&s, None, "ghost").unwrap(), "");
+        assert_eq!(
+            open_note_content(&s, &VaultState::default(), "ghost").unwrap(),
+            ""
+        );
     }
 
     #[test]
     fn plaintext_note_reads_back_verbatim_without_a_dek() {
         let s = store();
         seed(&s, "n1", "<p>hello</p>");
-        assert_eq!(load_note_content(&s, None, "n1").unwrap(), "<p>hello</p>");
+        assert_eq!(
+            open_note_content(&s, &VaultState::default(), "n1").unwrap(),
+            "<p>hello</p>"
+        );
     }
 
     #[test]
@@ -1783,10 +1992,10 @@ mod note_read_tests {
         let s = store();
         let dek = Dek::random();
         seed(&s, "n1", "<p>secret</p>");
-        encrypt_note_in_place(&s, "n1", &dek).unwrap();
+        encrypt_note_in_place(&s, "n1", &dek, 1).unwrap();
 
         assert_eq!(
-            load_note_content(&s, Some(&dek), "n1").unwrap(),
+            open_note_content(&s, &unlocked_at(1, dek), "n1").unwrap(),
             "<p>secret</p>"
         );
     }
@@ -1796,10 +2005,10 @@ mod note_read_tests {
         let s = store();
         let dek = Dek::random();
         seed(&s, "n1", "<p>secret</p>");
-        encrypt_note_in_place(&s, "n1", &dek).unwrap();
+        encrypt_note_in_place(&s, "n1", &dek, 1).unwrap();
 
         assert_eq!(
-            load_note_content(&s, None, "n1").unwrap_err(),
+            open_note_content(&s, &VaultState::default(), "n1").unwrap_err(),
             "vault locked"
         );
     }
@@ -1809,11 +2018,29 @@ mod note_read_tests {
         let s = store();
         let dek = Dek::random();
         seed(&s, "n1", "<p>secret</p>");
-        encrypt_note_in_place(&s, "n1", &dek).unwrap();
+        encrypt_note_in_place(&s, "n1", &dek, 1).unwrap();
 
-        let err = load_note_content(&s, Some(&Dek::random()), "n1").unwrap_err();
+        // The vault is unlocked with the SAME generation (1) but a DIFFERENT
+        // (foreign) DEK — e.g. a key from another context — so the ring has
+        // an entry for the note's generation and `open_content` runs, but
+        // fails to authenticate.
+        let err = open_note_content(&s, &unlocked_at(1, Dek::random()), "n1").unwrap_err();
         assert!(!err.contains("secret"));
         assert!(!err.is_empty());
+    }
+
+    #[test]
+    fn protected_note_is_refused_when_its_generation_is_not_in_the_ring() {
+        // The vault is unlocked, but only at a generation OTHER than the one
+        // this note was sealed under — distinct from both "vault locked" and
+        // a foreign-key decrypt failure.
+        let s = store();
+        let dek = Dek::random();
+        seed(&s, "n1", "<p>secret</p>");
+        encrypt_note_in_place(&s, "n1", &dek, 1).unwrap();
+
+        let err = open_note_content(&s, &unlocked_at(2, Dek::random()), "n1").unwrap_err();
+        assert_eq!(err, "key generation not available");
     }
 
     #[test]
@@ -1825,7 +2052,72 @@ mod note_read_tests {
         seed_in(&s, "n1", "<p>plain</p>", "f");
         s.set_folder_locked("f", true).unwrap();
 
-        assert_eq!(load_note_content(&s, None, "n1").unwrap(), "<p>plain</p>");
+        assert_eq!(
+            open_note_content(&s, &VaultState::default(), "n1").unwrap(),
+            "<p>plain</p>"
+        );
+    }
+}
+
+#[cfg(test)]
+mod key_ring_tests {
+    use super::*;
+
+    /// End-to-end across `VaultState`'s ring and the `ops` sealing/opening
+    /// surface: a note sealed while generation 1 was the newest keeps opening
+    /// under generation 1 even after the vault rotates to generation 2 and a
+    /// NEW note starts sealing under that newest generation instead.
+    #[test]
+    fn notes_seal_with_the_newest_generation_and_open_with_their_own() {
+        let s = Store::open_in_memory().unwrap();
+        crate::migrate::run_migrations(&s.conn).unwrap();
+        let (d1, d2) = (Dek::random(), Dek::random());
+        let mut vault = VaultState::default();
+        vault.unlock(1, d1.clone());
+        s.save_note(&Note {
+            id: "old".into(),
+            content: "<p>old</p>".into(),
+            updated_at: 1,
+            ..Default::default()
+        })
+        .unwrap();
+        s.set_note_protected("old", true).unwrap();
+        encrypt_note_in_place(&s, "old", &d1, 1).unwrap();
+        assert_eq!(s.note_key_gen("old").unwrap(), Some(1));
+
+        vault.unlock(2, d2.clone());
+        let mut fresh = Note {
+            id: "new".into(),
+            content: "<p>new</p>".into(),
+            updated_at: 2,
+            ..Default::default()
+        };
+        s.save_note(&fresh).unwrap();
+        s.set_note_protected("new", true).unwrap();
+        fresh.content = "<p>new v2</p>".into();
+        save_note(
+            &s,
+            Some((vault.dek().unwrap(), vault.newest_generation().unwrap())),
+            &fresh,
+        )
+        .unwrap();
+        assert_eq!(s.note_key_gen("new").unwrap(), Some(2));
+
+        assert_eq!(open_note_content(&s, &vault, "old").unwrap(), "<p>old</p>");
+        assert_eq!(
+            open_note_content(&s, &vault, "new").unwrap(),
+            "<p>new v2</p>"
+        );
+        let mut only_new = VaultState::default();
+        only_new.unlock(2, d2);
+        assert_eq!(
+            open_note_content(&s, &only_new, "old").unwrap_err(),
+            "key generation not available"
+        );
+        assert_eq!(
+            open_note_content(&s, &VaultState::default(), "new").unwrap_err(),
+            "vault locked"
+        );
     }
 }
 
@@ -1863,7 +2155,7 @@ mod search_tests {
         let dek = Dek::random();
         seed(&s, "n1", "<p>Password Vault</p><p>hunter2</p>");
         seed(&s, "n2", "<p>Shopping</p><p>hunter2 is a joke</p>");
-        encrypt_note_in_place(&s, "n1", &dek).unwrap();
+        encrypt_note_in_place(&s, "n1", &dek, 1).unwrap();
 
         let locked = search_notes(&s, "hunter2", false).unwrap();
         assert_eq!(ids(&locked), vec!["n2"], "ciphertext rows are dropped");
@@ -1885,7 +2177,7 @@ mod search_tests {
         let s = store();
         let dek = Dek::random();
         seed(&s, "n1", "<p>Bank Codes</p><p>secret body</p>");
-        encrypt_note_in_place(&s, "n1", &dek).unwrap();
+        encrypt_note_in_place(&s, "n1", &dek, 1).unwrap();
 
         assert!(search_notes(&s, "Bank", false).unwrap().is_empty());
         assert!(search_notes(&s, "Bank", true).unwrap().is_empty());
@@ -1934,7 +2226,7 @@ mod search_tests {
             let s = Store::open(&path).unwrap();
             crate::migrate::run_migrations(&s.conn).unwrap();
             seed(&s, "n1", "<p>needle</p>");
-            encrypt_note_in_place(&s, "n1", &dek).unwrap();
+            encrypt_note_in_place(&s, "n1", &dek, 1).unwrap();
         }
         let ctxs = vec![crate::aggregate::Ctx {
             id: "c".into(),
@@ -1994,7 +2286,12 @@ mod save_tests {
         seed(&s, "n1", "<p>x</p>");
         s.set_note_protected("n1", true).unwrap();
 
-        save_note(&s, Some(&dek), &note("n1", "<p>Very Secret</p><p>body</p>")).unwrap();
+        save_note(
+            &s,
+            Some((&dek, 1)),
+            &note("n1", "<p>Very Secret</p><p>body</p>"),
+        )
+        .unwrap();
 
         let stored = content_of(&s, "n1");
         assert!(!stored.contains("Very Secret"));
@@ -2016,7 +2313,7 @@ mod save_tests {
         assert_eq!(revision_count(&s, "n1"), 1);
         s.set_note_protected("n1", true).unwrap();
 
-        save_note(&s, Some(&dek), &note("n1", "<p>new secret</p>")).unwrap();
+        save_note(&s, Some((&dek, 1)), &note("n1", "<p>new secret</p>")).unwrap();
 
         assert_eq!(
             revision_count(&s, "n1"),
@@ -2051,7 +2348,7 @@ mod save_tests {
         n.folder_id = Some("f".into());
         s.save_note(&n).unwrap();
 
-        save_note(&s, Some(&dek), &n).unwrap();
+        save_note(&s, Some((&dek, 1)), &n).unwrap();
 
         let stored = content_of(&s, "n1");
         assert!(!stored.contains("Folder Secret"));
@@ -2085,6 +2382,46 @@ mod save_tests {
         let notes = s.load_notes().unwrap();
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].id, "fresh");
+    }
+
+    /// Regression for the Task 9→10 handoff: `Store::save_note`'s `ON
+    /// CONFLICT` clause writes `key_gen` straight from the incoming `Note`
+    /// (see its `INSERT ... ON CONFLICT` in `storage.rs`), and a `Note`
+    /// arriving from the frontend — or built with `..Default::default()`,
+    /// like the `note()` test helper — always carries `key_gen: None`. If
+    /// `save_note` didn't call `set_note_key_gen` AFTER `store.save_note`,
+    /// re-saving a note sealed at an OLDER generation than the ring's newest
+    /// would silently clobber its `key_gen` to `NULL`, and a later
+    /// `open_note_content` would then reach for the WRONG (newest) DEK.
+    #[test]
+    fn resaving_a_protected_note_keeps_the_generation_it_was_sealed_under() {
+        let s = store();
+        let dek = Dek::random();
+        seed(&s, "n1", "<p>v1</p>");
+        s.set_note_protected("n1", true).unwrap();
+        // Sealed at generation 2 — NOT the incoming `Note`'s (default) None.
+        save_note(&s, Some((&dek, 2)), &note("n1", "<p>v1</p>")).unwrap();
+        assert_eq!(s.note_key_gen("n1").unwrap(), Some(2));
+
+        // Re-save through a fresh `Note` (key_gen: None, per `..Default::default()`)
+        // with changed content, still sealing under the SAME generation.
+        let mut resaved = note("n1", "<p>v2</p>");
+        assert_eq!(
+            resaved.key_gen, None,
+            "the incoming Note carries no generation"
+        );
+        resaved.updated_at = 2;
+        save_note(&s, Some((&dek, 2)), &resaved).unwrap();
+
+        assert_eq!(
+            s.note_key_gen("n1").unwrap(),
+            Some(2),
+            "the generation must survive the re-save, not be clobbered back to NULL"
+        );
+        assert_eq!(
+            open_content(&dek, "n1", &content_of(&s, "n1")).unwrap(),
+            "<p>v2</p>"
+        );
     }
 }
 
@@ -2427,7 +2764,7 @@ mod reconcile_move_tests {
         crate::revisions::add_revision(&s.conn, "n1", "<p>very secret</p>", 50).unwrap();
         assert_eq!(revision_count(&s, "n1"), 1);
 
-        reconcile_folder_move(&s, "n1", Some("locked-folder"), Some(&dek)).unwrap();
+        reconcile_folder_move(&s, "n1", Some("locked-folder"), Some((&dek, 1))).unwrap();
 
         assert_eq!(
             s.load_notes().unwrap()[0].folder_id.as_deref(),
@@ -2452,7 +2789,7 @@ mod reconcile_move_tests {
         let dek = Dek::random();
         seed(&s, "n1", "<p>nested secret</p>");
 
-        reconcile_folder_move(&s, "n1", Some("sub"), Some(&dek)).unwrap();
+        reconcile_folder_move(&s, "n1", Some("sub"), Some((&dek, 1))).unwrap();
 
         assert!(s.note_protected("n1").unwrap());
         assert!(!content_of(&s, "n1").contains("nested secret"));
@@ -2483,7 +2820,7 @@ mod reconcile_move_tests {
         s.set_folder_locked("locked-folder", true).unwrap();
         let dek = Dek::random();
         seed(&s, "n1", "<p>secret</p>");
-        encrypt_note_in_place(&s, "n1", &dek).unwrap();
+        encrypt_note_in_place(&s, "n1", &dek, 1).unwrap();
         let before = content_of(&s, "n1");
 
         reconcile_folder_move(&s, "n1", Some("locked-folder"), None).unwrap();
@@ -2502,10 +2839,10 @@ mod reconcile_move_tests {
         s.set_folder_locked("locked-folder", true).unwrap();
         let dek = Dek::random();
         seed_in(&s, "n1", "<p>secret</p>", "locked-folder");
-        encrypt_note_in_place(&s, "n1", &dek).unwrap();
+        encrypt_note_in_place(&s, "n1", &dek, 1).unwrap();
         let sealed = content_of(&s, "n1");
 
-        reconcile_folder_move(&s, "n1", None, Some(&dek)).unwrap();
+        reconcile_folder_move(&s, "n1", None, Some((&dek, 1))).unwrap();
 
         assert_eq!(s.load_notes().unwrap()[0].folder_id, None);
         assert!(s.note_protected("n1").unwrap(), "still protected");
@@ -2569,7 +2906,7 @@ mod reconcile_reorder_tests {
         seed(&s, "n1", "<p>very secret</p>");
         crate::revisions::add_revision(&s.conn, "n1", "<p>very secret</p>", 50).unwrap();
 
-        reconcile_reorder(&s, Some("locked-folder"), &["n1".into()], Some(&dek)).unwrap();
+        reconcile_reorder(&s, Some("locked-folder"), &["n1".into()], Some((&dek, 1))).unwrap();
 
         assert_eq!(
             s.load_notes().unwrap()[0].folder_id.as_deref(),
@@ -2592,7 +2929,7 @@ mod reconcile_reorder_tests {
         s.set_folder_locked("locked-folder", true).unwrap();
         seed(&s, "plain", "<p>very secret</p>");
         seed(&s, "already", "<p>other</p>");
-        encrypt_note_in_place(&s, "already", &Dek::random()).unwrap();
+        encrypt_note_in_place(&s, "already", &Dek::random(), 1).unwrap();
 
         let err = reconcile_reorder(
             &s,
@@ -2619,14 +2956,14 @@ mod reconcile_reorder_tests {
         let dek = Dek::random();
         seed(&s, "plain", "<p>fresh secret</p>");
         seed(&s, "already", "<p>old secret</p>");
-        encrypt_note_in_place(&s, "already", &dek).unwrap();
+        encrypt_note_in_place(&s, "already", &dek, 1).unwrap();
         let already_sealed = content_of(&s, "already");
 
         reconcile_reorder(
             &s,
             Some("locked-folder"),
             &["already".into(), "plain".into()],
-            Some(&dek),
+            Some((&dek, 1)),
         )
         .unwrap();
 
@@ -2648,7 +2985,7 @@ mod reconcile_reorder_tests {
         folder(&s, "locked-folder", None);
         s.set_folder_locked("locked-folder", true).unwrap();
         seed(&s, "a", "<p>x</p>");
-        encrypt_note_in_place(&s, "a", &Dek::random()).unwrap();
+        encrypt_note_in_place(&s, "a", &Dek::random(), 1).unwrap();
 
         reconcile_reorder(&s, Some("locked-folder"), &["a".into()], None).unwrap();
 
@@ -2670,7 +3007,7 @@ mod reconcile_reorder_tests {
             &s,
             Some("locked-folder"),
             &["ghost".into(), "real".into()],
-            Some(&dek),
+            Some((&dek, 1)),
         )
         .unwrap();
 
@@ -2806,7 +3143,7 @@ mod vault_setup_tests {
         let s = store();
         let (_g, dek) = vault_setup(&s, "first").unwrap();
         seed(&s, "n1", "<p>irreplaceable</p>");
-        encrypt_note_in_place(&s, "n1", &dek).unwrap();
+        encrypt_note_in_place(&s, "n1", &dek, 1).unwrap();
 
         assert!(vault_setup(&s, "second").is_err());
 
@@ -2918,7 +3255,7 @@ mod vault_change_passphrase_tests {
         let s = store();
         let (_g, dek) = vault_setup(&s, "old").unwrap();
         seed(&s, "n1", "<p>keepsake</p>");
-        encrypt_note_in_place(&s, "n1", &dek).unwrap();
+        encrypt_note_in_place(&s, "n1", &dek, 1).unwrap();
 
         let rewrapped = vault_change_passphrase(&s, "old", "new").unwrap();
 
@@ -3107,6 +3444,12 @@ mod note_protection_tests {
     use super::test_support::*;
     use super::*;
 
+    fn unlocked_at(generation: u32, dek: Dek) -> VaultState {
+        let mut v = VaultState::default();
+        v.unlock(generation, dek);
+        v
+    }
+
     #[test]
     fn protecting_seals_the_content_and_purges_revisions() {
         let s = store();
@@ -3114,7 +3457,7 @@ mod note_protection_tests {
         seed(&s, "n1", "<p>Diary</p><p>dear diary</p>");
         crate::revisions::add_revision(&s.conn, "n1", "<p>Diary</p>", 50).unwrap();
 
-        set_note_protected(&s, &dek, "n1", true).unwrap();
+        set_note_protected(&s, &unlocked_at(1, dek), "n1", true).unwrap();
 
         assert!(s.note_protected("n1").unwrap());
         assert!(!content_of(&s, "n1").contains("dear diary"));
@@ -3127,10 +3470,11 @@ mod note_protection_tests {
         let s = store();
         let dek = Dek::random();
         seed(&s, "n1", "<p>secret</p>");
-        set_note_protected(&s, &dek, "n1", true).unwrap();
+        let vault = unlocked_at(1, dek.clone());
+        set_note_protected(&s, &vault, "n1", true).unwrap();
         let sealed = content_of(&s, "n1");
 
-        set_note_protected(&s, &dek, "n1", true).unwrap();
+        set_note_protected(&s, &vault, "n1", true).unwrap();
 
         assert_eq!(content_of(&s, "n1"), sealed, "no double encryption");
         assert_eq!(open_content(&dek, "n1", &sealed).unwrap(), "<p>secret</p>");
@@ -3141,12 +3485,18 @@ mod note_protection_tests {
         let s = store();
         let dek = Dek::random();
         seed(&s, "n1", "<p>secret</p>");
-        set_note_protected(&s, &dek, "n1", true).unwrap();
+        let vault = unlocked_at(1, dek);
+        set_note_protected(&s, &vault, "n1", true).unwrap();
 
-        set_note_protected(&s, &dek, "n1", false).unwrap();
+        set_note_protected(&s, &vault, "n1", false).unwrap();
 
         assert!(!s.note_protected("n1").unwrap());
         assert_eq!(content_of(&s, "n1"), "<p>secret</p>");
+        assert_eq!(
+            s.note_key_gen("n1").unwrap(),
+            None,
+            "the generation marker is cleared along with `protected`"
+        );
     }
 
     #[test]
@@ -3155,7 +3505,7 @@ mod note_protection_tests {
         let dek = Dek::random();
         seed(&s, "n1", "<p>plain</p>");
 
-        set_note_protected(&s, &dek, "n1", false).unwrap();
+        set_note_protected(&s, &unlocked_at(1, dek), "n1", false).unwrap();
 
         assert_eq!(content_of(&s, "n1"), "<p>plain</p>");
         assert!(!s.note_protected("n1").unwrap());
@@ -3167,11 +3517,12 @@ mod note_protection_tests {
         let dek = Dek::random();
         folder(&s, "f", None);
         seed_in(&s, "n1", "<p>secret</p>", "f");
-        set_note_protected(&s, &dek, "n1", true).unwrap();
+        let vault = unlocked_at(1, dek);
+        set_note_protected(&s, &vault, "n1", true).unwrap();
         s.set_folder_locked("f", true).unwrap();
         let sealed = content_of(&s, "n1");
 
-        let err = set_note_protected(&s, &dek, "n1", false).unwrap_err();
+        let err = set_note_protected(&s, &vault, "n1", false).unwrap_err();
 
         assert_eq!(err, "note is protected by its folder");
         assert!(s.note_protected("n1").unwrap());
@@ -3185,11 +3536,12 @@ mod note_protection_tests {
         folder(&s, "top", None);
         folder(&s, "sub", Some("top"));
         seed_in(&s, "n1", "<p>secret</p>", "sub");
-        set_note_protected(&s, &dek, "n1", true).unwrap();
+        let vault = unlocked_at(1, dek);
+        set_note_protected(&s, &vault, "n1", true).unwrap();
         s.set_folder_locked("top", true).unwrap();
 
         assert_eq!(
-            set_note_protected(&s, &dek, "n1", false).unwrap_err(),
+            set_note_protected(&s, &vault, "n1", false).unwrap_err(),
             "note is protected by its folder"
         );
     }
@@ -3199,10 +3551,13 @@ mod note_protection_tests {
         let s = store();
         let dek = Dek::random();
         seed(&s, "n1", "<p>secret</p>");
-        set_note_protected(&s, &dek, "n1", true).unwrap();
+        set_note_protected(&s, &unlocked_at(1, dek), "n1", true).unwrap();
         let sealed = content_of(&s, "n1");
 
-        assert!(set_note_protected(&s, &Dek::random(), "n1", false).is_err());
+        // Same generation (1) as the note was sealed under, but a DIFFERENT
+        // DEK — the ring has an entry, so this is a decrypt/authentication
+        // failure, not "key generation not available".
+        assert!(set_note_protected(&s, &unlocked_at(1, Dek::random()), "n1", false).is_err());
 
         assert!(s.note_protected("n1").unwrap());
         assert_eq!(
@@ -3213,10 +3568,54 @@ mod note_protection_tests {
     }
 
     #[test]
+    fn unprotecting_opens_under_the_notes_own_generation_not_the_rings_newest() {
+        // Sealed while generation 1 was the ring's newest.
+        let s = store();
+        let d1 = Dek::random();
+        seed(&s, "n1", "<p>secret</p>");
+        set_note_protected(&s, &unlocked_at(1, d1.clone()), "n1", true).unwrap();
+        assert_eq!(s.note_key_gen("n1").unwrap(), Some(1));
+
+        // The vault has since rotated: the ring now holds BOTH generations,
+        // with 2 as the newest. Unprotecting must still open under the
+        // note's OWN generation (1), not reach for the newest (2).
+        let mut ring = VaultState::default();
+        ring.unlock(1, d1);
+        ring.unlock(2, Dek::random());
+
+        set_note_protected(&s, &ring, "n1", false).unwrap();
+
+        assert!(!s.note_protected("n1").unwrap());
+        assert_eq!(content_of(&s, "n1"), "<p>secret</p>");
+        assert_eq!(s.note_key_gen("n1").unwrap(), None);
+    }
+
+    #[test]
+    fn unprotecting_fails_when_the_ring_lacks_the_notes_generation() {
+        let s = store();
+        let d1 = Dek::random();
+        seed(&s, "n1", "<p>secret</p>");
+        set_note_protected(&s, &unlocked_at(1, d1), "n1", true).unwrap();
+
+        // The ring is unlocked, but only at a generation OTHER than the one
+        // this note was sealed under — distinct from a foreign-key decrypt
+        // failure (the ring has NO entry for generation 1 at all here).
+        let only_new = unlocked_at(2, Dek::random());
+        let err = set_note_protected(&s, &only_new, "n1", false).unwrap_err();
+
+        assert_eq!(err, "key generation not available");
+        assert!(
+            s.note_protected("n1").unwrap(),
+            "still protected — nothing was committed"
+        );
+    }
+
+    #[test]
     fn protecting_a_missing_note_is_an_error() {
         let s = store();
-        assert!(set_note_protected(&s, &Dek::random(), "ghost", true).is_err());
-        assert!(set_note_protected(&s, &Dek::random(), "ghost", false).is_err());
+        let vault = unlocked_at(1, Dek::random());
+        assert!(set_note_protected(&s, &vault, "ghost", true).is_err());
+        assert!(set_note_protected(&s, &vault, "ghost", false).is_err());
     }
 
     #[test]
@@ -3225,9 +3624,10 @@ mod note_protection_tests {
         let dek = Dek::random();
         let body = "<p>Grüße 🌍</p><p>&lt;escaped&gt;</p>";
         seed(&s, "n1", body);
+        let vault = unlocked_at(1, dek);
 
-        set_note_protected(&s, &dek, "n1", true).unwrap();
-        set_note_protected(&s, &dek, "n1", false).unwrap();
+        set_note_protected(&s, &vault, "n1", true).unwrap();
+        set_note_protected(&s, &vault, "n1", false).unwrap();
 
         assert_eq!(content_of(&s, "n1"), body);
     }
@@ -3237,6 +3637,12 @@ mod note_protection_tests {
 mod folder_lock_tests {
     use super::test_support::*;
     use super::*;
+
+    fn unlocked_at(generation: u32, dek: Dek) -> VaultState {
+        let mut v = VaultState::default();
+        v.unlock(generation, dek);
+        v
+    }
 
     #[test]
     fn locking_encrypts_every_note_in_the_subtree() {
@@ -3248,7 +3654,7 @@ mod folder_lock_tests {
         seed_in(&s, "nested", "<p>nested secret</p>", "sub");
         seed(&s, "outside", "<p>public</p>");
 
-        set_folder_locked(&s, &dek, "top", true).unwrap();
+        set_folder_locked(&s, &unlocked_at(1, dek), "top", true).unwrap();
 
         assert!(s.folder_locked("top").unwrap());
         for id in ["direct", "nested"] {
@@ -3267,7 +3673,7 @@ mod folder_lock_tests {
         seed_in(&s, "n1", "<p>secret</p>", "f");
         crate::revisions::add_revision(&s.conn, "n1", "<p>secret</p>", 50).unwrap();
 
-        set_folder_locked(&s, &dek, "f", true).unwrap();
+        set_folder_locked(&s, &unlocked_at(1, dek), "f", true).unwrap();
 
         assert_eq!(revision_count(&s, "n1"), 0);
     }
@@ -3278,10 +3684,10 @@ mod folder_lock_tests {
         let dek = Dek::random();
         folder(&s, "f", None);
         seed_in(&s, "n1", "<p>secret</p>", "f");
-        encrypt_note_in_place(&s, "n1", &dek).unwrap();
+        encrypt_note_in_place(&s, "n1", &dek, 1).unwrap();
         let sealed = content_of(&s, "n1");
 
-        set_folder_locked(&s, &dek, "f", true).unwrap();
+        set_folder_locked(&s, &unlocked_at(1, dek), "f", true).unwrap();
 
         assert_eq!(content_of(&s, "n1"), sealed, "no double encryption");
     }
@@ -3292,13 +3698,15 @@ mod folder_lock_tests {
         let dek = Dek::random();
         folder(&s, "f", None);
         seed_in(&s, "n1", "<p>secret</p>", "f");
-        set_folder_locked(&s, &dek, "f", true).unwrap();
+        let vault = unlocked_at(1, dek);
+        set_folder_locked(&s, &vault, "f", true).unwrap();
 
-        set_folder_locked(&s, &dek, "f", false).unwrap();
+        set_folder_locked(&s, &vault, "f", false).unwrap();
 
         assert!(!s.folder_locked("f").unwrap());
         assert!(!s.note_protected("n1").unwrap());
         assert_eq!(content_of(&s, "n1"), "<p>secret</p>");
+        assert_eq!(s.note_key_gen("n1").unwrap(), None);
     }
 
     #[test]
@@ -3308,10 +3716,11 @@ mod folder_lock_tests {
         folder(&s, "top", None);
         folder(&s, "sub", Some("top"));
         seed_in(&s, "n1", "<p>secret</p>", "sub");
-        set_folder_locked(&s, &dek, "top", true).unwrap();
+        let vault = unlocked_at(1, dek);
+        set_folder_locked(&s, &vault, "top", true).unwrap();
         let sealed = content_of(&s, "n1");
 
-        set_folder_locked(&s, &dek, "sub", false).unwrap();
+        set_folder_locked(&s, &vault, "sub", false).unwrap();
 
         assert!(
             s.note_protected("n1").unwrap(),
@@ -3326,7 +3735,7 @@ mod folder_lock_tests {
         let dek = Dek::random();
         folder(&s, "f", None);
 
-        set_folder_locked(&s, &dek, "f", true).unwrap();
+        set_folder_locked(&s, &unlocked_at(1, dek), "f", true).unwrap();
 
         assert!(s.folder_locked("f").unwrap());
     }
@@ -3339,7 +3748,7 @@ mod folder_lock_tests {
         seed_in(&s, "n1", "<p>secret</p>", "f");
         clear_dirty(&s);
 
-        set_folder_locked(&s, &dek, "f", true).unwrap();
+        set_folder_locked(&s, &unlocked_at(1, dek), "f", true).unwrap();
 
         let dirty = s.load_dirty_notes().unwrap();
         assert_eq!(dirty.len(), 1);
@@ -3353,13 +3762,61 @@ mod folder_lock_tests {
         let dek = Dek::random();
         folder(&s, "f", None);
         seed_in(&s, "n1", "<p>secret</p>", "f");
-        set_folder_locked(&s, &dek, "f", true).unwrap();
+        set_folder_locked(&s, &unlocked_at(1, dek), "f", true).unwrap();
         let sealed = content_of(&s, "n1");
 
-        assert!(set_folder_locked(&s, &Dek::random(), "f", false).is_err());
+        // Same generation (1), wrong DEK: the ring has an entry, so the
+        // per-note generation pre-check passes, and this fails only once the
+        // actual decrypt authenticates against the wrong key.
+        assert!(set_folder_locked(&s, &unlocked_at(1, Dek::random()), "f", false).is_err());
 
         assert!(s.note_protected("n1").unwrap());
         assert_eq!(content_of(&s, "n1"), sealed);
+    }
+
+    #[test]
+    fn unlocking_opens_notes_under_their_own_generation_not_the_rings_newest() {
+        let s = store();
+        let d1 = Dek::random();
+        folder(&s, "f", None);
+        seed_in(&s, "n1", "<p>secret</p>", "f");
+        set_folder_locked(&s, &unlocked_at(1, d1.clone()), "f", true).unwrap();
+        assert_eq!(s.note_key_gen("n1").unwrap(), Some(1));
+
+        // Rotated since: the ring now holds both generations, newest = 2.
+        let mut ring = VaultState::default();
+        ring.unlock(1, d1);
+        ring.unlock(2, Dek::random());
+
+        set_folder_locked(&s, &ring, "f", false).unwrap();
+
+        assert!(!s.folder_locked("f").unwrap());
+        assert!(!s.note_protected("n1").unwrap());
+        assert_eq!(content_of(&s, "n1"), "<p>secret</p>");
+    }
+
+    #[test]
+    fn unlocking_fails_and_leaves_the_folder_locked_when_the_ring_lacks_a_notes_generation() {
+        let s = store();
+        let d1 = Dek::random();
+        folder(&s, "f", None);
+        seed_in(&s, "n1", "<p>secret</p>", "f");
+        set_folder_locked(&s, &unlocked_at(1, d1), "f", true).unwrap();
+
+        // Unlocked, but only at a generation OTHER than the one this note
+        // was sealed under — the ring has NO entry for generation 1 at all.
+        let only_new = unlocked_at(2, Dek::random());
+        let err = set_folder_locked(&s, &only_new, "f", false).unwrap_err();
+
+        assert_eq!(err, "key generation not available");
+        assert!(
+            s.folder_locked("f").unwrap(),
+            "the folder must stay locked — nothing was committed"
+        );
+        assert!(
+            s.note_protected("n1").unwrap(),
+            "the note must stay sealed — nothing was committed"
+        );
     }
 }
 
@@ -4166,7 +4623,7 @@ mod export_tests {
         let dir = tempfile::tempdir().unwrap();
         let s = store();
         seed(&s, "a", "<p>Expenses</p><p>classified body</p>");
-        encrypt_note_in_place(&s, "a", &Dek::random()).unwrap();
+        encrypt_note_in_place(&s, "a", &Dek::random(), 1).unwrap();
         let out = dir.path().join("notes.json");
 
         export_notes_json(&s.load_notes().unwrap(), &out, &[]).unwrap();
@@ -4579,7 +5036,7 @@ mod database_error_tests {
     #[test]
     fn note_reads_report_the_failure() {
         let s = store_without_notes();
-        assert!(load_note_content(&s, None, "n1").is_err());
+        assert!(open_note_content(&s, &VaultState::default(), "n1").is_err());
         assert!(search_notes(&s, "x", true).is_err());
         assert!(note_stats(&s).is_err());
     }
@@ -4597,8 +5054,10 @@ mod database_error_tests {
     fn protection_transitions_report_the_failure() {
         let s = store_without_notes();
         let dek = Dek::random();
-        assert!(set_note_protected(&s, &dek, "n1", true).is_err());
-        assert!(encrypt_note_in_place(&s, "n1", &dek).is_err());
+        let mut vault = VaultState::default();
+        vault.unlock(1, dek.clone());
+        assert!(set_note_protected(&s, &vault, "n1", true).is_err());
+        assert!(encrypt_note_in_place(&s, "n1", &dek, 1).is_err());
     }
 
     #[test]
@@ -4639,7 +5098,9 @@ mod database_error_tests {
         assert!(folder_set_color(&s, "f", "c").is_err());
         assert!(folder_set_sort(&s, "f", "name").is_err());
         assert!(folder_chain_has_lock(&s, Some("f")).is_err());
-        assert!(set_folder_locked(&s, &Dek::random(), "f", true).is_err());
+        let mut vault = VaultState::default();
+        vault.unlock(1, Dek::random());
+        assert!(set_folder_locked(&s, &vault, "f", true).is_err());
     }
 
     #[test]
@@ -4656,6 +5117,8 @@ mod database_error_tests {
         // It is best-effort by design: a broken database must not abort an
         // otherwise-successful vault unlock.
         let s = store_without_notes();
-        backfill_protected_titles(&s, &Dek::random());
+        let mut vault = VaultState::default();
+        vault.unlock(1, Dek::random());
+        backfill_protected_titles(&s, &vault);
     }
 }

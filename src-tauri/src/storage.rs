@@ -881,7 +881,6 @@ impl Store {
     // protected note's ciphertext, feeding the lazy re-seal work list after
     // a key rotation. See `Note::key_gen`.
 
-    #[allow(dead_code)] // wired into vault/rotation commands by a later task
     pub fn note_key_gen(&self, id: &str) -> rusqlite::Result<Option<u32>> {
         self.conn
             .query_row("SELECT key_gen FROM notes WHERE id = ?1", [id], |r| {
@@ -889,7 +888,6 @@ impl Store {
             })
     }
 
-    #[allow(dead_code)] // wired into vault/rotation commands by a later task
     pub fn set_note_key_gen(&self, id: &str, gen: Option<u32>) -> rusqlite::Result<()> {
         self.conn
             .execute("UPDATE notes SET key_gen = ?2 WHERE id = ?1", (id, gen))?;

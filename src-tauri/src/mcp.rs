@@ -797,9 +797,18 @@ impl NoteStore for StoreAccess {
         vault.is_unlocked()
     }
     fn decrypt_protected(&self, id: &str, ciphertext: &str) -> Result<String, String> {
+        let st = self.app.state::<Mutex<crate::storage::Store>>();
         let vst = self.app.state::<Mutex<crate::vault::state::VaultState>>();
+        // Store locked before VaultState (see the lock-order convention in
+        // `commands.rs`) — needed here to read the note's own `key_gen` so
+        // the ring hands back the DEK it was actually sealed with, not
+        // whichever generation happens to be newest.
+        let store = st.lock().unwrap();
         let vault = vst.lock().unwrap();
-        let dek = vault.dek().ok_or_else(|| "vault locked".to_string())?;
+        let gen = store.note_key_gen(id).map_err(|e| e.to_string())?;
+        let dek = vault
+            .dek_for(gen)
+            .ok_or_else(|| "vault locked".to_string())?;
         crate::commands::open_content(dek, id, ciphertext)
     }
     fn write_protected(&self, id: &str, plaintext_html: &str) -> Result<(), String> {
@@ -810,11 +819,16 @@ impl NoteStore for StoreAccess {
         // request can ever observe the note's content column as plaintext.
         let store = st.lock().unwrap();
         let vault = vst.lock().unwrap();
-        let dek = vault.dek().ok_or_else(|| "vault locked".to_string())?;
+        // A fresh write always seals under the NEWEST generation, same as
+        // every other sealing path (`ops::save_note`, `ops::encrypt_note_in_place`).
+        let (dek, generation) = vault
+            .dek()
+            .zip(vault.newest_generation())
+            .ok_or_else(|| "vault locked".to_string())?;
         store
             .set_content_silent(id, plaintext_html)
             .map_err(|e| e.to_string())?;
-        crate::commands::encrypt_note_in_place(&store, id, dek)
+        crate::commands::encrypt_note_in_place(&store, id, dek, generation)
     }
     fn now_ms(&self) -> i64 {
         std::time::SystemTime::now()

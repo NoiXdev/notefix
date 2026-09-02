@@ -1,12 +1,22 @@
-//! In-memory runtime state for the protected-notes vault: holds the unlocked
-//! DEK (if any) and the last-activity timestamp used for auto-lock. Never
-//! persisted — a process restart always starts locked.
+//! In-memory runtime state for the protected-notes vault: holds a ring of
+//! unlocked DEKs keyed by key generation, plus the last-activity timestamp
+//! used for auto-lock. Never persisted — a process restart always starts
+//! locked.
+//!
+//! A local (non-rotated) context's ring holds exactly generation 1. Once a
+//! workspace rotates its key, unlocking hands over every generation still
+//! needed to open existing ciphertext (`unlock` inserts/replaces one
+//! generation at a time), while every NEW seal always uses the newest one
+//! (`dek`/`newest_generation`).
+
+use std::collections::BTreeMap;
 
 use super::aead::Dek;
 
 #[derive(Default)]
 pub struct VaultState {
-    dek: Option<Dek>,
+    /// generation → DEK. Local contexts hold exactly generation 1.
+    ring: BTreeMap<u32, Dek>,
     // Written by `touch`; read by the auto-lock timer landing in a later
     // task, so it carries `#[allow(dead_code)]` until that caller lands.
     #[allow(dead_code)]
@@ -14,24 +24,47 @@ pub struct VaultState {
 }
 
 impl VaultState {
-    /// Store the freshly unlocked DEK, replacing any previous one.
-    pub fn unlock(&mut self, dek: Dek) {
-        self.dek = Some(dek);
+    /// Store a freshly unlocked DEK for `generation`, replacing any previous
+    /// DEK for that same generation. Other generations already in the ring
+    /// are left untouched.
+    pub fn unlock(&mut self, generation: u32, dek: Dek) {
+        self.ring.insert(generation, dek);
     }
 
-    /// Clear the DEK, returning the vault to a locked state.
+    /// Clear every generation, returning the vault to a locked state.
     pub fn lock(&mut self) {
-        self.dek = None;
+        self.ring.clear();
     }
 
+    /// True while any generation is unlocked.
     pub fn is_unlocked(&self) -> bool {
-        self.dek.is_some()
+        !self.ring.is_empty()
     }
 
-    /// The unlocked DEK, or `None` while the vault is locked. Used by Task 6's
-    /// encrypt/decrypt commands to seal/open protected note content.
+    /// The newest generation's DEK — the one every new seal uses. `None`
+    /// while the vault is locked.
     pub fn dek(&self) -> Option<&Dek> {
-        self.dek.as_ref()
+        self.ring.iter().next_back().map(|(_, d)| d)
+    }
+
+    /// The newest generation currently unlocked, or `None` while locked.
+    pub fn newest_generation(&self) -> Option<u32> {
+        self.ring.keys().next_back().copied()
+    }
+
+    /// The DEK a note was sealed with. `None` (pre-generation notes, sealed
+    /// before schema v15) is treated as generation 1. `None` is also
+    /// returned when that generation simply isn't in the ring yet.
+    pub fn dek_for(&self, generation: Option<u32>) -> Option<&Dek> {
+        self.ring.get(&generation.unwrap_or(1))
+    }
+
+    /// Every generation currently unlocked, ascending. Not yet called from
+    /// app code — a later task surfaces it (e.g. rotation progress/diagnostics)
+    /// — so it carries `#[allow(dead_code)]` per the `touch` precedent above.
+    #[allow(dead_code)]
+    pub fn generations(&self) -> Vec<u32> {
+        self.ring.keys().copied().collect()
     }
 
     /// Record `now` (ms since epoch) as the last activity time, used by the
@@ -53,9 +86,31 @@ mod tests {
     fn lock_clears_dek() {
         let mut s = VaultState::default();
         assert!(!s.is_unlocked());
-        s.unlock(Dek::random());
+        s.unlock(1, Dek::random());
         assert!(s.is_unlocked());
         s.lock();
         assert!(!s.is_unlocked() && s.dek().is_none());
+    }
+
+    #[test]
+    fn ring_seals_with_newest_and_opens_by_generation() {
+        let mut s = VaultState::default();
+        assert!(!s.is_unlocked() && s.dek_for(None).is_none());
+        let d1 = Dek::random();
+        let d2 = Dek::random();
+        s.unlock(1, d1.clone());
+        s.unlock(2, d2.clone());
+        assert_eq!(s.newest_generation(), Some(2));
+        assert_eq!(s.dek().unwrap().expose(), d2.expose());
+        assert_eq!(s.dek_for(Some(1)).unwrap().expose(), d1.expose());
+        assert_eq!(
+            s.dek_for(None).unwrap().expose(),
+            d1.expose(),
+            "legacy notes = generation 1"
+        );
+        assert!(s.dek_for(Some(3)).is_none());
+        assert_eq!(s.generations(), vec![1, 2]);
+        s.lock();
+        assert!(!s.is_unlocked());
     }
 }
