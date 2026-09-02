@@ -51,6 +51,13 @@ describe('blank lines survive the markdown view', () => {
     expect(throughMarkdownView(ed)).toBe('<p>a</p><p></p><p></p><p></p><p>b</p>');
   });
 
+  it('shows the empty paragraphs as plain blank lines in the markdown view, not <br>', () => {
+    const ed = makeEditor('<p>a</p><p></p><p></p><p>b</p>');
+    const md = htmlToMarkdown(ed.getHTML(), { blankLines: true });
+    expect(md).toBe('a\n\n\n\nb');
+    expect(md).not.toContain('<br>');
+  });
+
   it('leaves an empty note empty', () => {
     const ed = makeEditor('<p></p>');
     expect(throughMarkdownView(ed)).toBe('<p></p>');

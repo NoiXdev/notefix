@@ -59,16 +59,52 @@ describe('markdown link-preview + code block', () => {
 });
 
 describe('markdown blank lines', () => {
-  it('keeps the empty paragraphs before a list as explicit blank lines', () => {
+  // The contract: one blank line between blocks is the ordinary paragraph
+  // separator; every additional blank line is one empty paragraph. Leading
+  // blank lines are empty paragraphs before the first block, extra trailing
+  // ones after the last. No `<br>` placeholders in the markdown view.
+  it('writes the empty paragraphs before a list as extra blank lines, not <br>', () => {
     const md = htmlToMarkdown('<p>Text</p><p></p><p></p><ul><li><p>Punkt</p></li></ul>', { blankLines: true });
-    expect(md).toBe('Text\n\n<br>\n\n<br>\n\n- Punkt');
+    expect(md).toBe('Text\n\n\n\n- Punkt');
+    expect(md).not.toContain('<br>');
   });
   it('round-trips blank lines between paragraphs and a list', () => {
     const html = '<p>Text</p><p></p><p></p><ul><li>Punkt</li></ul>';
     expect(markdownToHtml(htmlToMarkdown(html, { blankLines: true })).replace(/\n/g, '')).toBe(html);
   });
+  it('round-trips one and two empty paragraphs between paragraphs', () => {
+    for (const html of ['<p>a</p><p></p><p>b</p>', '<p>a</p><p></p><p></p><p>b</p>']) {
+      expect(markdownToHtml(htmlToMarkdown(html, { blankLines: true })).replace(/\n/g, '')).toBe(html);
+    }
+    expect(htmlToMarkdown('<p>a</p><p></p><p>b</p>', { blankLines: true })).toBe('a\n\n\nb');
+    expect(htmlToMarkdown('<p>a</p><p></p><p></p><p>b</p>', { blankLines: true })).toBe('a\n\n\n\nb');
+  });
+  it('round-trips leading and trailing empty paragraphs', () => {
+    for (const html of ['<p></p><p>a</p>', '<p></p><p></p><p>a</p>', '<p>a</p><p></p>', '<p>a</p><p></p><p></p>']) {
+      expect(markdownToHtml(htmlToMarkdown(html, { blankLines: true })).replace(/\n/g, '')).toBe(html);
+    }
+    expect(htmlToMarkdown('<p></p><p>a</p>', { blankLines: true })).toBe('\na');
+    expect(htmlToMarkdown('<p>a</p><p></p>', { blankLines: true })).toBe('a\n\n\n');
+  });
   it('treats <p><br></p> as a blank line too', () => {
-    expect(htmlToMarkdown('<p>a</p><p><br></p><p>b</p>', { blankLines: true })).toBe('a\n\n<br>\n\nb');
+    expect(htmlToMarkdown('<p>a</p><p><br></p><p>b</p>', { blankLines: true })).toBe('a\n\n\nb');
+  });
+  it('turns blank lines typed in the markdown view into empty paragraphs', () => {
+    const strip = (md: string) => markdownToHtml(md).replace(/\n/g, '');
+    expect(strip('a\n\nb')).toBe('<p>a</p><p>b</p>'); // the ordinary separator
+    expect(strip('a\n\n\nb')).toBe('<p>a</p><p></p><p>b</p>');
+    expect(strip('a\n\n\n\nb')).toBe('<p>a</p><p></p><p></p><p>b</p>');
+    expect(strip('\na')).toBe('<p></p><p>a</p>');
+    expect(strip('a\n\n')).toBe('<p>a</p>'); // an editor's trailing newline is not a paragraph
+    expect(strip('a\n\n\n')).toBe('<p>a</p><p></p>');
+  });
+  it('leaves blank lines inside fenced code alone', () => {
+    const html = markdownToHtml('x\n\n```\ncode\n\n\nmore\n```\n\n\ny');
+    expect(html).toContain('code\n\n\nmore');
+    expect(html.replace(/\n/g, '')).toBe('<p>x</p><pre><code>codemore</code></pre><p></p><p>y</p>');
+  });
+  it('still reads a literal <br> line (older markdown, or typed) as an empty paragraph', () => {
+    expect(markdownToHtml('a\n\n<br>\n\nb').replace(/\n/g, '')).toBe('<p>a</p><p></p><p>b</p>');
   });
   it('leaves a note that is only empty paragraphs empty', () => {
     expect(htmlToMarkdown('<p></p>', { blankLines: true })).toBe('');

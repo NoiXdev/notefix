@@ -15,15 +15,26 @@ td.addRule('tiptapTaskItem', {
 
 /** Empty paragraphs — the blank lines you get from pressing Enter a few times —
  *  have no markdown equivalent: a run of blank lines collapses into a single
- *  paragraph break. `markBlankLines` turns each one into a marker <br> that this
- *  rule writes out as an explicit `<br>` line, which `markdownToHtml` reads back
- *  as an empty paragraph. Without it, switching to the markdown view and back
- *  silently dropped every blank line. */
+ *  paragraph break. We give them the natural one anyway: ONE blank line between
+ *  blocks is the ordinary paragraph separator, and every ADDITIONAL blank line
+ *  is one empty paragraph (leading blank lines are empty paragraphs before the
+ *  first block, extra trailing ones after the last). So the markdown view shows
+ *  plain blank lines — no `<br>` noise — and typing blank lines there creates
+ *  empty paragraphs in the note.
+ *
+ *  Mechanics: `markBlankLines` turns each empty top-level paragraph into a
+ *  marker <br>; this rule emits a placeholder for it, because turndown caps the
+ *  separator between blocks at two newlines and would swallow a third;
+ *  `htmlToMarkdown` then turns each placeholder into that extra newline, and
+ *  `expandBlankLines` reads the extra newlines back into `<p></p>` blocks before
+ *  marked sees the markdown. Without all this, switching to the markdown view
+ *  and back silently dropped every blank line. */
 const BLANK_LINE_ATTR = 'data-blank-line';
+const BLANK_TOKEN = '';
 
 td.addRule('blankLine', {
   filter: (node) => node.nodeName === 'BR' && (node as HTMLElement).getAttribute(BLANK_LINE_ATTR) !== null,
-  replacement: () => '\n\n<br>\n\n',
+  replacement: () => `\n\n${BLANK_TOKEN}\n\n`,
 });
 
 td.addRule('linkPreview', {
@@ -59,7 +70,13 @@ export interface HtmlToMarkdownOptions {
 
 export function htmlToMarkdown(html: string, opts: HtmlToMarkdownOptions = {}): string {
   const source = opts.blankLines ? markBlankLines(html || '') : (html || '');
-  return td.turndown(source).replace(/^(-|\*|\+)\s{3,}/gm, '$1 ');
+  return td
+    .turndown(source)
+    // Each placeholder (plus the separator turndown put after it) becomes one
+    // extra newline — see the blank-line contract above. Between two blocks k
+    // empty paragraphs thus read as k+2 newlines; leading ones as k newlines.
+    .replace(new RegExp(`${BLANK_TOKEN}(?:\\n\\n)?`, 'g'), '\n')
+    .replace(/^(-|\*|\+)\s{3,}/gm, '$1 ');
 }
 
 function fixTaskLists(html: string): string {
@@ -91,10 +108,30 @@ function restoreLinkPreviews(html: string): string {
   return el.innerHTML;
 }
 
-/** Counterpart of `markBlankLines`: a `<br>` line in the markdown reaches us as
- *  a top-level <br> element (marked passes HTML blocks through), and becomes the
- *  empty paragraph it came from. <br>s inside a paragraph — the line breaks from
- *  `breaks: true` — are untouched. */
+/** Reads the blank-line contract back: leading blank lines and every newline
+ *  beyond the two of an ordinary block separator become `<p></p>` blocks, which
+ *  marked passes through as raw HTML and Tiptap parses as empty paragraphs.
+ *  Fenced code is left alone — blank lines inside it are content, not
+ *  paragraphs. */
+function expandBlankLines(md: string): string {
+  const empty = (n: number) => '<p></p>\n\n'.repeat(n);
+  return md
+    .split(/(```[\s\S]*?```|~~~[\s\S]*?~~~)/)
+    .map((segment, i) => {
+      if (i % 2 === 1) return segment; // a fenced code block — untouched
+      let out = segment;
+      // Only the document's own start counts as "leading": after a fence the
+      // newlines are an ordinary separator and fall under the rule below.
+      if (i === 0) out = out.replace(/^\n+/, m => empty(m.length));
+      return out.replace(/\n{3,}/g, m => '\n\n' + empty(m.length - 2));
+    })
+    .join('');
+}
+
+/** A literal `<br>` line in the markdown (the representation an earlier version
+ *  wrote, or one the user typed) reaches us as a top-level <br> element and
+ *  still becomes an empty paragraph. <br>s inside a paragraph — the line breaks
+ *  from `breaks: true` — are untouched. */
 function restoreBlankLines(html: string): string {
   const el = document.createElement('div');
   el.innerHTML = html;
@@ -105,6 +142,6 @@ function restoreBlankLines(html: string): string {
 }
 
 export function markdownToHtml(md: string): string {
-  const html = marked.parse(md || '', { gfm: true, breaks: true, async: false }) as string;
+  const html = marked.parse(expandBlankLines(md || ''), { gfm: true, breaks: true, async: false }) as string;
   return restoreLinkPreviews(fixTaskLists(restoreBlankLines(html)));
 }
