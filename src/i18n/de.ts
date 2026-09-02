@@ -599,6 +599,7 @@ export const de = {
       done: 'Fertig',
     },
     imagesUnencryptedHint: 'Bilder in dieser Notiz bleiben unverschlüsselt. Der Text wird geschützt, die Bilddateien liegen weiter offen auf diesem Gerät.',
+    imagesUnencryptedHintFolder: 'Bilder in diesem Ordner bleiben unverschlüsselt. Der Text der Notizen wird geschützt, die Bilddateien liegen weiter offen auf diesem Gerät.',
     imagesUnencryptedTitle: 'Bilder bleiben unverschlüsselt',
     rotation: {
       lockedHint: 'Entsperre zuerst den Tresor, dann gib deinen Code ein — er bleibt gültig, bis du ihn einlöst.',

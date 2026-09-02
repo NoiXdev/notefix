@@ -599,6 +599,7 @@ export const fr = {
       done: 'Terminé',
     },
     imagesUnencryptedHint: 'Les images de cette note restent non chiffrées. Le texte est protégé, mais les fichiers image restent lisibles sur cet appareil.',
+    imagesUnencryptedHintFolder: 'Les images de ce dossier restent non chiffrées. Le texte des notes est protégé, mais les fichiers image restent lisibles sur cet appareil.',
     imagesUnencryptedTitle: 'Les images restent non chiffrées',
     rotation: {
       lockedHint: 'Déverrouillez d\u2019abord le coffre, puis saisissez votre code — il reste valable jusqu\u2019à ce que vous l\u2019utilisiez.',

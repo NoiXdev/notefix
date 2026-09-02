@@ -712,7 +712,7 @@ export default function App() {
       {imagesHint && (
         <ConfirmDialog
           title={t('vault.imagesUnencryptedTitle')}
-          message={t('vault.imagesUnencryptedHint')}
+          message={t(imagesHint.kind === 'folder' ? 'vault.imagesUnencryptedHintFolder' : 'vault.imagesUnencryptedHint')}
           confirmLabel={imagesHint.kind === 'folder' ? t('vault.lockFolder') : t('vault.lockNote')}
           onConfirm={() => {
             const p = imagesHint;

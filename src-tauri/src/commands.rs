@@ -1087,7 +1087,7 @@ pub async fn run_sync_cycle(app: &AppHandle) -> Result<(), String> {
             state: "syncing".into(),
             last_synced_at: 0,
             pending: 0,
-            vault_rotation_pending: false,
+            vault_rotation_pending: rotation_pending(app),
         },
     );
 

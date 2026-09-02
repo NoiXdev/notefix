@@ -599,6 +599,7 @@ export const en = {
       done: 'Done',
     },
     imagesUnencryptedHint: 'Images in this note stay unencrypted. The text is protected, but the image files remain readable on this device.',
+    imagesUnencryptedHintFolder: 'Images in this folder stay unencrypted. The text of the notes is protected, but the image files remain readable on this device.',
     imagesUnencryptedTitle: 'Images stay unencrypted',
     rotation: {
       lockedHint: 'Unlock the vault first, then enter your code — it stays valid until you use it.',
