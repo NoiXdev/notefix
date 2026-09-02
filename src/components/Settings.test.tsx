@@ -19,6 +19,17 @@ const {
   mockBiometricAvailable,
   mockBiometricEnable,
   mockBiometricDisable,
+  mockCheckForUpdate,
+  mockCheckPaths,
+  mockWindowProbe,
+  mockContextsList,
+  mockContextsAdd,
+  mockContextsRename,
+  mockContextsRemove,
+  mockServerAuthBegin,
+  mockOnContextChanged,
+  mockOpenExternal,
+  mockUseIsMobile,
 } = vi.hoisted(() => ({
   mockIsEnabled: vi.fn(() => Promise.resolve(false)),
   mockEnable: vi.fn(() => Promise.resolve()),
@@ -37,6 +48,17 @@ const {
   mockBiometricAvailable: vi.fn(() => Promise.resolve(false)),
   mockBiometricEnable: vi.fn(() => Promise.resolve()),
   mockBiometricDisable: vi.fn(() => Promise.resolve()),
+  mockCheckForUpdate: vi.fn(() => Promise.resolve({ current: "0.7.0", latest: "0.7.0", updateAvailable: false, url: "" })),
+  mockCheckPaths: vi.fn(() => Promise.resolve({ dbWritable: true, imagesWritable: true, dbPath: "/data/notefix.db", imagesPath: "/data/images" })),
+  mockWindowProbe: vi.fn(() => Promise.resolve(true)),
+  mockContextsList: vi.fn(() => Promise.resolve([])),
+  mockContextsAdd: vi.fn(() => Promise.resolve([])),
+  mockContextsRename: vi.fn(() => Promise.resolve([])),
+  mockContextsRemove: vi.fn(() => Promise.resolve([])),
+  mockServerAuthBegin: vi.fn(() => Promise.resolve("https://server.example.com/authorize")),
+  mockOnContextChanged: vi.fn(() => () => {}),
+  mockOpenExternal: vi.fn(),
+  mockUseIsMobile: vi.fn(() => false),
 }));
 
 vi.mock("../api", () => ({
@@ -45,11 +67,15 @@ vi.mock("../api", () => ({
     autostart: { isEnabled: mockIsEnabled, enable: mockEnable, disable: mockDisable },
     stats: vi.fn(() => Promise.resolve({ notes: 3, archived: 1, characters: 42, words: 8 })),
     githubReleases: vi.fn(() => Promise.resolve([])),
-    openExternal: vi.fn(),
+    openExternal: mockOpenExternal,
     getDbPath: mockGetDbPath,
     setDbLocation: mockSetDbLocation,
     relaunch: mockRelaunch,
     pickFolder: mockPickFolder,
+    checkForUpdate: mockCheckForUpdate,
+    checkPaths: mockCheckPaths,
+    windowProbe: mockWindowProbe,
+    onContextChanged: mockOnContextChanged,
     vault: {
       status: mockVaultStatus,
       setup: mockVaultSetup,
@@ -62,6 +88,13 @@ vi.mock("../api", () => ({
       biometricEnable: mockBiometricEnable,
       biometricDisable: mockBiometricDisable,
     },
+    contexts: {
+      list: mockContextsList,
+      add: mockContextsAdd,
+      rename: mockContextsRename,
+      remove: mockContextsRemove,
+      serverAuthBegin: mockServerAuthBegin,
+    },
   },
 }));
 vi.mock('react-select', () => ({
@@ -71,11 +104,78 @@ vi.mock('react-select', () => ({
     </select>
   ),
 }));
+vi.mock("../hooks/useIsMobile", () => ({ useIsMobile: mockUseIsMobile }));
+
+// `isMobilePlatform` is a plain const computed once from the UA at module
+// load, so it can't be flipped by changing navigator.userAgent after the
+// fact. Mock the module with a getter instead, so each render re-reads the
+// current `platformState.isMobilePlatform` — same live-binding trick Vitest
+// docs use for "constants" that need to vary between tests.
+const platformState = vi.hoisted(() => ({ isMobilePlatform: false }));
+vi.mock("../platform", () => ({
+  get isMobilePlatform() { return platformState.isMobilePlatform; },
+}));
 
 import Settings from "./Settings";
 import { api } from "../api";
+import type { AppSettings } from "../hooks/useSettings";
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockUseIsMobile.mockReturnValue(false);
+  platformState.isMobilePlatform = false;
+});
+
+/** Every AppSettings field at its default (mirrors useSettings.ts DEFAULTS), so new tests don't need to hand-roll the whole shape. */
+const FULL_SETTINGS: AppSettings = {
+  startMinimized: false,
+  dateFormat: "auto",
+  pinnedScope: "perFolder",
+  folderColorStyle: "icon",
+  revisionLimit: 50,
+  autosaveDelay: 400,
+  startView: "lastNote",
+  sidebarMode: "switcher",
+  dashboardLayout: [{ key: "recent", x: 0, y: 0, w: 6, h: 4 }],
+  compactTree: false,
+  treeProgress: true,
+  trashEnabled: true,
+  trashRetentionDays: 30,
+  closeAction: "ask",
+  shortcuts: {},
+  language: "system",
+  linkPreviewEnabled: true,
+  linkPreviewMode: "card",
+  copyFormat: "md",
+  mcpEnabled: false,
+  mcpBind: "internal",
+  mcpPort: 4357,
+  mcpAuthRequired: true,
+  mcpToken: "",
+  mcpAllowWrite: false,
+  mcpProtectedAccess: "off",
+  checkUpdatesOnStart: true,
+  updateDismissedVersion: "",
+  lastSeenVersion: "",
+  whatsNewOnUpdate: true,
+  searchScope: "context",
+  theme: "butter",
+  editorCountShow: true,
+  editorCountPos: "topRight",
+  editorInvisibles: false,
+  editorLineHeight: "normal",
+  editorToolbarPos: "bottom",
+  editorFontSize: "medium",
+  editorFontFamily: "sans",
+  editorWidth: "full",
+  sidebarSide: "left",
+  autoLockIdle: true,
+  autoLockOnHide: true,
+  autoLockMinutes: 5,
+  autoLockOnSleep: true,
+  vaultBiometric: false,
+  vaultLockScope: "session",
+};
 
 describe("Settings — Darstellung", () => {
   it("shows the About page by default", async () => {
@@ -273,6 +373,9 @@ describe("Settings — What's New (About page)", () => {
 
     await waitFor(() => expect(screen.getByText("Neu in dieser Version")).toBeInTheDocument());
     expect(screen.getByText("v0.6.0 — Apps page")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTitle("Schließen"));
+    expect(screen.queryByText("Neu in dieser Version")).not.toBeInTheDocument();
   });
 
   it("shows an inline error when the fetch fails", async () => {
@@ -292,5 +395,668 @@ describe("Settings — What's New (About page)", () => {
     fireEvent.click(screen.getByText("System"));
     fireEvent.click(screen.getByLabelText(/nach einem Update anzeigen/));
     expect(onSetSetting).toHaveBeenCalledWith("whatsNewOnUpdate", false);
+  });
+});
+
+describe("Settings — navigation & close", () => {
+  it("calls onClose when the close button is clicked", () => {
+    const onClose = vi.fn();
+    render(<Settings onClose={onClose} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByTitle("Zurück zu den Notizen"));
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("opens directly on the requested initialPage", async () => {
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} initialPage="security" />);
+    await waitFor(() => expect(screen.getByText("Notizen mit einem Passwort-Tresor schützen.")).toBeInTheDocument());
+  });
+
+  it("hides the MCP nav item when isMobilePlatform is true", () => {
+    platformState.isMobilePlatform = true;
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    expect(screen.queryByText("MCP")).not.toBeInTheDocument();
+  });
+
+  it("mobile: shows the nav list first; picking a page drills in and the back button returns to the list", async () => {
+    mockUseIsMobile.mockReturnValue(true);
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    // Nav list is shown; no page content has been drilled into yet.
+    expect(screen.getByText("System")).toBeInTheDocument();
+    expect(screen.queryByText("Statistik")).toBeInTheDocument(); // still the nav item, not the page
+
+    fireEvent.click(screen.getByText("System"));
+    await waitFor(() => expect(screen.getByText("Start- und Hintergrund-Verhalten.")).toBeInTheDocument());
+    expect(screen.queryByText("Statistik")).not.toBeInTheDocument(); // nav list is gone now
+
+    fireEvent.click(screen.getByText("Einstellungen")); // back button
+    expect(screen.getByText("Statistik")).toBeInTheDocument(); // nav list is back
+  });
+
+  it("mobile: initialPage skips the nav list and shows the back button immediately", async () => {
+    mockUseIsMobile.mockReturnValue(true);
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} initialPage="security" />);
+    await waitFor(() => expect(screen.getByText("Notizen mit einem Passwort-Tresor schützen.")).toBeInTheDocument());
+    expect(screen.getByText("Einstellungen")).toBeInTheDocument(); // back button, only one match if the nav aside is absent
+  });
+});
+
+describe("Settings — System page (desktop-only gating)", () => {
+  it("hides the start-on-boot section, the storage-location changer and the update checker when isMobilePlatform is true", () => {
+    platformState.isMobilePlatform = true;
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("System"));
+    expect(screen.queryByText("Bei Anmeldung starten")).not.toBeInTheDocument();
+    expect(screen.queryByText("Ändern…")).not.toBeInTheDocument();
+    expect(screen.queryByText("Nach Updates suchen")).not.toBeInTheDocument();
+    // Non-gated rows stay visible.
+    expect(screen.getByText("Papierkorb verwenden")).toBeInTheDocument();
+  });
+});
+
+describe("Settings — Update checker (System page)", () => {
+  it("checks for updates and shows 'up to date'", async () => {
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("System"));
+    fireEvent.click(screen.getByText("Nach Updates suchen"));
+    expect(screen.getByText("Suche…")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("Du bist aktuell (0.7.0)")).toBeInTheDocument());
+  });
+
+  it("shows an update link and opens it externally when a newer version is available", async () => {
+    mockCheckForUpdate.mockResolvedValueOnce({ current: "0.6.0", latest: "0.8.0", updateAvailable: true, url: "https://example.com/dl" });
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("System"));
+    fireEvent.click(screen.getByText("Nach Updates suchen"));
+    const link = await screen.findByText("Update verfügbar: 0.8.0 — Herunterladen");
+    fireEvent.click(link);
+    expect(mockOpenExternal).toHaveBeenCalledWith("https://example.com/dl");
+  });
+
+  it("shows an error when the update check fails", async () => {
+    mockCheckForUpdate.mockRejectedValueOnce(new Error("offline"));
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("System"));
+    fireEvent.click(screen.getByText("Nach Updates suchen"));
+    await waitFor(() => expect(screen.getByText("Konnte nicht prüfen")).toBeInTheDocument());
+  });
+
+  it("toggling 'check on start' calls onSetSetting", () => {
+    const onSetSetting = vi.fn();
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={onSetSetting} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("System"));
+    fireEvent.click(screen.getByRole("switch", { name: "Beim Start nach Updates suchen" }));
+    expect(onSetSetting).toHaveBeenCalledWith("checkUpdatesOnStart", false);
+  });
+});
+
+describe("Settings — Apps page", () => {
+  it("lists the platforms and opens the Play Store link for Android", () => {
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Apps"));
+    expect(screen.getByText("Android")).toBeInTheDocument();
+    expect(screen.getByText("iPhone & iPad")).toBeInTheDocument();
+    expect(screen.getByText("Sync-Server")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Im Play Store öffnen"));
+    expect(mockOpenExternal).toHaveBeenCalledWith("https://play.google.com/store/apps/details?id=dev.noix.notefix");
+  });
+});
+
+describe("Settings — Security: vault setup, lock & change passphrase", () => {
+  it("sets up the vault, shows the recovery codes, and closes the dialog", async () => {
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Sicherheit"));
+    await waitFor(() => expect(screen.getByText("Kein Tresor eingerichtet")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Tresor einrichten" }));
+    fireEvent.change(screen.getByPlaceholderText("Passwort"), { target: { value: "secret123" } });
+    fireEvent.change(screen.getByPlaceholderText("Passwort bestätigen"), { target: { value: "secret123" } });
+    fireEvent.click(screen.getByRole("button", { name: "Einrichten" }));
+
+    await waitFor(() => expect(mockVaultSetup).toHaveBeenCalledWith("secret123"));
+    await waitFor(() => expect(screen.getByText("code-1-code-2")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText("Ich habe ihn gespeichert"));
+    expect(screen.queryByText("Wiederherstellungs-Schlüssel")).not.toBeInTheDocument();
+  });
+
+  it("shows 'unlocked' status and lock-now calls vault.lock", async () => {
+    mockVaultStatus.mockResolvedValueOnce({ exists: true, unlocked: true, biometric: false });
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Sicherheit"));
+    await waitFor(() => expect(screen.getByText("Entsperrt")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("Jetzt sperren"));
+    expect(mockVaultLock).toHaveBeenCalledOnce();
+  });
+
+  it("changes the passphrase on the happy path", async () => {
+    mockVaultStatus.mockResolvedValueOnce({ exists: true, unlocked: true, biometric: false });
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Sicherheit"));
+    await waitFor(() => expect(screen.getByText("Entsperrt")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Passwort ändern" }));
+
+    fireEvent.change(screen.getByPlaceholderText("Aktuelles Passwort"), { target: { value: "old" } });
+    fireEvent.change(screen.getByPlaceholderText("Neues Passwort"), { target: { value: "new123" } });
+    fireEvent.change(screen.getByPlaceholderText("Neues Passwort bestätigen"), { target: { value: "new123" } });
+    fireEvent.click(screen.getByRole("button", { name: "Ändern" }));
+
+    await waitFor(() => expect(mockVaultChangePassphrase).toHaveBeenCalledWith("old", "new123"));
+    await waitFor(() => expect(screen.queryByPlaceholderText("Aktuelles Passwort")).not.toBeInTheDocument());
+  });
+
+  it("shows a mismatch error without calling the API when the new passphrases differ", async () => {
+    mockVaultStatus.mockResolvedValueOnce({ exists: true, unlocked: true, biometric: false });
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Sicherheit"));
+    await waitFor(() => expect(screen.getByText("Entsperrt")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Passwort ändern" }));
+
+    fireEvent.change(screen.getByPlaceholderText("Aktuelles Passwort"), { target: { value: "old" } });
+    fireEvent.change(screen.getByPlaceholderText("Neues Passwort"), { target: { value: "new123" } });
+    fireEvent.change(screen.getByPlaceholderText("Neues Passwort bestätigen"), { target: { value: "different" } });
+    fireEvent.click(screen.getByRole("button", { name: "Ändern" }));
+
+    expect(await screen.findByText("Passwörter stimmen nicht überein")).toBeInTheDocument();
+    expect(mockVaultChangePassphrase).not.toHaveBeenCalled();
+  });
+
+  it("shows a wrong-current-passphrase error when the API rejects", async () => {
+    mockVaultStatus.mockResolvedValueOnce({ exists: true, unlocked: true, biometric: false });
+    mockVaultChangePassphrase.mockRejectedValueOnce(new Error("bad current"));
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Sicherheit"));
+    await waitFor(() => expect(screen.getByText("Entsperrt")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Passwort ändern" }));
+
+    fireEvent.change(screen.getByPlaceholderText("Aktuelles Passwort"), { target: { value: "wrong" } });
+    fireEvent.change(screen.getByPlaceholderText("Neues Passwort"), { target: { value: "new123" } });
+    fireEvent.change(screen.getByPlaceholderText("Neues Passwort bestätigen"), { target: { value: "new123" } });
+    fireEvent.click(screen.getByRole("button", { name: "Ändern" }));
+
+    expect(await screen.findByText("Aktuelles Passwort falsch")).toBeInTheDocument();
+  });
+});
+
+describe("Settings — Security: biometric unlock", () => {
+  it("enables biometric unlock directly when the vault is already unlocked", async () => {
+    mockVaultStatus
+      .mockResolvedValueOnce({ exists: true, unlocked: true, biometric: false })
+      .mockResolvedValueOnce({ exists: true, unlocked: true, biometric: false });
+    mockBiometricAvailable.mockResolvedValueOnce(true);
+    const onSetSetting = vi.fn();
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={onSetSetting} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Sicherheit"));
+    const toggle = await screen.findByRole("switch", { name: "Mit Touch ID entsperren" });
+    fireEvent.click(toggle);
+    await waitFor(() => expect(mockBiometricEnable).toHaveBeenCalledOnce());
+    expect(onSetSetting).toHaveBeenCalledWith("vaultBiometric", true);
+  });
+
+  it("disables biometric unlock when it is already enabled", async () => {
+    mockVaultStatus
+      .mockResolvedValueOnce({ exists: true, unlocked: true, biometric: true })
+      .mockResolvedValueOnce({ exists: true, unlocked: true, biometric: true });
+    mockBiometricAvailable.mockResolvedValueOnce(true);
+    const onSetSetting = vi.fn();
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={onSetSetting} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Sicherheit"));
+    const toggle = await screen.findByRole("switch", { name: "Mit Touch ID entsperren" });
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(toggle);
+    await waitFor(() => expect(mockBiometricDisable).toHaveBeenCalledOnce());
+    expect(onSetSetting).toHaveBeenCalledWith("vaultBiometric", false);
+  });
+
+  it("prompts to unlock before enabling biometric when the vault is locked, then enables it", async () => {
+    mockVaultStatus
+      .mockResolvedValueOnce({ exists: true, unlocked: false, biometric: false }) // mount
+      .mockResolvedValueOnce({ exists: true, unlocked: true, biometric: false }) // after unlock
+      .mockResolvedValueOnce({ exists: true, unlocked: true, biometric: false }); // after enableBiometric
+    mockBiometricAvailable.mockResolvedValueOnce(true);
+    const onSetSetting = vi.fn();
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={onSetSetting} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Sicherheit"));
+    const toggle = await screen.findByRole("switch", { name: "Mit Touch ID entsperren" });
+    fireEvent.click(toggle);
+
+    await waitFor(() => expect(screen.getByText("Tresor entsperren")).toBeInTheDocument());
+    fireEvent.change(screen.getByPlaceholderText("Passwort"), { target: { value: "secret123" } });
+    fireEvent.click(screen.getByRole("button", { name: "Entsperren" }));
+
+    await waitFor(() => expect(mockVaultUnlock).toHaveBeenCalledWith("secret123"));
+    await waitFor(() => expect(mockBiometricEnable).toHaveBeenCalledOnce());
+    await waitFor(() => expect(onSetSetting).toHaveBeenCalledWith("vaultBiometric", true));
+    expect(screen.queryByText("Tresor entsperren")).not.toBeInTheDocument();
+  });
+});
+
+describe("Settings — Appearance (general tab)", () => {
+  it("picking a theme calls onSetSetting", () => {
+    const onSetSetting = vi.fn();
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={onSetSetting} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Darstellung"));
+    fireEvent.click(screen.getByTitle("Lavendel"));
+    expect(onSetSetting).toHaveBeenCalledWith("theme", "lavender");
+  });
+
+  it("changing the language calls onSetSetting", () => {
+    const onSetSetting = vi.fn();
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={onSetSetting} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Darstellung"));
+    fireEvent.change(screen.getByDisplayValue("Automatisch (System)"), { target: { value: "en" } });
+    expect(onSetSetting).toHaveBeenCalledWith("language", "en");
+  });
+
+  it("changing the copy format calls onSetSetting", () => {
+    const onSetSetting = vi.fn();
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={onSetSetting} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Darstellung"));
+    fireEvent.change(screen.getByDisplayValue("Markdown"), { target: { value: "html" } });
+    expect(onSetSetting).toHaveBeenCalledWith("copyFormat", "html");
+  });
+
+  it("toggling link preview calls onSetSetting", () => {
+    const onSetSetting = vi.fn();
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={onSetSetting} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Darstellung"));
+    fireEvent.click(screen.getByRole("switch", { name: "Link-Vorschau" }));
+    expect(onSetSetting).toHaveBeenCalledWith("linkPreviewEnabled", false);
+  });
+
+  it("changing the link preview mode calls onSetSetting", () => {
+    const onSetSetting = vi.fn();
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={onSetSetting} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Darstellung"));
+    fireEvent.change(screen.getByDisplayValue("Karte"), { target: { value: "url" } });
+    expect(onSetSetting).toHaveBeenCalledWith("linkPreviewMode", "url");
+  });
+});
+
+describe("Settings — Appearance (list tab)", () => {
+  it("changing the sidebar mode calls onSetSetting", () => {
+    const onSetSetting = vi.fn();
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={onSetSetting} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Darstellung"));
+    fireEvent.click(screen.getByText("Liste & Ordner"));
+    fireEvent.change(screen.getByDisplayValue("Ein Kontext (Umschalter)"), { target: { value: "combined" } });
+    expect(onSetSetting).toHaveBeenCalledWith("sidebarMode", "combined");
+  });
+
+  it("changing the sidebar side calls onSetSetting", () => {
+    const onSetSetting = vi.fn();
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={onSetSetting} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Darstellung"));
+    fireEvent.click(screen.getByText("Liste & Ordner"));
+    fireEvent.change(screen.getByDisplayValue("Links"), { target: { value: "right" } });
+    expect(onSetSetting).toHaveBeenCalledWith("sidebarSide", "right");
+  });
+
+  it("toggling tree progress calls onSetSetting", () => {
+    const onSetSetting = vi.fn();
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={onSetSetting} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Darstellung"));
+    fireEvent.click(screen.getByText("Liste & Ordner"));
+    fireEvent.click(screen.getByRole("switch", { name: "Fortschritt im Baum zeigen" }));
+    expect(onSetSetting).toHaveBeenCalledWith("treeProgress", false);
+  });
+});
+
+describe("Settings — Appearance (editor tab)", () => {
+  it("changing font size, font family, editor width and line height calls onSetSetting", () => {
+    const onSetSetting = vi.fn();
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={onSetSetting} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Darstellung"));
+    fireEvent.click(screen.getByText("Editor"));
+    fireEvent.change(screen.getByDisplayValue("Mittel"), { target: { value: "large" } });
+    expect(onSetSetting).toHaveBeenCalledWith("editorFontSize", "large");
+    fireEvent.change(screen.getByDisplayValue("Sans"), { target: { value: "mono" } });
+    expect(onSetSetting).toHaveBeenCalledWith("editorFontFamily", "mono");
+    fireEvent.change(screen.getByDisplayValue("Voll"), { target: { value: "narrow" } });
+    expect(onSetSetting).toHaveBeenCalledWith("editorWidth", "narrow");
+    fireEvent.change(screen.getByDisplayValue("Normal"), { target: { value: "relaxed" } });
+    expect(onSetSetting).toHaveBeenCalledWith("editorLineHeight", "relaxed");
+  });
+
+  it("changing the toolbar position calls onSetSetting", () => {
+    const onSetSetting = vi.fn();
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={onSetSetting} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Darstellung"));
+    fireEvent.click(screen.getByText("Editor"));
+    fireEvent.change(screen.getByDisplayValue("Unten"), { target: { value: "top" } });
+    expect(onSetSetting).toHaveBeenCalledWith("editorToolbarPos", "top");
+  });
+
+  it("shows the count-position select while char count is on, and toggling it off calls onSetSetting", () => {
+    const onSetSetting = vi.fn();
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={onSetSetting} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Darstellung"));
+    fireEvent.click(screen.getByText("Editor"));
+    expect(screen.getByDisplayValue("Oben rechts")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("switch", { name: "Zeichen-/Wortzählung" }));
+    expect(onSetSetting).toHaveBeenCalledWith("editorCountShow", false);
+  });
+
+  it("hides the count-position select when char count is off", () => {
+    render(<Settings onClose={vi.fn()} settings={{ ...FULL_SETTINGS, editorCountShow: false }} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Darstellung"));
+    fireEvent.click(screen.getByText("Editor"));
+    expect(screen.queryByDisplayValue("Oben rechts")).not.toBeInTheDocument();
+  });
+
+  it("toggling invisibles calls onSetSetting", () => {
+    const onSetSetting = vi.fn();
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={onSetSetting} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Darstellung"));
+    fireEvent.click(screen.getByText("Editor"));
+    fireEvent.click(screen.getByRole("switch", { name: "Sonderzeichen anzeigen" }));
+    expect(onSetSetting).toHaveBeenCalledWith("editorInvisibles", true);
+  });
+});
+
+describe("Settings — Contexts page", () => {
+  const contexts = [
+    { id: "c-local", label: "", kind: "local" as const, path: "/local.db", serverUrl: "", workspaceId: "", active: true },
+    { id: "c-server", label: "Team", kind: "server" as const, path: "", serverUrl: "https://s.example.com", workspaceId: "w1", active: false },
+  ];
+
+  it("lists local and server contexts with the active badge", async () => {
+    mockContextsList.mockResolvedValueOnce(contexts);
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Kontexte"));
+    await waitFor(() => expect(screen.getByText("Lokal")).toBeInTheDocument());
+    expect(screen.getByText("Team")).toBeInTheDocument();
+    expect(screen.getByText("https://s.example.com")).toBeInTheDocument();
+    expect(screen.getByText("aktiv")).toBeInTheDocument();
+  });
+
+  it("adds a new local context", async () => {
+    mockContextsList.mockResolvedValueOnce(contexts);
+    mockContextsAdd.mockResolvedValueOnce([...contexts, { id: "c-new", label: "Work", kind: "local" as const, path: "/work.db", serverUrl: "", workspaceId: "", active: false }]);
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Kontexte"));
+    await waitFor(() => expect(screen.getByText("Lokal")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText("Kontext hinzufügen…"));
+    const input = screen.getByPlaceholderText("Name für die neue lokale Datenbank");
+    fireEvent.change(input, { target: { value: "Work" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => expect(mockContextsAdd).toHaveBeenCalledWith("Work"));
+    await waitFor(() => expect(screen.getByText("Work")).toBeInTheDocument());
+  });
+
+  it("starts a server connection and shows 'connecting'", async () => {
+    mockContextsList.mockResolvedValueOnce(contexts);
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Kontexte"));
+    await waitFor(() => expect(screen.getByText("Lokal")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText("Server hinzufügen…"));
+    const input = screen.getByPlaceholderText("Server-URL (z. B. https://notes.example.com)");
+    fireEvent.change(input, { target: { value: "https://notes.example.com" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => expect(mockServerAuthBegin).toHaveBeenCalledWith("https://notes.example.com"));
+    await waitFor(() => expect(mockOpenExternal).toHaveBeenCalledWith("https://server.example.com/authorize"));
+    expect(await screen.findByText("Verbinde…")).toBeInTheDocument();
+  });
+
+  it("shows an error when the server connection fails to start", async () => {
+    mockContextsList.mockResolvedValueOnce(contexts);
+    mockServerAuthBegin.mockRejectedValueOnce(new Error("unreachable"));
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Kontexte"));
+    await waitFor(() => expect(screen.getByText("Lokal")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText("Server hinzufügen…"));
+    const input = screen.getByPlaceholderText("Server-URL (z. B. https://notes.example.com)");
+    fireEvent.change(input, { target: { value: "https://bad.example.com" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => expect(screen.getByText("Verbindung fehlgeschlagen")).toBeInTheDocument());
+    expect(screen.queryByText("Verbinde…")).not.toBeInTheDocument();
+  });
+
+  it("renames the server context", async () => {
+    mockContextsList.mockResolvedValueOnce(contexts);
+    mockContextsRename.mockResolvedValueOnce([contexts[0], { ...contexts[1], label: "Team Server" }]);
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Kontexte"));
+    await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+
+    // Row order follows the list: [0] local ("Lokal"), [1] server ("Team").
+    fireEvent.click(screen.getAllByText("Umbenennen")[1]);
+    const input = screen.getByDisplayValue("Team");
+    fireEvent.change(input, { target: { value: "Team Server" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => expect(mockContextsRename).toHaveBeenCalledWith("c-server", "Team Server"));
+  });
+
+  it("removes an inactive context, optionally deleting its file", async () => {
+    mockContextsList.mockResolvedValueOnce(contexts);
+    mockContextsRemove.mockResolvedValueOnce([contexts[0]]);
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Kontexte"));
+    await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+
+    // The active local context's remove button stays disabled; the server row's is clickable and is last in the DOM.
+    const removeButtons = screen.getAllByRole("button", { name: "Entfernen" });
+    fireEvent.click(removeButtons[removeButtons.length - 1]);
+
+    fireEvent.click(screen.getByLabelText("Datenbankdatei mitlöschen"));
+    const confirmButtons = screen.getAllByRole("button", { name: "Entfernen" });
+    fireEvent.click(confirmButtons[confirmButtons.length - 1]);
+
+    await waitFor(() => expect(mockContextsRemove).toHaveBeenCalledWith("c-server", true));
+  });
+});
+
+describe("Settings — MCP page", () => {
+  it("generates a token on first visit when none exists", async () => {
+    const onSetSetting = vi.fn();
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={onSetSetting} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("MCP"));
+    await waitFor(() => expect(onSetSetting).toHaveBeenCalledWith("mcpToken", expect.any(String)));
+  });
+
+  it("toggling enabled and auth-required calls onSetSetting", () => {
+    const onSetSetting = vi.fn();
+    render(<Settings onClose={vi.fn()} settings={{ ...FULL_SETTINGS, mcpToken: "existing-token" }} onSetSetting={onSetSetting} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("MCP"));
+    fireEvent.click(screen.getByRole("switch", { name: "Server aktiv" }));
+    expect(onSetSetting).toHaveBeenCalledWith("mcpEnabled", true);
+    fireEvent.click(screen.getByRole("switch", { name: "Token verpflichtend" }));
+    expect(onSetSetting).toHaveBeenCalledWith("mcpAuthRequired", false);
+  });
+
+  it("changing the bind mode calls onSetSetting", () => {
+    const onSetSetting = vi.fn();
+    render(<Settings onClose={vi.fn()} settings={{ ...FULL_SETTINGS, mcpToken: "existing-token" }} onSetSetting={onSetSetting} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("MCP"));
+    fireEvent.change(screen.getByDisplayValue("Nur dieser Computer"), { target: { value: "external" } });
+    expect(onSetSetting).toHaveBeenCalledWith("mcpBind", "external");
+  });
+
+  it("shows the network warning and the LAN URL when bind is external", () => {
+    render(<Settings onClose={vi.fn()} settings={{ ...FULL_SETTINGS, mcpToken: "existing-token", mcpBind: "external" }} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("MCP"));
+    expect(screen.getByText(/im gesamten Netzwerk erreichbar/)).toBeInTheDocument();
+    expect(screen.getByText("http://0.0.0.0:4357/mcp")).toBeInTheDocument();
+  });
+
+  it("changing the port calls onSetSetting", () => {
+    const onSetSetting = vi.fn();
+    render(<Settings onClose={vi.fn()} settings={{ ...FULL_SETTINGS, mcpToken: "existing-token" }} onSetSetting={onSetSetting} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("MCP"));
+    fireEvent.change(screen.getByDisplayValue("4357"), { target: { value: "8080" } });
+    expect(onSetSetting).toHaveBeenCalledWith("mcpPort", 8080);
+  });
+
+  it("clamps the port to the valid range when the entered value is out of bounds", () => {
+    const onSetSetting = vi.fn();
+    render(<Settings onClose={vi.fn()} settings={{ ...FULL_SETTINGS, mcpToken: "existing-token" }} onSetSetting={onSetSetting} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("MCP"));
+    fireEvent.change(screen.getByDisplayValue("4357"), { target: { value: "99999" } });
+    expect(onSetSetting).toHaveBeenCalledWith("mcpPort", 65535);
+  });
+
+  it("regenerating the token calls onSetSetting with a fresh value", () => {
+    const onSetSetting = vi.fn();
+    render(<Settings onClose={vi.fn()} settings={{ ...FULL_SETTINGS, mcpToken: "existing-token" }} onSetSetting={onSetSetting} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("MCP"));
+    fireEvent.click(screen.getByText("Neu generieren"));
+    expect(onSetSetting).toHaveBeenCalledWith("mcpToken", expect.any(String));
+    expect(onSetSetting).not.toHaveBeenCalledWith("mcpToken", "existing-token");
+  });
+
+  it("copies the demo config to the clipboard", async () => {
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    render(<Settings onClose={vi.fn()} settings={{ ...FULL_SETTINGS, mcpToken: "existing-token" }} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("MCP"));
+    expect(screen.getByText(/existing-token/)).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Kopieren"));
+    await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
+    expect(screen.getByText("Kopiert")).toBeInTheDocument();
+  });
+
+  it("access tab: toggling allow-write calls onSetSetting", () => {
+    const onSetSetting = vi.fn();
+    render(<Settings onClose={vi.fn()} settings={{ ...FULL_SETTINGS, mcpToken: "existing-token" }} onSetSetting={onSetSetting} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("MCP"));
+    fireEvent.click(screen.getByText("Zugriff"));
+    fireEvent.click(screen.getByRole("switch", { name: "Schreiben erlauben (anlegen & ergänzen)" }));
+    expect(onSetSetting).toHaveBeenCalledWith("mcpAllowWrite", true);
+  });
+
+  it("access tab: changing protected access calls onSetSetting", () => {
+    const onSetSetting = vi.fn();
+    render(<Settings onClose={vi.fn()} settings={{ ...FULL_SETTINGS, mcpToken: "existing-token" }} onSetSetting={onSetSetting} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("MCP"));
+    fireEvent.click(screen.getByText("Zugriff"));
+    fireEvent.change(screen.getByDisplayValue("Aus"), { target: { value: "read" } });
+    expect(onSetSetting).toHaveBeenCalledWith("mcpProtectedAccess", "read");
+  });
+
+  it("access tab: shows the protected-access warning when it isn't off", () => {
+    render(<Settings onClose={vi.fn()} settings={{ ...FULL_SETTINGS, mcpToken: "existing-token", mcpProtectedAccess: "read" }} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("MCP"));
+    fireEvent.click(screen.getByText("Zugriff"));
+    expect(screen.getByText(/entschlüsselte geschützte Notizen/)).toBeInTheDocument();
+  });
+});
+
+describe("Settings — Diagnostics page", () => {
+  it("runs the checks and shows their status", async () => {
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Diagnose"));
+    await waitFor(() => expect(screen.getByText("DB-Ordner schreibbar")).toBeInTheDocument());
+    expect(screen.getByText("/data/notefix.db")).toBeInTheDocument();
+    expect(screen.getByText("Bilder-Ordner schreibbar")).toBeInTheDocument();
+    expect(screen.getByText("Fenster-Steuerung (Verschieben/Größe/Schließen)")).toBeInTheDocument();
+  });
+
+  it("offers to change the storage location when a check fails", async () => {
+    mockCheckPaths.mockResolvedValueOnce({ dbWritable: false, imagesWritable: true, dbPath: "/bad/path", imagesPath: "/data/images" });
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Diagnose"));
+    await waitFor(() => expect(screen.getByText("/bad/path")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText("Speicherort ändern…"));
+    await waitFor(() => expect(mockPickFolder).toHaveBeenCalledOnce());
+    expect(mockSetDbLocation).toHaveBeenCalledWith("/new");
+  });
+
+  it("re-runs the checks when 'recheck' is clicked", async () => {
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Diagnose"));
+    await waitFor(() => expect(mockCheckPaths).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByText("Erneut prüfen"));
+    await waitFor(() => expect(mockCheckPaths).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe("Settings — remaining behaviors", () => {
+  it("changes the auto-lock minutes and toggles the hide/sleep auto-lock options", () => {
+    const onSetSetting = vi.fn();
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={onSetSetting} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Sicherheit"));
+    fireEvent.click(screen.getByText("Auto-Lock"));
+    fireEvent.change(screen.getByDisplayValue("5"), { target: { value: "15" } });
+    expect(onSetSetting).toHaveBeenCalledWith("autoLockMinutes", 15);
+    fireEvent.click(screen.getByRole("switch", { name: "Beim Ausblenden sperren" }));
+    expect(onSetSetting).toHaveBeenCalledWith("autoLockOnHide", false);
+    fireEvent.click(screen.getByRole("switch", { name: "Bei System-Ruhezustand sperren" }));
+    expect(onSetSetting).toHaveBeenCalledWith("autoLockOnSleep", false);
+  });
+
+  it("cancelling the vault-setup dialog closes it without calling the API", async () => {
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Sicherheit"));
+    await waitFor(() => expect(screen.getByText("Kein Tresor eingerichtet")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Tresor einrichten" }));
+    expect(screen.getByPlaceholderText("Passwort")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Abbrechen"));
+    expect(screen.queryByPlaceholderText("Passwort")).not.toBeInTheDocument();
+    expect(mockVaultSetup).not.toHaveBeenCalled();
+  });
+
+  it("changing trash retention, autosave delay and start view calls onSetSetting", () => {
+    const onSetSetting = vi.fn();
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={onSetSetting} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("System"));
+    fireEvent.change(screen.getByDisplayValue("30"), { target: { value: "60" } });
+    expect(onSetSetting).toHaveBeenCalledWith("trashRetentionDays", 60);
+    fireEvent.change(screen.getByDisplayValue("400"), { target: { value: "800" } });
+    expect(onSetSetting).toHaveBeenCalledWith("autosaveDelay", 800);
+    fireEvent.change(screen.getByDisplayValue("Zuletzt geöffnete Notiz"), { target: { value: "dashboard" } });
+    expect(onSetSetting).toHaveBeenCalledWith("startView", "dashboard");
+  });
+
+  it("disabling start-on-boot calls autostart.disable", async () => {
+    mockIsEnabled.mockResolvedValueOnce(true);
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("System"));
+    const toggle = await screen.findByRole("switch", { name: "Bei Anmeldung starten" });
+    await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "true"));
+    fireEvent.click(toggle);
+    await waitFor(() => expect(mockDisable).toHaveBeenCalledOnce());
+  });
+
+  it("shows the 'switched to existing db' message when the location change switches instead of moves", async () => {
+    mockSetDbLocation.mockResolvedValueOnce({ mode: "switched", path: "/existing/notefix.db" });
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("System"));
+    fireEvent.click(screen.getByText("Ändern…"));
+    await waitFor(() => expect(screen.getByText(/Gewechselt zur vorhandenen DB/)).toBeInTheDocument());
+  });
+
+  it("does nothing when the folder picker is cancelled", async () => {
+    mockPickFolder.mockResolvedValueOnce(null);
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("System"));
+    fireEvent.click(screen.getByText("Ändern…"));
+    await waitFor(() => expect(mockPickFolder).toHaveBeenCalledOnce());
+    expect(mockSetDbLocation).not.toHaveBeenCalled();
+  });
+
+  it("refreshes the context list when a server auth completes in the background", async () => {
+    const contexts = [{ id: "c-local", label: "", kind: "local" as const, path: "/local.db", serverUrl: "", workspaceId: "", active: true }];
+    mockContextsList.mockResolvedValueOnce(contexts).mockResolvedValueOnce(contexts);
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Kontexte"));
+    await waitFor(() => expect(screen.getByText("Lokal")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("Server hinzufügen…"));
+    fireEvent.change(screen.getByPlaceholderText("Server-URL (z. B. https://notes.example.com)"), { target: { value: "https://notes.example.com" } });
+    fireEvent.keyDown(screen.getByPlaceholderText("Server-URL (z. B. https://notes.example.com)"), { key: "Enter" });
+    expect(await screen.findByText("Verbinde…")).toBeInTheDocument();
+
+    // Simulate the `context-changed` event that fires once the notefix:// auth callback lands.
+    const onContextChangedCallback = mockOnContextChanged.mock.calls[0][0];
+    onContextChangedCallback();
+
+    await waitFor(() => expect(screen.queryByText("Verbinde…")).not.toBeInTheDocument());
+    expect(mockContextsList).toHaveBeenCalledTimes(2);
   });
 });
