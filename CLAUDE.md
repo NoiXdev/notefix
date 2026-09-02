@@ -39,6 +39,16 @@ against it before installing it, and records that predate the check gain it
 on their next passphrase/recovery unlock. The pre-per-context item is
 deleted once at startup; users re-enable Touch ID per context.
 
+For a **server context** the vault belongs to the workspace: the server keeps
+one wrapped copy of each key generation per member (`workspace_vault_keys`),
+the recovery wrap for the vault's creator, and pending invite/rotation wraps.
+`VaultState` is a ring `generation → DEK`; new content is sealed with the
+newest generation, notes remember theirs in `notes.key_gen`, and an unlocked
+client re-seals lagging notes in small batches. A server without the vault
+endpoints (`vaultKeys` missing on pull) is flagged `vault_server_legacy` and
+keeps the local-only vault. Never send a DEK, passphrase, recovery key or
+invite code to the server — only wraps.
+
 ### Two different "mobile" signals — don't confuse them
 
 - `useIsMobile()` (`src/hooks/useIsMobile.ts`) — **viewport width** (≤640px).
