@@ -836,7 +836,7 @@ impl NoteStore for StoreAccess {
         // checks this too, but by then `set_content_silent` would already
         // have put plaintext into a row that still says `protected = 1` —
         // the one state the whole design forbids.
-        crate::commands::guard_seal_generation(&store, generation)?;
+        crate::commands::guard_seal_generation(&store, dek, generation)?;
         store
             .set_content_silent(id, plaintext_html)
             .map_err(|e| e.to_string())?;

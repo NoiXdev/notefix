@@ -1075,9 +1075,19 @@ pub async fn run_sync_cycle(app: &AppHandle) -> Result<(), String> {
     let reg_state = app.state::<Mutex<crate::profiles::Registry>>();
     let store_state = app.state::<Mutex<Store>>();
 
-    let ctx = {
+    // The epoch is captured in the SAME registry-lock scope that reads the
+    // active context, and strictly before it: `swap_store_to` bumps the epoch
+    // and then swaps the store, so an epoch taken any later would already be
+    // the post-bump value and every `changed_since` below would pass while
+    // this cycle worked on the wrong pairing. Captured here, the pair
+    // (`ctx`, `epoch`) is consistent, and every step that touches the store
+    // afterwards re-checks it.
+    let (epoch, ctx) = {
         let r = reg_state.lock().map_err(|e| e.to_string())?;
-        ops::active_server(&r)
+        (
+            app.state::<ops::SyncEpoch>().current(),
+            ops::active_server(&r),
+        )
     };
     let Some(ctx) = ctx else {
         return Ok(());
@@ -1100,27 +1110,22 @@ pub async fn run_sync_cycle(app: &AppHandle) -> Result<(), String> {
 
     // Collect dirty rows + cursor under the lock, then release it.
     //
-    // The epoch is captured INSIDE this same lock scope, together with the
-    // snapshot it describes: `ctx` was read before it, and a swap landing
-    // between the two would have this cycle push the NEW context's dirty
-    // notes to the OLD workspace — the one write no later re-check could
-    // undo. Taking both under one lock makes that window empty, since
-    // `swap_store_to` bumps the epoch and then takes this same lock.
-    // Everything after the `.await` re-checks the value against the live one.
-    let (epoch, snapshot) = {
-        let s = store_state.lock().map_err(|e| e.to_string())?;
-        (
-            app.state::<ops::SyncEpoch>().current(),
-            ops::collect_sync_push(&s)?,
-        )
-    };
+    // Re-checked first: a swap that landed between the registry read above
+    // and this lock would make these the NEW context's dirty notes, and
+    // pushing them to `ctx`'s workspace is a write no later check could undo.
     let ops::SyncPush {
         folders,
         notes,
         note_ids,
         folder_ids,
         since,
-    } = snapshot;
+    } = {
+        let s = store_state.lock().map_err(|e| e.to_string())?;
+        if app.state::<ops::SyncEpoch>().changed_since(epoch) {
+            return Ok(());
+        }
+        ops::collect_sync_push(&s)?
+    };
 
     // Network: push then pull (no lock held).
     let result = async {
@@ -1460,18 +1465,21 @@ pub fn vault_status(
         let c = r.active().ok_or_else(|| "no active context".to_string())?;
         (c.id.clone(), c.kind == "server")
     };
+    // The ring first: `seal_outdated` needs BOTH the generation the ring would
+    // seal with and the key itself, to tell a workspace key from this
+    // device's own on a conflicted device. Taken and DROPPED before the store
+    // lock below, so the two are never held together — the same
+    // take-then-drop shape `swap_store_to` uses.
+    let (unlocked, ring_newest, ring_dek) = {
+        let v = vault.lock().map_err(|e| e.to_string())?;
+        (v.is_unlocked(), v.newest_generation(), v.dek().cloned())
+    };
     // A device that has only pulled its wrapped keys has no local record yet,
     // but its vault definitely exists — it must be offered "unlock", never
     // "set up" (which would mint a second, incompatible DEK).
     let flags = {
         let store = store.lock().map_err(|e| e.to_string())?;
-        ops::vault_status_flags(&store, is_server)?
-    };
-    // Store lock released above, VaultState taken here — sequential, never
-    // nested, per the lock-order convention near `swap_store_to`.
-    let (unlocked, ring_newest) = {
-        let v = vault.lock().map_err(|e| e.to_string())?;
-        (v.is_unlocked(), v.newest_generation())
+        ops::vault_status_flags(&store, is_server, ring_newest.zip(ring_dek.as_ref()))?
     };
     Ok(VaultStatus {
         exists: flags.exists,
@@ -1485,6 +1493,7 @@ pub fn vault_status(
             ring_newest,
             is_server,
             flags.conflict,
+            flags.ring_is_workspace,
         ),
         // Biometric unlock is offered only when the device can evaluate Touch
         // ID (`is_available`) AND the user has enrolled a wrapped DEK
@@ -1762,10 +1771,12 @@ pub async fn vault_change_passphrase(
     current: String,
     next: String,
 ) -> Result<(), String> {
+    // Captured BEFORE `vault_server_target` reads the active context, so the
+    // context and the epoch describe the same moment — see `run_sync_cycle`.
+    let epoch = app.state::<ops::SyncEpoch>().current();
     let target = vault_server_target(&app)?;
     let store_state = app.state::<Mutex<Store>>();
     let vault_state = app.state::<Mutex<crate::vault::state::VaultState>>();
-    let epoch = app.state::<ops::SyncEpoch>().current();
 
     // Rewrap the single local record in place — the path for a local
     // context, a legacy server, and a workspace that holds no key for this
@@ -1916,8 +1927,9 @@ pub async fn vault_invite_accept(
     code: String,
     passphrase: String,
 ) -> Result<(), String> {
-    let (ctx, token) = vault_invite_target(&app)?;
+    // Captured before the target's registry read — see `run_sync_cycle`.
     let epoch = app.state::<ops::SyncEpoch>().current();
+    let (ctx, token) = vault_invite_target(&app)?;
     let wrap =
         crate::sync::vault_fetch_invite(&ctx.server_url, &token, &ctx.workspace_id, invitation_id)
             .await
@@ -2017,10 +2029,11 @@ pub async fn vault_rotate(
     passphrase: String,
     recovery_key: Option<String>,
 ) -> Result<Vec<RotationCode>, String> {
+    // Captured before the target's registry read — see `run_sync_cycle`.
+    let epoch = app.state::<ops::SyncEpoch>().current();
     let (ctx, token) = vault_rotation_target(&app)?;
     let store_state = app.state::<Mutex<Store>>();
     let vault_state = app.state::<Mutex<crate::vault::state::VaultState>>();
-    let epoch = app.state::<ops::SyncEpoch>().current();
 
     if !vault_state.lock().map_err(|e| e.to_string())?.is_unlocked() {
         return Err("vault locked".to_string());
@@ -2090,9 +2103,22 @@ pub async fn vault_rotate(
         return Err("vault: the server stored a different key generation".to_string());
     }
 
-    {
+    // The server has accepted the rotation and the one-time codes below are
+    // the ONLY copy that will ever exist — a context switch must not swallow
+    // them, or every other member's wrap becomes unredeemable and the
+    // workspace needs another rotation. So an epoch change skips the LOCAL
+    // bookkeeping (which would file this workspace's keys under another
+    // context) and still hands the codes back; the next pull of the right
+    // context caches the own entry and the new generation anyway.
+    let switched = app.state::<ops::SyncEpoch>().changed_since(epoch);
+    if switched {
+        eprintln!(
+            "vault rotation: the active context changed mid-request; \
+             the codes are returned but nothing was cached locally"
+        );
+    }
+    if !switched {
         let store = store_state.lock().map_err(|e| e.to_string())?;
-        check_epoch(&app, epoch)?;
         let cached = ops::cached_vault_entries(&store)?.unwrap_or_default();
         let merged = ops::merge_my_entry(&cached, own_entry)?;
         let merged = match &payload.recovery {
@@ -2116,10 +2142,15 @@ pub async fn vault_rotate(
             .map_err(|e| e.to_string())?;
         tx.commit().map_err(|e| e.to_string())?;
     }
-    vault_state
-        .lock()
-        .map_err(|e| e.to_string())?
-        .unlock(new_generation, new_dek);
+    if !switched {
+        // The ring belongs to the ACTIVE context; installing this workspace's
+        // new DEK into another context's ring would let it seal that
+        // context's notes under a foreign key.
+        vault_state
+            .lock()
+            .map_err(|e| e.to_string())?
+            .unlock(new_generation, new_dek);
+    }
     broadcast_context_changed(&app);
 
     Ok(codes
@@ -2141,10 +2172,11 @@ pub async fn vault_rotation_redeem(
     code: String,
     passphrase: String,
 ) -> Result<(), String> {
+    // Captured before the target's registry read — see `run_sync_cycle`.
+    let epoch = app.state::<ops::SyncEpoch>().current();
     let (ctx, token) = vault_rotation_target(&app)?;
     let store_state = app.state::<Mutex<Store>>();
     let vault_state = app.state::<Mutex<crate::vault::state::VaultState>>();
-    let epoch = app.state::<ops::SyncEpoch>().current();
 
     if !vault_state.lock().map_err(|e| e.to_string())?.is_unlocked() {
         return Err("vault locked".to_string());

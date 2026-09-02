@@ -79,7 +79,7 @@ export default function App() {
   const [imagesHint, setImagesHint] = useState<{ kind: 'note' | 'folder'; id: string; next: boolean } | null>(null);
   // Why a protect/lock was refused, already translated. In-app only — Tauri's
   // WebView has no window.alert.
-  const [protectError, setProtectError] = useState<string | null>(null);
+  const [protectError, setProtectError] = useState<{ kind: 'protect' | 'move'; message: string } | null>(null);
   // 'perNote' lock scope: notes unlocked this session, so re-locking the note
   // list doesn't force re-entering the passphrase for a note already shown.
   const [revealedNotes, setRevealedNotes] = useState<Set<string>>(new Set());
@@ -396,7 +396,7 @@ export default function App() {
       );
     }
     return note
-      ? <div className="h-screen"><NoteEditor note={note} onChange={updateNote} readOnly={!!note.protected && vault.status.sealOutdated} isWindow onSetDue={setDue} autosaveDelay={settings.autosaveDelay} linkPreviewEnabled={settings.linkPreviewEnabled} linkPreviewMode={settings.linkPreviewMode} copyFormat={settings.copyFormat} countShow={settings.editorCountShow} countPos={settings.editorCountPos} invisibles={settings.editorInvisibles} toolbarPos={settings.editorToolbarPos} /></div>
+      ? <div className="h-screen"><NoteEditor note={note} onChange={updateNote} readOnly={!!note.protected && vault.status.sealOutdated} rotationCodePending={vault.status.rotationCode} onEnterRotationCode={() => setRotationRedeem(true)} isWindow onSetDue={setDue} autosaveDelay={settings.autosaveDelay} linkPreviewEnabled={settings.linkPreviewEnabled} linkPreviewMode={settings.linkPreviewMode} copyFormat={settings.copyFormat} countShow={settings.editorCountShow} countPos={settings.editorCountPos} invisibles={settings.editorInvisibles} toolbarPos={settings.editorToolbarPos} /></div>
       : <div className="flex h-screen items-center justify-center text-gray-400 text-sm">{t('common.noteNotFound')}</div>;
   }
 
@@ -447,7 +447,7 @@ export default function App() {
       // The vault refusals all have an actionable next step; say it, rather
       // than swallowing the failure and leaving the note looking unchanged
       // for no visible reason.
-      setProtectError(vaultErrorMessage(e));
+      setProtectError({ kind: 'protect', message: vaultErrorMessage(e) });
       return;
     }
     await reloadNotes();
@@ -475,7 +475,7 @@ export default function App() {
     try {
       await setFolder(id, folderId);
     } catch (e) {
-      setProtectError(vaultErrorMessage(e));
+      setProtectError({ kind: 'move', message: vaultErrorMessage(e) });
       await reloadNotes();
     }
   };
@@ -484,7 +484,7 @@ export default function App() {
     try {
       await reorderNotes(folderId, ids);
     } catch (e) {
-      setProtectError(vaultErrorMessage(e));
+      setProtectError({ kind: 'move', message: vaultErrorMessage(e) });
       await reloadNotes();
     }
   };
@@ -675,7 +675,7 @@ export default function App() {
               </div>
             </div>
           ) : (
-            <NoteEditor note={selectedNote} onChange={updateNote} readOnly={selectedNote.protected && vault.status.sealOutdated} onSetDue={setDue} autosaveDelay={settings.autosaveDelay} linkPreviewEnabled={settings.linkPreviewEnabled} linkPreviewMode={settings.linkPreviewMode} copyFormat={settings.copyFormat} findShortcut={resolveBindings(settings.shortcuts).findInNote} countShow={settings.editorCountShow} countPos={settings.editorCountPos} invisibles={settings.editorInvisibles} toolbarPos={settings.editorToolbarPos} />
+            <NoteEditor note={selectedNote} onChange={updateNote} readOnly={selectedNote.protected && vault.status.sealOutdated} rotationCodePending={vault.status.rotationCode} onEnterRotationCode={() => setRotationRedeem(true)} onSetDue={setDue} autosaveDelay={settings.autosaveDelay} linkPreviewEnabled={settings.linkPreviewEnabled} linkPreviewMode={settings.linkPreviewMode} copyFormat={settings.copyFormat} findShortcut={resolveBindings(settings.shortcuts).findInNote} countShow={settings.editorCountShow} countPos={settings.editorCountPos} invisibles={settings.editorInvisibles} toolbarPos={settings.editorToolbarPos} />
           )
         ) : (
           <div className="flex h-full items-center justify-center" style={{ background: 'var(--paper)' }}>
@@ -752,8 +752,10 @@ export default function App() {
       {protectError && (
         <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={() => setProtectError(null)}>
           <div className="w-96 rounded-lg bg-gray-900 border border-gray-700 p-5" onClick={e => e.stopPropagation()}>
-            <h2 className="text-gray-100 text-base font-semibold mb-2">{t('vault.protectFailed')}</h2>
-            <p className="text-gray-400 text-sm mb-5" role="alert">{protectError}</p>
+            <h2 className="text-gray-100 text-base font-semibold mb-2">
+              {t(protectError.kind === 'move' ? 'vault.moveFailed' : 'vault.protectFailed')}
+            </h2>
+            <p className="text-gray-400 text-sm mb-5" role="alert">{protectError.message}</p>
             <div className="flex justify-end">
               <button
                 onClick={() => setProtectError(null)}

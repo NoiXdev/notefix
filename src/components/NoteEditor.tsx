@@ -80,6 +80,16 @@ interface Props {
    * reject every save, so typing into it can only lose work.
    */
   readOnly?: boolean;
+  /**
+   * Whether a one-time rotation code is actually waiting for this member
+   * (`VaultStatus.rotationCode`). It decides which way out the read-only
+   * banner offers: redeem the code, or unlock again with the passphrase.
+   * Telling someone to enter a code the workspace has not handed them yet is
+   * a dead end.
+   */
+  rotationCodePending?: boolean;
+  /** Open the redeem-a-rotation-code flow from the read-only banner. */
+  onEnterRotationCode?: () => void;
   isWindow?: boolean;
   onSetDue?: (id: string, dueAt: number | null) => void;
   autosaveDelay?: number;
@@ -127,7 +137,7 @@ const LARGE_NOTE_BYTES = 50_000;
  *  available through the markdown syntax and the markdown view. */
 const HEADING_LEVELS = [1, 2, 3] as const;
 
-export default function NoteEditor({ note, onChange, readOnly = false, isWindow = false, onSetDue, autosaveDelay = 400, linkPreviewEnabled = true, linkPreviewMode = 'card', copyFormat = 'md', findShortcut = 'Mod+F', countShow = true, countPos = 'topRight', invisibles = false, toolbarPos = 'bottom' }: Props) {
+export default function NoteEditor({ note, onChange, readOnly = false, rotationCodePending = false, onEnterRotationCode, isWindow = false, onSetDue, autosaveDelay = 400, linkPreviewEnabled = true, linkPreviewMode = 'card', copyFormat = 'md', findShortcut = 'Mod+F', countShow = true, countPos = 'topRight', invisibles = false, toolbarPos = 'bottom' }: Props) {
   const { t } = useTranslation();
   const [pinned, setPinned] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
@@ -478,11 +488,25 @@ export default function NoteEditor({ note, onChange, readOnly = false, isWindow 
       {readOnly && (
         <div
           role="status"
-          className="shrink-0 px-4 py-2 text-xs border-b"
+          className="shrink-0 px-4 py-2 text-xs border-b flex flex-wrap items-center gap-2"
           style={{ borderColor: '#d97706', background: '#fffbeb', color: '#7c2d12' }}
         >
-          <strong className="font-semibold">{t('vault.readOnly')}</strong>{' '}
-          {t('vault.generationOutdated')}
+          <span>
+            <strong className="font-semibold">{t('vault.readOnly')}</strong>{' '}
+            {/* Only offer the code when one is actually waiting — otherwise the
+                way back in is a plain unlock, and naming a code the member has
+                not been given would send them looking for one. */}
+            {rotationCodePending ? t('vault.readOnlyCode') : t('vault.readOnlyUnlock')}
+          </span>
+          {rotationCodePending && onEnterRotationCode && (
+            <button
+              onClick={onEnterRotationCode}
+              className="px-2 py-0.5 rounded text-xs font-medium border"
+              style={{ borderColor: 'var(--line-muted)', color: '#1c1917' }}
+            >
+              {t('vault.enterCode')}
+            </button>
+          )}
         </div>
       )}
       {/* Sticky until a save succeeds. The edit is still in the editor — the

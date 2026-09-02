@@ -292,8 +292,23 @@ describe("App — protected notes are read-only behind an outdated key generatio
     // (dnd-kit renders its own live region with role="status", so scope the
     // query to the banner's own text.)
     const banner = (await screen.findByText("Schreibgeschützt")).closest("[role='status']")!;
-    expect(banner).toHaveTextContent("Gib deinen Wechsel-Code ein");
+    // No rotation code waiting, so the way out is a plain unlock.
+    expect(banner).toHaveTextContent("Entsperre den Tresor erneut mit deinem Passwort");
     expect(screen.queryByTitle("Fett")).not.toBeInTheDocument();
+  });
+
+  it("routes the banner to the redeem dialog when a rotation code is waiting", async () => {
+    vi.mocked(api.vault.status).mockResolvedValue(
+      vaultStatus({ exists: true, unlocked: true, sealOutdated: true, rotationCode: true }),
+    );
+    vi.mocked(api.settings.load).mockResolvedValueOnce({ vaultLockScope: "session" });
+    mockLoad.mockResolvedValueOnce([protectedNoteMeta]);
+
+    render(<App />);
+
+    const button = await screen.findByRole("button", { name: "Wechsel-Code eingeben" });
+    fireEvent.click(button);
+    expect(await screen.findByText("Der Tresorschlüssel hat sich geändert. Gib den Code ein, den du bekommen hast, um wieder hineinzukommen.")).toBeInTheDocument();
   });
 
   it("leaves an UNprotected note editable — only sealed content is affected", async () => {
@@ -345,6 +360,9 @@ describe("App — a refused move is reported, not swallowed", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Dieses Gerät hat den neuesten Tresorschlüssel noch nicht.",
     );
+    // A refused MOVE is not a refused protect — neutral heading.
+    expect(screen.getByText("Verschieben nicht möglich")).toBeInTheDocument();
+    expect(screen.queryByText("Schützen nicht möglich")).not.toBeInTheDocument();
     // The optimistic move was undone by the reload.
     await waitFor(() => expect(mockLoad).toHaveBeenCalledTimes(2));
   });
@@ -843,6 +861,7 @@ describe("App — vault dialogs complete the pending protect action", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Dieses Gerät hat den neuesten Tresorschlüssel noch nicht.",
     );
+    expect(screen.getByText("Schützen nicht möglich")).toBeInTheDocument();
     fireEvent.click(screen.getByText("Schließen"));
     await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
   });

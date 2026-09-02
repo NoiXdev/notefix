@@ -189,6 +189,30 @@ pub(crate) fn open_content(dek: &Dek, note_id: &str, stored: &str) -> Result<Str
     String::from_utf8(plaintext).map_err(|e| e.to_string())
 }
 
+/// Whether the key the ring would seal with is one the WORKSPACE handed this
+/// caller, rather than this device's own (conflicting) vault.
+///
+/// Generation NUMBERS alone cannot answer this: a device that set up its own
+/// vault offline calls its key generation 1, and so does the workspace — two
+/// different keys under one number. The cached `mine` entry's `dek_check` is
+/// the only thing that settles it, and opening it is one cheap AEAD operation
+/// (no Argon2: the wrap is not touched, only the check).
+///
+/// `false` when nothing is cached for that generation — an unknown key is
+/// never assumed to be the workspace's.
+pub fn ring_key_is_the_workspaces(
+    entries: Option<&VaultEntries>,
+    generation: u32,
+    dek: &Dek,
+) -> bool {
+    entries.is_some_and(|e| {
+        e.mine.iter().any(|m| {
+            m.generation == generation
+                && matches!(crate::vault::verify_dek(&m.record, dek), Ok(true))
+        })
+    })
+}
+
 /// Refuses to SEAL new content under `generation` while the workspace has
 /// already rotated past it (meta `vault_generation`, written by every pull).
 ///
@@ -202,23 +226,34 @@ pub(crate) fn open_content(dek: &Dek, note_id: &str, stored: &str) -> Result<Str
 /// A local context (or a workspace that never rotated) has `vault_generation`
 /// 0 or 1 and is never affected.
 ///
-/// **Conflict-aware.** On a device with meta `vault_conflict` the ring holds
-/// that device's OWN vault, whose generation numbering has nothing to do with
-/// the workspace's: comparing the two would refuse every seal the moment the
-/// workspace rotated, and the advice the error gives ("unlock with your
-/// passphrase") could not help — no passphrase produces a workspace key this
-/// device was never given. So the comparison is skipped entirely and the
-/// device keeps sealing under its own vault, exactly as it did before it ever
-/// saw the workspace. Those notes stay off the workspace key because
-/// [`reseal_lagging_notes`] stands down on the same flag (C1).
+/// **Conflict-aware, but narrowly.** A device with meta `vault_conflict` may
+/// be sealing with EITHER key: its own vault (the unlock fallback installs the
+/// local record's generation 1 when the workspace entries do not open) or a
+/// workspace one (that same fallback installs the workspace ring when they
+/// do, and a redeemed rotation installs workspace generations outright). Only
+/// the first deserves the exemption — comparing a private vault's numbering
+/// against the workspace's would refuse every seal the moment the workspace
+/// rotated, with advice ("unlock with your passphrase") that cannot help. A
+/// workspace key is compared exactly as on any other device, because it is
+/// exactly the key the rotation was meant to retire.
+///
+/// [`ring_key_is_the_workspaces`] tells the two apart by proof, not by
+/// number. Notes sealed under the private key stay off the workspace key
+/// because [`reseal_lagging_notes`] stands down on the same flag (C1).
 ///
 /// `pub(crate)` so `mcp::StoreAccess::write_protected` can refuse BEFORE it
 /// writes plaintext into the content column — it seals in two steps, and a
 /// refusal after the first would leave the row plaintext with `protected = 1`.
-pub(crate) fn guard_seal_generation(store: &Store, generation: u32) -> Result<(), String> {
-    if crate::migrate::get_meta_i64_opt(&store.conn, "vault_conflict")
+pub(crate) fn guard_seal_generation(
+    store: &Store,
+    dek: &Dek,
+    generation: u32,
+) -> Result<(), String> {
+    let conflicted = crate::migrate::get_meta_i64_opt(&store.conn, "vault_conflict")
         .map_err(|e| e.to_string())?
-        .is_some()
+        .is_some();
+    if conflicted
+        && !ring_key_is_the_workspaces(cached_vault_entries(store)?.as_ref(), generation, dek)
     {
         return Ok(());
     }
@@ -230,10 +265,14 @@ pub(crate) fn guard_seal_generation(store: &Store, generation: u32) -> Result<()
 }
 
 /// Whether this context is in the state [`guard_seal_generation`] refuses:
-/// a workspace that has rotated past every generation this ring holds, on a
-/// device that is not conflicted. Backs `vault_status.seal_outdated`, which
-/// the UI uses to show protected notes READ-ONLY rather than letting the user
-/// type into a note whose save would be rejected.
+/// a workspace that has rotated past every generation this ring holds. Backs
+/// `vault_status.seal_outdated`, which the UI uses to show protected notes
+/// READ-ONLY rather than letting the user type into a note whose save would
+/// be rejected.
+///
+/// `ring_is_workspace` carries [`ring_key_is_the_workspaces`]' answer for the
+/// ring's newest generation, so the conflict exemption is exactly as narrow
+/// here as it is in the guard.
 ///
 /// A `ring_newest` of `None` (a locked vault) is deliberately NOT outdated:
 /// protected notes already render as locked placeholders there, and claiming
@@ -244,9 +283,12 @@ pub fn seal_outdated(
     ring_newest: Option<u32>,
     is_server_context: bool,
     conflict: bool,
+    ring_is_workspace: bool,
 ) -> bool {
     match ring_newest {
-        _ if !is_server_context || conflict => false,
+        _ if !is_server_context => false,
+        // Conflicted AND sealing with this device's own vault: exempt.
+        _ if conflict && !ring_is_workspace => false,
         None => false,
         Some(newest) => server_generation > i64::from(newest),
     }
@@ -353,7 +395,7 @@ pub(crate) fn encrypt_note_in_place(
     dek: &Dek,
     generation: u32,
 ) -> Result<(), String> {
-    guard_seal_generation(store, generation)?;
+    guard_seal_generation(store, dek, generation)?;
     let plaintext = store
         .load_note_content(id)
         .map_err(|e| e.to_string())?
@@ -587,7 +629,7 @@ pub fn save_note(store: &Store, vault: Option<(&Dek, u32)>, note: &Note) -> Resu
         .map_err(|e| e.to_string())?;
     if protected {
         let (dek, generation) = vault.ok_or_else(|| "vault locked".to_string())?;
-        guard_seal_generation(store, generation)?;
+        guard_seal_generation(store, dek, generation)?;
         let mut sealed = note.clone();
         sealed.content = seal_content(dek, &note.id, &note.content);
         // The `Note` coming in from the frontend (or built via
@@ -745,6 +787,13 @@ pub fn reconcile_folder_move(
 
     if needs_encryption {
         let (dek, generation) = vault.ok_or_else(|| "vault locked".to_string())?;
+        // BEFORE the move. `Store::set_folder` autocommits (and marks the row
+        // dirty in a syncing context), so refusing after it would leave a
+        // PLAINTEXT note sitting inside the locked subtree with
+        // `protected = 0` — and queued to be pushed that way. Same
+        // refuse-before-mutating order as `set_note_protected` /
+        // `set_folder_locked`.
+        guard_seal_generation(store, dek, generation)?;
         store.set_folder(id, folder_id).map_err(|e| e.to_string())?;
         encrypt_note_in_place(store, id, dek, generation)?;
     } else {
@@ -804,6 +853,12 @@ pub fn reconcile_reorder(
     // folder without an unlocked DEK — nothing is mutated on this path.
     if !to_encrypt.is_empty() && vault.is_none() {
         return Err("vault locked".to_string());
+    }
+    // Likewise for a ring the workspace has rotated past: `reorder_notes`
+    // autocommits, so a refusal after it would leave every note in
+    // `to_encrypt` inside the locked subtree, plaintext and dirty.
+    if let Some((dek, generation)) = vault.filter(|_| !to_encrypt.is_empty()) {
+        guard_seal_generation(store, dek, generation)?;
     }
 
     store
@@ -2427,11 +2482,21 @@ pub struct VaultStatusFlags {
     /// caller can pair it with the live ring — which lives behind a different
     /// lock — via [`seal_outdated`].
     pub server_generation: i64,
+    /// Whether the key the ring would seal with is the WORKSPACE's rather
+    /// than this device's own — [`ring_key_is_the_workspaces`] for the ring's
+    /// newest generation. `false` for a locked vault. Only meaningful
+    /// alongside `conflict`; see [`seal_outdated`].
+    pub ring_is_workspace: bool,
 }
 
+/// `ring` is the ring's newest `(generation, DEK)`, or `None` while the vault
+/// is locked. Passed in rather than read here because `VaultState` lives
+/// behind a different mutex — the caller takes and drops that guard before
+/// taking the store's.
 pub fn vault_status_flags(
     store: &Store,
     is_server_context: bool,
+    ring: Option<(u32, &Dek)>,
 ) -> Result<VaultStatusFlags, String> {
     let raw_record = store.vault_record().map_err(|e| e.to_string())?;
     // A record that will not parse is treated as absent for the recovery
@@ -2456,6 +2521,9 @@ pub fn vault_status_flags(
             .as_ref()
             .is_some_and(|e| !pending_rotation_generations(e).is_empty()),
         server_generation: crate::migrate::get_meta_i64(&store.conn, "vault_generation", 0),
+        ring_is_workspace: ring.is_some_and(|(generation, dek)| {
+            ring_key_is_the_workspaces(entries.as_ref(), generation, dek)
+        }),
         // Only the creator holds recovery wraps at all, so only they are ever
         // asked to fill a gap in them.
         recovery_missing: is_server_context
@@ -2574,7 +2642,7 @@ pub fn set_note_protected(
                 .dek()
                 .zip(vault.newest_generation())
                 .ok_or_else(|| "vault locked".to_string())?;
-            guard_seal_generation(store, generation)?;
+            guard_seal_generation(store, dek, generation)?;
             // Seal + flip `protected` + mark dirty + purge the plaintext
             // revision history (v1: keeping it would defeat
             // encryption-at-rest, since note_revisions is unencrypted).
@@ -2630,7 +2698,7 @@ pub fn set_folder_locked(
             .dek()
             .zip(vault.newest_generation())
             .ok_or_else(|| "vault locked".to_string())?;
-        guard_seal_generation(store, generation)?;
+        guard_seal_generation(store, dek, generation)?;
         store
             .set_folder_locked(id, true)
             .map_err(|e| e.to_string())?;
@@ -4000,29 +4068,112 @@ mod key_ring_tests {
         );
     }
 
+    /// Round 3 / minor 1: the exemption is only for a device sealing with its
+    /// OWN vault. A conflicted device can just as well hold WORKSPACE
+    /// generations — the unlock fallback installs the workspace ring when the
+    /// entries open, and a redeemed rotation installs them outright — and
+    /// those are exactly the keys a rotation was meant to retire.
+    #[test]
+    fn a_conflicted_device_holding_a_workspace_key_is_still_guarded() {
+        let s = store();
+        let workspace_dek = Dek::random();
+        // The workspace handed this caller generation 1 and has since rotated.
+        s.set_vault_entries(
+            &VaultEntries {
+                mine: vec![MyEntry::try_from(my_entry_for(&workspace_dek, 1, "pw")).unwrap()],
+                recovery: vec![],
+                rotation: vec![],
+            }
+            .to_json(),
+        )
+        .unwrap();
+        crate::migrate::set_meta_i64(&s.conn, "vault_generation", 2).unwrap();
+        crate::migrate::set_meta_i64(&s.conn, "vault_conflict", 1).unwrap();
+        seed(&s, "n1", "<p>plain</p>");
+
+        // Sealing with the WORKSPACE's generation 1: refused, conflict or not.
+        assert_eq!(
+            set_note_protected(&s, &unlocked_at(1, workspace_dek.clone()), "n1", true).unwrap_err(),
+            "vault: key generation outdated — unlock with your passphrase"
+        );
+        assert!(!s.note_protected("n1").unwrap());
+
+        // The very same generation NUMBER, but this device's own key: exempt.
+        set_note_protected(&s, &unlocked_at(1, Dek::random()), "n1", true).unwrap();
+        assert!(s.note_protected("n1").unwrap());
+
+        // And the UI mirrors both answers.
+        let flags = |dek: &Dek| {
+            let f = vault_status_flags(&s, true, Some((1, dek))).unwrap();
+            seal_outdated(
+                f.server_generation,
+                Some(1),
+                true,
+                f.conflict,
+                f.ring_is_workspace,
+            )
+        };
+        assert!(flags(&workspace_dek), "read-only: a stale workspace key");
+        assert!(!flags(&Dek::random()), "editable: this device's own vault");
+    }
+
     /// Round 2 / minor: dragging a plaintext note into a locked folder is a
     /// seal like any other and must refuse the same way.
     #[test]
     fn moving_a_note_into_a_locked_folder_refuses_on_an_outdated_ring() {
-        let s = store();
+        // A SYNCING store, so the "was it queued for the server?" half of
+        // this is real: `Store::set_folder` marks the row dirty.
+        let s = syncing_store();
         let d1 = Dek::random();
         crate::folders::create_folder(&s.conn, "locked", "L", None).unwrap();
         seed(&s, "n1", "<p>plain</p>");
         set_folder_locked(&s, &unlocked_at(1, d1.clone()), "locked", true).unwrap();
         seed(&s, "n2", "<p>plain</p>");
+        clear_dirty(&s);
         crate::migrate::set_meta_i64(&s.conn, "vault_generation", 2).unwrap();
+
+        let folder_of = |id: &str| -> Option<String> {
+            s.conn
+                .query_row("SELECT folder_id FROM notes WHERE id = ?1", [id], |r| {
+                    r.get::<_, Option<String>>(0)
+                })
+                .unwrap()
+        };
+        assert_eq!(folder_of("n2"), None, "starts at the root");
 
         let outdated = "vault: key generation outdated — unlock with your passphrase";
         assert_eq!(
             reconcile_folder_move(&s, "n2", Some("locked"), Some((&d1, 1))).unwrap_err(),
             outdated
         );
-        assert!(!s.note_protected("n2").unwrap(), "left plaintext, unmoved");
+        // Refused BEFORE the move is committed: a note that had already been
+        // reparented would sit inside the locked subtree as plaintext — and
+        // be pushed to the workspace exactly like that.
+        assert_eq!(folder_of("n2"), None, "the move never happened");
+        assert!(
+            !s.note_protected("n2").unwrap(),
+            "and it is still plaintext"
+        );
+
         assert_eq!(
             reconcile_reorder(&s, Some("locked"), &["n2".to_string()], Some((&d1, 1))).unwrap_err(),
             outdated
         );
+        assert_eq!(folder_of("n2"), None, "the reorder never happened");
         assert!(!s.note_protected("n2").unwrap());
+        assert!(
+            s.load_dirty_notes().unwrap().is_empty(),
+            "a refused move must not queue the plaintext row for the server"
+        );
+
+        // Caught up: the same move goes through and seals on arrival.
+        let mut ring = VaultState::default();
+        ring.unlock(1, d1.clone());
+        ring.unlock(2, Dek::random());
+        let newest = (ring.dek().unwrap(), ring.newest_generation().unwrap());
+        reconcile_folder_move(&s, "n2", Some("locked"), Some(newest)).unwrap();
+        assert_eq!(folder_of("n2").as_deref(), Some("locked"));
+        assert!(s.note_protected("n2").unwrap());
     }
 
     /// R5: the generation stamp rides along in the SAME statement that writes
@@ -6614,20 +6765,80 @@ mod vault_invite_tests {
     #[test]
     fn seal_outdated_mirrors_the_seal_guard() {
         // Behind the workspace: outdated.
-        assert!(seal_outdated(3, Some(1), true, false));
-        assert!(seal_outdated(2, Some(1), true, false));
+        assert!(seal_outdated(3, Some(1), true, false, true));
+        assert!(seal_outdated(2, Some(1), true, false, true));
         // Caught up, or ahead of a workspace that has not rotated: not.
-        assert!(!seal_outdated(1, Some(1), true, false));
-        assert!(!seal_outdated(0, Some(1), true, false));
-        assert!(!seal_outdated(2, Some(3), true, false));
+        assert!(!seal_outdated(1, Some(1), true, false, true));
+        assert!(!seal_outdated(0, Some(1), true, false, true));
+        assert!(!seal_outdated(2, Some(3), true, false, true));
         // A local context has no workspace generation to be behind.
-        assert!(!seal_outdated(3, Some(1), false, false));
-        // A conflicted device seals under its OWN vault — the two numberings
-        // are unrelated, so the comparison must not be made at all.
-        assert!(!seal_outdated(3, Some(1), true, true));
+        assert!(!seal_outdated(3, Some(1), false, false, false));
+        // Conflicted AND sealing with this device's OWN vault: the two
+        // numberings are unrelated, so no comparison is made.
+        assert!(!seal_outdated(3, Some(1), true, true, false));
+        // Conflicted but sealing with a WORKSPACE key: compared as usual —
+        // that key is exactly the one the rotation was meant to retire.
+        assert!(seal_outdated(3, Some(1), true, true, true));
+        assert!(!seal_outdated(3, Some(3), true, true, true));
         // A locked ring is reported as "locked", never as "outdated key":
         // protected notes already show the locked placeholder there.
-        assert!(!seal_outdated(3, None, true, false));
+        assert!(!seal_outdated(3, None, true, false, false));
+    }
+
+    /// Round 3 / minor 1: generation NUMBERS cannot tell a workspace key from
+    /// a private one — both call their first key generation 1. The cached
+    /// entry's `dek_check` is what settles it.
+    #[test]
+    fn a_workspace_key_is_recognised_by_proof_not_by_its_number() {
+        let workspace_dek = Dek::random();
+        let own_dek = Dek::random();
+        let entries = VaultEntries {
+            mine: vec![MyEntry::try_from(my_entry_for(&workspace_dek, 1, "pw")).unwrap()],
+            recovery: vec![],
+            rotation: vec![],
+        };
+
+        assert!(ring_key_is_the_workspaces(
+            Some(&entries),
+            1,
+            &workspace_dek
+        ));
+        // Same generation NUMBER, different key: this device's own vault.
+        assert!(!ring_key_is_the_workspaces(Some(&entries), 1, &own_dek));
+        // A generation the workspace never handed over.
+        assert!(!ring_key_is_the_workspaces(
+            Some(&entries),
+            2,
+            &workspace_dek
+        ));
+        // Nothing cached proves nothing.
+        assert!(!ring_key_is_the_workspaces(None, 1, &workspace_dek));
+    }
+
+    /// The flags carry that answer for the ring's newest generation.
+    #[test]
+    fn the_status_flags_report_whether_the_ring_is_the_workspaces() {
+        let s = store();
+        let workspace_dek = Dek::random();
+        s.set_vault_entries(
+            &VaultEntries {
+                mine: vec![MyEntry::try_from(my_entry_for(&workspace_dek, 2, "pw")).unwrap()],
+                recovery: vec![],
+                rotation: vec![],
+            }
+            .to_json(),
+        )
+        .unwrap();
+
+        let of = |ring: Option<(u32, &Dek)>| {
+            vault_status_flags(&s, true, ring)
+                .unwrap()
+                .ring_is_workspace
+        };
+        assert!(of(Some((2, &workspace_dek))));
+        assert!(!of(Some((2, &Dek::random()))));
+        assert!(!of(Some((1, &workspace_dek))));
+        assert!(!of(None), "a locked vault seals with nothing");
     }
 
     /// The status carries the workspace generation raw, so the command can
@@ -6635,21 +6846,31 @@ mod vault_invite_tests {
     #[test]
     fn the_status_flags_carry_the_workspace_generation() {
         let s = store();
-        assert_eq!(vault_status_flags(&s, true).unwrap().server_generation, 0);
+        assert_eq!(
+            vault_status_flags(&s, true, None)
+                .unwrap()
+                .server_generation,
+            0
+        );
         crate::migrate::set_meta_i64(&s.conn, "vault_generation", 4).unwrap();
-        assert_eq!(vault_status_flags(&s, true).unwrap().server_generation, 4);
+        assert_eq!(
+            vault_status_flags(&s, true, None)
+                .unwrap()
+                .server_generation,
+            4
+        );
     }
 
     #[test]
     fn vault_status_flags_read_existence_the_conflict_and_the_recovery_question() {
         let s = store();
-        let flags = vault_status_flags(&s, true).unwrap();
+        let flags = vault_status_flags(&s, true, None).unwrap();
         assert!(!flags.exists && !flags.conflict && !flags.recovery_holder);
 
         // The creator of a server-context vault: a record, no cache yet.
         vault_setup(&s, "pw").unwrap();
         crate::migrate::set_meta_i64(&s.conn, "vault_conflict", 1).unwrap();
-        let flags = vault_status_flags(&s, true).unwrap();
+        let flags = vault_status_flags(&s, true, None).unwrap();
         assert!(flags.exists && flags.conflict && flags.recovery_holder);
 
         // An invitee's device: cached `mine` only, no record at all.
@@ -6659,14 +6880,16 @@ mod vault_invite_tests {
             &serde_json::json!({"mine": [my_entry_for(&dek, 2, "pw")], "recovery": []}).to_string(),
         )
         .unwrap();
-        let flags = vault_status_flags(&s2, true).unwrap();
+        let flags = vault_status_flags(&s2, true, None).unwrap();
         assert!(
             flags.exists,
             "the workspace key counts as an existing vault"
         );
         assert!(!flags.conflict && !flags.recovery_holder);
         assert!(
-            vault_status_flags(&s2, false).unwrap().recovery_holder,
+            vault_status_flags(&s2, false, None)
+                .unwrap()
+                .recovery_holder,
             "a local context is always a holder"
         );
     }
@@ -7121,17 +7344,19 @@ mod vault_rotation_tests {
 
         // The creator, everything in order.
         s.set_vault_entries(&base.to_json()).unwrap();
-        let flags = vault_status_flags(&s, true).unwrap();
+        let flags = vault_status_flags(&s, true, None).unwrap();
         assert!(!flags.rotation_code && !flags.recovery_missing);
 
         // Someone else rotated: our own wrap for generation 2 arrived, its
         // recovery wrap did not.
         let with_gen2 = merge_my_entry(&base, my_entry_for(&Dek::random(), 2, "owner-pw")).unwrap();
         s.set_vault_entries(&with_gen2.to_json()).unwrap();
-        let flags = vault_status_flags(&s, true).unwrap();
+        let flags = vault_status_flags(&s, true, None).unwrap();
         assert!(flags.recovery_missing && !flags.rotation_code);
         assert!(
-            !vault_status_flags(&s, false).unwrap().recovery_missing,
+            !vault_status_flags(&s, false, None)
+                .unwrap()
+                .recovery_missing,
             "a local context has no workspace recovery wraps to fill in"
         );
 
@@ -7152,7 +7377,7 @@ mod vault_rotation_tests {
             .to_string(),
         )
         .unwrap();
-        let flags = vault_status_flags(&s2, true).unwrap();
+        let flags = vault_status_flags(&s2, true, None).unwrap();
         assert!(flags.rotation_code && !flags.recovery_missing);
     }
 

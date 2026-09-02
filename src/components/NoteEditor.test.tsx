@@ -967,10 +967,40 @@ describe("NoteEditor — read-only behind an outdated key generation", () => {
     expect(fakeEditor.commands.setContent).toHaveBeenCalledWith("<p>Hello</p>");
     const banner = screen.getByRole("status");
     expect(banner).toHaveTextContent("Schreibgeschützt");
-    expect(banner).toHaveTextContent("Gib deinen Wechsel-Code ein");
     expect(screen.queryByTitle("Fett")).not.toBeInTheDocument();
     expect(getConfig().editable).toBe(false);
     expect(fakeEditor.setEditable).toHaveBeenCalledWith(false);
+  });
+
+  // Round 3 / minor 3: naming a rotation code the workspace has not handed
+  // this member yet would send them looking for something that does not exist.
+  it("offers a plain unlock while no rotation code is waiting", async () => {
+    render(<NoteEditor note={mockNote} onChange={onChange} readOnly onEnterRotationCode={vi.fn()} />);
+    await flushNoteLoad();
+
+    const banner = screen.getByRole("status");
+    expect(banner).toHaveTextContent("Entsperre den Tresor erneut mit deinem Passwort");
+    expect(banner).not.toHaveTextContent("Wechsel-Code");
+    expect(screen.queryByRole("button", { name: "Wechsel-Code eingeben" })).not.toBeInTheDocument();
+  });
+
+  it("offers the redeem route when a rotation code IS waiting", async () => {
+    const onEnterRotationCode = vi.fn();
+    render(
+      <NoteEditor
+        note={mockNote}
+        onChange={onChange}
+        readOnly
+        rotationCodePending
+        onEnterRotationCode={onEnterRotationCode}
+      />,
+    );
+    await flushNoteLoad();
+
+    const banner = screen.getByRole("status");
+    expect(banner).toHaveTextContent("Gib deinen Wechsel-Code ein");
+    fireEvent.click(screen.getByRole("button", { name: "Wechsel-Code eingeben" }));
+    expect(onEnterRotationCode).toHaveBeenCalledOnce();
   });
 
   it("schedules no save even if an update slips through", async () => {
