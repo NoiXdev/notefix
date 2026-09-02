@@ -1,15 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as RSCE from 'react-simple-code-editor';
+import { resolveDefaultExport } from '../interop';
 
 // react-simple-code-editor ships CJS only (`exports.default = Editor`, no ESM
-// entry). Under Vite's CJS interop a bare default import can resolve to the
-// module namespace object instead of the component, which React rejects with
-// "Element type is invalid … got: object" the moment the markdown view mounts.
-// Unwrap whichever shape we get.
-type CodeEditorComponent = typeof RSCE.default;
-const CodeEditor: CodeEditorComponent =
-  (RSCE as unknown as { default?: CodeEditorComponent }).default ?? (RSCE as unknown as CodeEditorComponent);
+// entry). In Vite's browser bundle the namespace's `.default` is the whole
+// `module.exports` object — a double wrap — so a naive default import (or a
+// single-level unwrap) hands React an object and the markdown view throws
+// "Element type is invalid … got: object". See `resolveDefaultExport`.
+const CodeEditor = resolveDefaultExport<typeof RSCE.default>(RSCE);
 import { useEditor, EditorContent, type Editor } from '@tiptap/react';
 import type { EditorView } from '@tiptap/pm/view';
 import { DOMSerializer } from '@tiptap/pm/model';
