@@ -20,6 +20,10 @@ export default defineConfig({
       exclude: ["src/**/*.test.{ts,tsx}", "src/test/**", "src/main.tsx", "src/**/*.d.ts"],
       reporter: ["text-summary", "text", "html"],
       reportsDirectory: "coverage",
+      // Gate: `npm run test:coverage` fails below these floors (set a little
+      // under the post-coverage-program level so ordinary churn doesn't trip
+      // them, but a real regression does).
+      thresholds: { lines: 90, statements: 88, functions: 88, branches: 80 },
     },
   },
 });

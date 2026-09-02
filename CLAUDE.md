@@ -58,8 +58,11 @@ the biometric UI on that check rather than on `isMobilePlatform` alone.
   `cargo llvm-cov --lib --summary-only -- --test-threads=1` (needs
   `cargo-llvm-cov` + the `llvm-tools-preview` rustup component; the
   instrumented binary is SIGKILLed under default test parallelism, hence
-  `--test-threads=1`). Baseline after the coverage program: frontend ~96%
-  lines, backend ~79% lines.
+  `--test-threads=1`). Both are GATES, not just reports: `npm run
+  test:coverage` fails below 90% lines / 88% statements + functions / 80%
+  branches (`vitest.config.ts` thresholds), and `npm run test:coverage:rust`
+  fails below 75% lines (`--fail-under-lines`). Current level: frontend ~96%
+  lines, backend ~79% lines — keep both gates green when adding code.
 - Keep the backend testable: `commands.rs` is a THIN Tauri surface (acquire
   `State` locks, delegate, emit events). Real logic — validation, branching,
   store/vault mutations — lives as pure functions in `ops.rs` and is
