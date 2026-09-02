@@ -351,6 +351,77 @@ pub async fn push(
     Ok(parse_push_response(&body))
 }
 
+// ---------------------------------------------------------------------------
+// Workspace vault keys
+//
+// The wrapped keys a server-bound context's vault lives on. Only wraps and
+// the sealed DEK-check magic travel — never the DEK, never a passphrase.
+// ---------------------------------------------------------------------------
+
+fn vault_url(server_url: &str, ws: &str) -> String {
+    format!("{}/api/workspaces/{ws}/vault", base(server_url))
+}
+
+fn vault_my_key_url(server_url: &str, ws: &str) -> String {
+    format!("{}/api/workspaces/{ws}/vault/keys/me", base(server_url))
+}
+
+/// Whether `POST …/vault` seeded the workspace vault, or found one already
+/// there. `AlreadyExists` is a normal outcome, not an error: two devices can
+/// legitimately race to seed the same workspace.
+pub enum VaultCreateOutcome {
+    Created,
+    AlreadyExists,
+}
+
+/// 409 → `AlreadyExists`; everything else goes through the usual
+/// [`classify_status`] rules. Pulled out so the mapping is testable without
+/// a network call.
+fn classify_vault_create(status: reqwest::StatusCode) -> Result<VaultCreateOutcome, SyncError> {
+    if status == reqwest::StatusCode::CONFLICT {
+        return Ok(VaultCreateOutcome::AlreadyExists);
+    }
+    classify_status(status, "vault create")?;
+    Ok(VaultCreateOutcome::Created)
+}
+
+/// POST …/vault — seed the workspace vault with generation 1's wrapped keys.
+pub async fn vault_create(
+    server_url: &str,
+    token: &str,
+    ws: &str,
+    payload: &crate::ops::SetupPayload,
+) -> Result<VaultCreateOutcome, SyncError> {
+    let resp = client()?
+        .post(vault_url(server_url, ws))
+        .bearer_auth(token)
+        .header("Accept", "application/json")
+        .json(payload)
+        .send()
+        .await
+        .map_err(|e| SyncError::Offline(e.to_string()))?;
+    classify_vault_create(resp.status())
+}
+
+/// PUT …/vault/keys/me — replace the caller's own wrap for one generation
+/// (the passphrase change path). The generation travels in the body.
+pub async fn vault_put_my_key(
+    server_url: &str,
+    token: &str,
+    ws: &str,
+    entry: &crate::ops::MyEntryWire,
+) -> Result<(), SyncError> {
+    let resp = client()?
+        .put(vault_my_key_url(server_url, ws))
+        .bearer_auth(token)
+        .header("Accept", "application/json")
+        .json(entry)
+        .send()
+        .await
+        .map_err(|e| SyncError::Offline(e.to_string()))?;
+    classify_status(resp.status(), "vault key")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -731,6 +802,31 @@ mod tests {
         assert_eq!(p.vault_keys.as_ref().unwrap()["mine"][0]["dekWrapped"], "w");
         let legacy = parse_pull_response(&json!({"cursor": 1, "folders": [], "notes": []}), 0);
         assert!(legacy.vault_keys.is_none() && legacy.vault_generation.is_none());
+    }
+
+    #[test]
+    fn vault_endpoint_urls_are_well_formed() {
+        assert_eq!(
+            vault_url("https://s/", "ws1"),
+            "https://s/api/workspaces/ws1/vault"
+        );
+        assert_eq!(
+            vault_my_key_url("https://s", "ws1"),
+            "https://s/api/workspaces/ws1/vault/keys/me"
+        );
+    }
+
+    #[test]
+    fn vault_create_outcome_maps_409_to_already_exists() {
+        assert!(matches!(
+            classify_vault_create(reqwest::StatusCode::CREATED).unwrap(),
+            VaultCreateOutcome::Created
+        ));
+        assert!(matches!(
+            classify_vault_create(reqwest::StatusCode::CONFLICT).unwrap(),
+            VaultCreateOutcome::AlreadyExists
+        ));
+        assert!(classify_vault_create(reqwest::StatusCode::FORBIDDEN).is_err());
     }
 
     #[test]

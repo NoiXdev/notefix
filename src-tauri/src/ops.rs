@@ -20,11 +20,14 @@
 
 use std::path::{Path, PathBuf};
 
+use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use serde::{Deserialize, Serialize};
 
 use crate::profiles::{ContextEntry, Registry};
 use crate::storage::{Note, SearchHit, Store};
 use crate::vault::aead::Dek;
+use crate::vault::kdf::KdfParams;
 use crate::vault::state::VaultState;
 use crate::vault::VaultRecord;
 
@@ -789,6 +792,670 @@ pub fn vault_change_passphrase(store: &Store, current: &str, next: &str) -> Resu
         .set_vault_record(&new_record.to_json())
         .map_err(|e| e.to_string())?;
     Ok(dek)
+}
+
+// ---------------------------------------------------------------------------
+// Workspace vault keys
+//
+// For a server-bound context the wrapped vault keys live on the workspace,
+// one entry per key generation: `mine` is the caller's own passphrase wrap,
+// `recovery` the workspace-wide recovery wrap. `apply_vault_keys` caches
+// whatever the server sent on every pull (see `commit_sync_result`);
+// everything below turns that cache into unlocked DEKs, rewraps it on a
+// passphrase change, and turns a local-only vault into the upload that seeds
+// the workspace.
+//
+// Only wraps and the sealed `dek_check` magic ever travel — the DEK itself
+// stays on the device, and the server can open neither.
+// ---------------------------------------------------------------------------
+
+/// One `vaultKeys.mine[]` element: exactly what the server sends and exactly
+/// the body `PUT …/vault/keys/me` expects back.
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct MyEntryWire {
+    pub generation: u32,
+    pub kdf_params: KdfParams,
+    pub dek_wrapped: String,
+    pub dek_check: String,
+}
+
+/// One `vaultKeys.recovery[]` element — the workspace-wide recovery wrap for
+/// a generation. `dek_check` is optional: entries written before the check
+/// existed simply omit it.
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryEntryWire {
+    pub generation: u32,
+    pub recovery_salt: String,
+    pub dek_wrapped_recovery: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dek_check: Option<String>,
+}
+
+/// The cached `{"mine":[…],"recovery":[…]}` blob as it sits in
+/// `vault.entries` — the server's wire shape, stored verbatim.
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+struct VaultEntriesWire {
+    #[serde(default)]
+    mine: Vec<MyEntryWire>,
+    #[serde(default)]
+    recovery: Vec<RecoveryEntryWire>,
+}
+
+/// A parsed [`MyEntryWire`]: the passphrase wrap for one generation, shaped
+/// as a [`VaultRecord`] so the existing crypto works on it unchanged. The
+/// recovery half is empty here — it lives in [`RecoveryEntry`].
+#[derive(Clone)]
+pub struct MyEntry {
+    pub generation: u32,
+    pub record: VaultRecord,
+}
+
+/// A parsed [`RecoveryEntryWire`].
+#[derive(Clone)]
+pub struct RecoveryEntry {
+    pub generation: u32,
+    pub recovery_salt: [u8; 16],
+    pub dek_wrapped_recovery: Vec<u8>,
+    pub dek_check: Option<Vec<u8>>,
+}
+
+/// Every wrapped key the workspace holds for this caller, by generation.
+#[derive(Clone, Default)]
+pub struct VaultEntries {
+    pub mine: Vec<MyEntry>,
+    pub recovery: Vec<RecoveryEntry>,
+}
+
+/// Base64 that treats an empty string as "field absent" — a server that
+/// sends `""` for a check it doesn't have must not produce a check blob that
+/// can never be opened.
+fn decode_opt_b64(s: &str) -> Result<Option<Vec<u8>>, String> {
+    if s.is_empty() {
+        return Ok(None);
+    }
+    STANDARD.decode(s).map(Some).map_err(|e| e.to_string())
+}
+
+impl From<&MyEntry> for MyEntryWire {
+    fn from(e: &MyEntry) -> Self {
+        MyEntryWire {
+            generation: e.generation,
+            kdf_params: e.record.kdf_params.clone(),
+            dek_wrapped: STANDARD.encode(&e.record.dek_wrapped_pass),
+            dek_check: e
+                .record
+                .dek_check
+                .as_deref()
+                .map(|c| STANDARD.encode(c))
+                .unwrap_or_default(),
+        }
+    }
+}
+
+impl TryFrom<MyEntryWire> for MyEntry {
+    type Error = String;
+    fn try_from(w: MyEntryWire) -> Result<Self, String> {
+        Ok(MyEntry {
+            generation: w.generation,
+            record: VaultRecord {
+                kdf_params: w.kdf_params,
+                dek_wrapped_pass: STANDARD.decode(&w.dek_wrapped).map_err(|e| e.to_string())?,
+                recovery_salt: [0u8; 16],
+                dek_wrapped_recovery: Vec::new(),
+                dek_check: decode_opt_b64(&w.dek_check)?,
+            },
+        })
+    }
+}
+
+impl From<&RecoveryEntry> for RecoveryEntryWire {
+    fn from(e: &RecoveryEntry) -> Self {
+        RecoveryEntryWire {
+            generation: e.generation,
+            recovery_salt: STANDARD.encode(e.recovery_salt),
+            dek_wrapped_recovery: STANDARD.encode(&e.dek_wrapped_recovery),
+            dek_check: e.dek_check.as_deref().map(|c| STANDARD.encode(c)),
+        }
+    }
+}
+
+impl TryFrom<RecoveryEntryWire> for RecoveryEntry {
+    type Error = String;
+    fn try_from(w: RecoveryEntryWire) -> Result<Self, String> {
+        let recovery_salt: [u8; 16] = STANDARD
+            .decode(&w.recovery_salt)
+            .map_err(|e| e.to_string())?
+            .try_into()
+            .map_err(|_| "vault: recovery salt must be 16 bytes".to_string())?;
+        Ok(RecoveryEntry {
+            generation: w.generation,
+            recovery_salt,
+            dek_wrapped_recovery: STANDARD
+                .decode(&w.dek_wrapped_recovery)
+                .map_err(|e| e.to_string())?,
+            dek_check: decode_opt_b64(w.dek_check.as_deref().unwrap_or_default())?,
+        })
+    }
+}
+
+impl VaultEntries {
+    /// The wire shape `apply_vault_keys` caches — byte fields base64-encoded
+    /// with the same `STANDARD` engine `VaultRecord::to_json` uses.
+    pub fn to_json(&self) -> String {
+        let wire = VaultEntriesWire {
+            mine: self.mine.iter().map(MyEntryWire::from).collect(),
+            recovery: self.recovery.iter().map(RecoveryEntryWire::from).collect(),
+        };
+        serde_json::to_string(&wire).expect("VaultEntriesWire has no non-serializable fields")
+    }
+
+    /// Parses the cached blob. Any malformed JSON, base64 or field length is
+    /// an `Err` — callers treat that as "no usable cache" rather than
+    /// failing the unlock outright (see [`cached_vault_entries`]).
+    pub fn from_json(s: &str) -> Result<Self, String> {
+        let wire: VaultEntriesWire = serde_json::from_str(s).map_err(|e| e.to_string())?;
+        Ok(VaultEntries {
+            mine: wire
+                .mine
+                .into_iter()
+                .map(MyEntry::try_from)
+                .collect::<Result<Vec<_>, _>>()?,
+            recovery: wire
+                .recovery
+                .into_iter()
+                .map(RecoveryEntry::try_from)
+                .collect::<Result<Vec<_>, _>>()?,
+        })
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.mine.is_empty() && self.recovery.is_empty()
+    }
+}
+
+/// Unwraps every `mine` entry `passphrase` opens, verifying each entry's DEK
+/// check before accepting it (an entry that carries no check is accepted —
+/// the AEAD unwrap already authenticated it). Returns one `(generation,
+/// DEK)` per entry that opened, ascending; `Err("wrong passphrase")` when
+/// none did.
+pub fn unlock_entries_with_passphrase(
+    entries: &VaultEntries,
+    passphrase: &str,
+) -> Result<Vec<(u32, Dek)>, String> {
+    let mut out = Vec::new();
+    for e in &entries.mine {
+        if let Ok(dek) = crate::vault::unlock_passphrase(&e.record, passphrase) {
+            if crate::vault::verify_dek(&e.record, &dek).is_ok() {
+                out.push((e.generation, dek));
+            }
+        }
+    }
+    if out.is_empty() {
+        return Err("wrong passphrase".to_string());
+    }
+    Ok(out)
+}
+
+/// [`unlock_entries_with_passphrase`] over the `recovery` half: each entry is
+/// reshaped into a recovery-only [`VaultRecord`] and opened with the (freely
+/// formatted) recovery key.
+pub fn unlock_entries_with_recovery(
+    entries: &VaultEntries,
+    recovery: &str,
+) -> Result<Vec<(u32, Dek)>, String> {
+    let mut out = Vec::new();
+    for e in &entries.recovery {
+        let rec = crate::vault::recovery_only_record(
+            e.recovery_salt,
+            e.dek_wrapped_recovery.clone(),
+            e.dek_check.clone(),
+        );
+        if let Ok(dek) = crate::vault::unlock_recovery(&rec, recovery) {
+            if crate::vault::verify_dek(&rec, &dek).is_ok() {
+                out.push((e.generation, dek));
+            }
+        }
+    }
+    if out.is_empty() {
+        return Err("wrong recovery key".to_string());
+    }
+    Ok(out)
+}
+
+/// The body of `POST …/vault`: generation 1's passphrase wrap plus the
+/// workspace recovery wrap.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetupPayload {
+    pub kdf_params: KdfParams,
+    pub dek_wrapped: String,
+    pub dek_check: String,
+    pub recovery: RecoveryPayload,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryPayload {
+    pub recovery_salt: String,
+    pub dek_wrapped_recovery: String,
+    pub dek_check: String,
+}
+
+/// An existing local record as the generation-1 upload body — the exact
+/// record this device already stores, so the vault the workspace gets is the
+/// one whose DEK already sealed this device's notes.
+///
+/// `Err` when the record predates `dek_check`: without it the server would
+/// hold entries no unlock path could verify. Such a record self-heals on its
+/// next passphrase/recovery unlock (see [`ensure_dek_check`]) and is simply
+/// skipped until then.
+pub fn migration_payload(rec: &VaultRecord) -> Result<SetupPayload, String> {
+    let check = rec
+        .dek_check
+        .as_deref()
+        .ok_or_else(|| "vault: record has no DEK check yet".to_string())?;
+    Ok(SetupPayload {
+        kdf_params: rec.kdf_params.clone(),
+        dek_wrapped: STANDARD.encode(&rec.dek_wrapped_pass),
+        dek_check: STANDARD.encode(check),
+        recovery: RecoveryPayload {
+            recovery_salt: STANDARD.encode(rec.recovery_salt),
+            dek_wrapped_recovery: STANDARD.encode(&rec.dek_wrapped_recovery),
+            dek_check: STANDARD.encode(check),
+        },
+    })
+}
+
+/// A brand-new vault as an upload body, without persisting anything.
+///
+/// The `vault_setup` command deliberately does NOT use this: it runs the
+/// local [`vault_setup`] first and uploads
+/// [`migration_payload`] of the record it just stored, so the workspace can
+/// never end up holding a different vault than this device does. Kept (and
+/// tested) as the payload-side counterpart of [`migration_payload`] for
+/// callers that need the body without a store.
+#[allow(dead_code)]
+pub fn vault_setup_payload(passphrase: &str) -> Result<(SetupPayload, Vec<String>, Dek), String> {
+    let (record, recovery_key, dek) = crate::vault::setup(passphrase).map_err(String::from)?;
+    let groups = recovery_key.as_str().split('-').map(String::from).collect();
+    Ok((migration_payload(&record)?, groups, dek))
+}
+
+/// The cached server entries, or `None` when nothing is cached, the cache is
+/// empty, or it cannot be parsed. An unparsable cache is deliberately not an
+/// error: the local record is still a valid way in, and failing every unlock
+/// over a corrupt cache would lock the user out of their own notes.
+fn cached_vault_entries(store: &Store) -> Result<Option<VaultEntries>, String> {
+    let Some(json) = store.vault_entries().map_err(|e| e.to_string())? else {
+        return Ok(None);
+    };
+    match VaultEntries::from_json(&json) {
+        Ok(entries) => Ok(Some(entries).filter(|e| !e.is_empty())),
+        Err(e) => {
+            // The cache is opaque server bytes (`apply_vault_keys` stores
+            // `vaultKeys` verbatim), so a naming/encoding disagreement with
+            // the server would otherwise degrade silently to "no vault keys"
+            // — and dead-end a new device. Never log the payload itself: it
+            // is wrapped key material.
+            eprintln!("vault entries cache unusable ({e}); falling back to the local record");
+            Ok(None)
+        }
+    }
+}
+
+/// Everything the unlock paths read from the store, in one lock scope — the
+/// local record (if this device has one) and the server's cached entries.
+pub struct VaultUnlockInputs {
+    pub record: Option<VaultRecord>,
+    pub entries: Option<VaultEntries>,
+}
+
+pub fn load_vault_unlock_inputs(store: &Store) -> Result<VaultUnlockInputs, String> {
+    let record = match store.vault_record().map_err(|e| e.to_string())? {
+        Some(json) => Some(VaultRecord::from_json(&json).map_err(String::from)?),
+        None => None,
+    };
+    Ok(VaultUnlockInputs {
+        record,
+        entries: cached_vault_entries(store)?,
+    })
+}
+
+/// Backs `vault_status.exists`: a vault exists for this context if this
+/// device stored a record OR the workspace handed back a wrapped key for
+/// this caller. Without the second half a freshly synced device would be
+/// offered "set up a vault" — which would generate a second, incompatible
+/// DEK — instead of "unlock".
+pub fn vault_exists(store: &Store) -> Result<bool, String> {
+    if store.vault_record().map_err(|e| e.to_string())?.is_some() {
+        return Ok(true);
+    }
+    Ok(cached_vault_entries(store)?.is_some_and(|e| !e.mine.is_empty()))
+}
+
+/// The generation-1 entries as a local [`VaultRecord`], merging the
+/// passphrase wrap with the matching recovery wrap so the mirrored record
+/// opens both ways.
+fn mirrored_record(entries: &VaultEntries) -> Option<VaultRecord> {
+    let mine = entries.mine.iter().find(|e| e.generation == 1)?;
+    let recovery = entries.recovery.iter().find(|e| e.generation == 1);
+    Some(VaultRecord {
+        kdf_params: mine.record.kdf_params.clone(),
+        dek_wrapped_pass: mine.record.dek_wrapped_pass.clone(),
+        recovery_salt: recovery.map(|r| r.recovery_salt).unwrap_or([0u8; 16]),
+        dek_wrapped_recovery: recovery
+            .map(|r| r.dek_wrapped_recovery.clone())
+            .unwrap_or_default(),
+        dek_check: mine
+            .record
+            .dek_check
+            .clone()
+            .or_else(|| recovery.and_then(|r| r.dek_check.clone())),
+    })
+}
+
+/// Which secret an unlock path is using. Lets the two unlock commands share
+/// one body (see `commands::unlock_vault_with`) instead of duplicating it.
+#[derive(Clone, Copy)]
+pub enum VaultSecret<'a> {
+    Passphrase(&'a str),
+    Recovery(&'a str),
+}
+
+impl VaultSecret<'_> {
+    /// Opens a whole [`VaultRecord`] with this secret.
+    pub fn open(&self, record: &VaultRecord) -> Result<Dek, String> {
+        match self {
+            VaultSecret::Passphrase(p) => vault_unlock_passphrase(record, p),
+            VaultSecret::Recovery(r) => vault_unlock_recovery(record, r),
+        }
+    }
+
+    /// Opens every server entry this secret can, via the matching half of
+    /// the cache.
+    pub fn open_entries(&self, entries: &VaultEntries) -> Result<Vec<(u32, Dek)>, String> {
+        match self {
+            VaultSecret::Passphrase(p) => unlock_entries_with_passphrase(entries, p),
+            VaultSecret::Recovery(r) => unlock_entries_with_recovery(entries, r),
+        }
+    }
+
+    /// Whether the cache carries anything this secret could open at all.
+    pub fn entries_usable(&self, entries: &VaultEntries) -> bool {
+        match self {
+            VaultSecret::Passphrase(_) => !entries.mine.is_empty(),
+            VaultSecret::Recovery(_) => !entries.recovery.is_empty(),
+        }
+    }
+}
+
+/// What an unlock-from-entries may install, and whether the local record and
+/// the workspace turned out to be the same vault.
+pub struct VaultUnlockPlan {
+    /// The generations to install into the ring.
+    pub install: Vec<(u32, Dek)>,
+    /// `true` when this device's record and the workspace vault are provably
+    /// one vault (or this device has no record yet). Only then may the store
+    /// be reconciled — see [`apply_entry_unlock`].
+    pub reconciled: bool,
+}
+
+/// "Same DEK ⇒ the same `dek_check` opens both": does `server_dek` belong to
+/// `rec`?
+///
+/// A record written before `dek_check` existed has nothing to verify
+/// against, so the workspace DEK is compared against the one the same secret
+/// unwraps from the record itself. That costs an extra KDF derivation, but
+/// only on records that predate the check.
+fn same_vault(rec: &VaultRecord, server_dek: &Dek, secret: &VaultSecret<'_>) -> bool {
+    match crate::vault::verify_dek(rec, server_dek) {
+        Ok(true) => true,
+        Err(_) => false,
+        Ok(false) => secret
+            .open(rec)
+            .is_ok_and(|local| local.expose() == server_dek.expose()),
+    }
+}
+
+/// Decides what an unlock-from-entries installs, and whether the store may
+/// be reconciled afterwards.
+///
+/// Possession of the WORKSPACE DEK says nothing about the LOCAL record's
+/// DEK. A vault set up offline on this device and a vault set up on the
+/// workspace from another device can share a passphrase and still wrap two
+/// different DEKs. Installing the workspace ring on such a device would
+/// leave this device's own protected notes undecryptable while
+/// `vault_status.unlocked` reports `true`, and healing `dek_check` from the
+/// foreign DEK would poison `verify_dek_for_store` and break biometric
+/// unlock permanently. So:
+///
+/// - The workspace entries do not open with this secret at all, but the
+///   local record does: a conflicted device unlocking its own vault —
+///   install generation 1 from the record, reconcile nothing. (If neither
+///   opens, the entries' error is returned.)
+/// - No local record: nothing to disagree with — install the workspace ring
+///   and reconcile.
+/// - The workspace generation-1 DEK provably opens the local record: one
+///   vault — install the whole ring and reconcile.
+/// - Otherwise the two are DIFFERENT vaults. Prefer the local one when the
+///   same secret opens it (generation 1 only — never mixed with the
+///   workspace ring), so this device keeps reading its own notes; fall back
+///   to the workspace ring when it does not. Either way nothing is
+///   reconciled: `vault_conflict` stays set for Task 13 to surface, the
+///   local record's check is left alone, and `vault_migrated` is NOT
+///   claimed, so the sync hook keeps re-marking the conflict.
+pub fn plan_entry_unlock(
+    local: Option<&VaultRecord>,
+    entries: &VaultEntries,
+    secret: &VaultSecret<'_>,
+) -> Result<VaultUnlockPlan, String> {
+    let opened = match secret.open_entries(entries) {
+        Ok(opened) => opened,
+        Err(e) => {
+            // The workspace vault does not open with this secret at all. If
+            // this device has a record of its OWN that does, it is simply a
+            // conflicted device unlocking its own vault — the workspace
+            // entries must not turn that into a lockout.
+            let dek = local.and_then(|rec| secret.open(rec).ok()).ok_or(e)?;
+            return Ok(VaultUnlockPlan {
+                install: vec![(1, dek)],
+                reconciled: false,
+            });
+        }
+    };
+    let Some(rec) = local else {
+        return Ok(VaultUnlockPlan {
+            install: opened,
+            reconciled: true,
+        });
+    };
+    let same = opened
+        .iter()
+        .find(|(g, _)| *g == 1)
+        .is_some_and(|(_, dek)| same_vault(rec, dek, secret));
+    if same {
+        return Ok(VaultUnlockPlan {
+            install: opened,
+            reconciled: true,
+        });
+    }
+    Ok(match secret.open(rec) {
+        Ok(local_dek) => VaultUnlockPlan {
+            install: vec![(1, local_dek)],
+            reconciled: false,
+        },
+        Err(_) => VaultUnlockPlan {
+            install: opened,
+            reconciled: false,
+        },
+    })
+}
+
+/// Everything an unlock-from-entries settles in the store afterwards — but
+/// only once [`plan_entry_unlock`] proved the local record and the workspace
+/// hold the same vault:
+///
+/// - No local record (a new device): mirror generation 1 into one, so
+///   `vault_status`, biometric enrolment and [`ensure_dek_check`] — all of
+///   which read the local record — keep working.
+/// - A local record: self-heal its DEK check from the generation-1 DEK,
+///   which was just proved to be this record's own.
+///
+/// A conflicted plan writes nothing at all.
+pub fn apply_entry_unlock(
+    store: &Store,
+    local: Option<&VaultRecord>,
+    entries: &VaultEntries,
+    plan: &VaultUnlockPlan,
+) -> Result<(), String> {
+    if !plan.reconciled {
+        return Ok(());
+    }
+    match local {
+        None => {
+            if let Some(mirrored) = mirrored_record(entries) {
+                store
+                    .set_vault_record(&mirrored.to_json())
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        Some(rec) => {
+            if let Some((_, dek)) = plan.install.iter().find(|(g, _)| *g == 1) {
+                ensure_dek_check(store, rec, dek);
+            }
+        }
+    }
+    crate::migrate::delete_meta(&store.conn, "vault_conflict").map_err(|e| e.to_string())?;
+    crate::migrate::set_meta_i64(&store.conn, "vault_migrated", 1).map_err(|e| e.to_string())
+}
+
+/// The result of rewrapping a server context's vault under a new
+/// passphrase: what to upload, and what to persist once every upload landed.
+pub struct VaultRewrap {
+    /// The local record under the new passphrase (`None` if this device has
+    /// none — it unlocks purely from the cache).
+    pub record: Option<VaultRecord>,
+    /// The rewrapped entry cache, recovery half untouched.
+    pub entries: VaultEntries,
+    /// One `PUT …/vault/keys/me` body per rewrapped generation.
+    pub uploads: Vec<MyEntryWire>,
+    /// The (unchanged) DEKs, to re-arm the ring afterwards.
+    pub deks: Vec<(u32, Dek)>,
+}
+
+/// Rewraps every generation `current` opens under `next`, in memory only —
+/// no store writes and no network. The caller uploads [`VaultRewrap::uploads`]
+/// first and persists the rest only once every upload succeeded, so a failed
+/// PUT can never leave this device on a passphrase the workspace never
+/// learned about.
+///
+/// The DEKs themselves are untouched, so existing ciphertext (and the
+/// recovery key) keeps working. A generation `current` does not open is left
+/// exactly as cached — rewrapping it would need a DEK we don't have.
+pub fn rewrap_for_server(
+    local: Option<&VaultRecord>,
+    entries: &VaultEntries,
+    current: &str,
+    next: &str,
+) -> Result<VaultRewrap, String> {
+    let deks = unlock_entries_with_passphrase(entries, current)?;
+
+    let mut mine = Vec::with_capacity(entries.mine.len());
+    let mut uploads = Vec::new();
+    for e in &entries.mine {
+        match deks.iter().find(|(g, _)| *g == e.generation) {
+            Some((_, dek)) => {
+                let entry = MyEntry {
+                    generation: e.generation,
+                    record: crate::vault::rewrap_passphrase(&e.record, dek, next),
+                };
+                uploads.push(MyEntryWire::from(&entry));
+                mine.push(entry);
+            }
+            None => mine.push(e.clone()),
+        }
+    }
+
+    let record = match local {
+        None => None,
+        Some(rec) => {
+            // Reuse the generation-1 DEK when it provably belongs to this
+            // record (the usual case: the record mirrors generation 1),
+            // rather than paying a second Argon2 derivation for it.
+            let reuse = deks
+                .iter()
+                .find(|(g, _)| *g == 1)
+                .map(|(_, d)| d.clone())
+                .filter(|d| matches!(crate::vault::verify_dek(rec, d), Ok(true)));
+            let dek = match reuse {
+                Some(d) => d,
+                None => crate::vault::unlock_passphrase(rec, current).map_err(String::from)?,
+            };
+            Some(crate::vault::rewrap_passphrase(rec, &dek, next))
+        }
+    };
+
+    Ok(VaultRewrap {
+        record,
+        entries: VaultEntries {
+            mine,
+            recovery: entries.recovery.clone(),
+        },
+        uploads,
+        deks,
+    })
+}
+
+/// What the sync cycle should do about a local vault record that the
+/// workspace does not know about yet.
+pub enum VaultMigration {
+    /// Nothing to do: already migrated, a legacy server, no local record, or
+    /// a record that cannot be uploaded yet.
+    None,
+    /// The workspace already has a vault this device's record did not
+    /// create. Recorded as meta `vault_conflict`; the user resolves it by
+    /// unlocking from the workspace entries (which clears the flag when the
+    /// two turn out to be the same vault).
+    Conflict,
+    /// Seed the workspace vault with this body.
+    Upload(SetupPayload),
+}
+
+/// Decides [`VaultMigration`] from the store alone — the pure half of the
+/// sync cycle's migration hook.
+///
+/// A record without a DEK check is skipped **silently**: it predates the
+/// check and will gain one on its next passphrase/recovery unlock, at which
+/// point a later cycle picks it up.
+pub fn vault_migration_plan(store: &Store) -> Result<VaultMigration, String> {
+    let meta =
+        |k: &str| crate::migrate::get_meta_i64_opt(&store.conn, k).map_err(|e| e.to_string());
+    if meta("vault_migrated")?.is_some() || meta("vault_server_legacy")?.is_some() {
+        return Ok(VaultMigration::None);
+    }
+    let Some(json) = store.vault_record().map_err(|e| e.to_string())? else {
+        return Ok(VaultMigration::None);
+    };
+    let Ok(record) = VaultRecord::from_json(&json) else {
+        return Ok(VaultMigration::None);
+    };
+    if crate::migrate::get_meta_i64(&store.conn, "vault_generation", 0) > 0 {
+        return Ok(VaultMigration::Conflict);
+    }
+    Ok(match migration_payload(&record) {
+        Ok(payload) => VaultMigration::Upload(payload),
+        Err(_) => VaultMigration::None,
+    })
+}
+
+/// Records the outcome of a migration attempt: `vault_migrated` once the
+/// workspace holds this device's keys, `vault_conflict` when it already held
+/// someone else's.
+pub fn record_vault_migration(store: &Store, key: &str) -> Result<(), String> {
+    crate::migrate::set_meta_i64(&store.conn, key, 1).map_err(|e| e.to_string())
 }
 
 /// Whether the context DB at `path` has a vault record — used by
@@ -3329,6 +3996,572 @@ mod vault_change_passphrase_tests {
             err_of(vault_change_passphrase(&s, "a", "b")),
             "vault: not set up"
         );
+    }
+}
+
+/// The workspace-vault entry cache: parsing, unlocking every generation it
+/// carries, and the payloads that put a local vault onto the server.
+#[cfg(test)]
+mod vault_entries_tests {
+    use super::test_support::*;
+    use super::*;
+
+    /// A `MyEntry` for `generation` built from a full record.
+    fn mine(generation: u32, record: VaultRecord) -> MyEntry {
+        MyEntry { generation, record }
+    }
+
+    /// The `recovery` half of a record, as the server would hand it back.
+    fn recovery_of(generation: u32, rec: &VaultRecord) -> RecoveryEntry {
+        RecoveryEntry {
+            generation,
+            recovery_salt: rec.recovery_salt,
+            dek_wrapped_recovery: rec.dek_wrapped_recovery.clone(),
+            dek_check: rec.dek_check.clone(),
+        }
+    }
+
+    #[test]
+    fn entries_unlock_every_generation_the_passphrase_opens() {
+        let (rec1, _rk, d1) = crate::vault::setup("pw").unwrap();
+        let rec2 = crate::vault::rewrap_passphrase(
+            &crate::vault::setup("pw").unwrap().0,
+            &Dek::random(),
+            "pw",
+        );
+        let entries = VaultEntries {
+            mine: vec![mine(1, rec1), mine(2, rec2)],
+            recovery: vec![],
+        };
+        let json = entries.to_json();
+        let back = VaultEntries::from_json(&json).unwrap();
+        let opened = unlock_entries_with_passphrase(&back, "pw").unwrap();
+        assert_eq!(
+            opened.iter().map(|(g, _)| *g).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        assert_eq!(opened[0].1.expose(), d1.expose());
+        assert_eq!(
+            err_of(unlock_entries_with_passphrase(&back, "nope")),
+            "wrong passphrase"
+        );
+    }
+
+    #[test]
+    fn migration_payload_reuses_the_local_record_and_setup_payload_is_complete() {
+        let (rec, _rk, _dek) = crate::vault::setup("pw").unwrap();
+        let p = migration_payload(&rec).unwrap();
+        let v = serde_json::to_value(&p).unwrap();
+        for k in ["kdfParams", "dekWrapped", "dekCheck"] {
+            assert!(v[k].is_object() || v[k].is_string(), "{k}");
+        }
+        for k in ["recoverySalt", "dekWrappedRecovery", "dekCheck"] {
+            assert!(v["recovery"][k].is_string(), "{k}");
+        }
+        let (p2, groups, _dek2) = vault_setup_payload("pw2").unwrap();
+        assert_eq!(
+            groups.len(),
+            crate::vault::recovery::RecoveryKey::generate()
+                .as_str()
+                .split('-')
+                .count()
+        );
+        assert!(serde_json::to_value(&p2).unwrap()["dekCheck"].is_string());
+    }
+
+    #[test]
+    fn migration_payload_refuses_a_record_without_a_dek_check() {
+        // A pre-`dek_check` record can't prove which vault its DEK belongs to,
+        // so it is skipped (not uploaded) until an unlock self-heals it.
+        let (mut rec, _rk, _dek) = crate::vault::setup("pw").unwrap();
+        rec.dek_check = None;
+        assert!(migration_payload(&rec).is_err());
+    }
+
+    #[test]
+    fn entries_roundtrip_carries_the_recovery_wrap_and_unlocks_from_it() {
+        let (rec, rk, dek) = crate::vault::setup("pw").unwrap();
+        let entries = VaultEntries {
+            recovery: vec![recovery_of(1, &rec)],
+            mine: vec![mine(1, rec)],
+        };
+        let back = VaultEntries::from_json(&entries.to_json()).unwrap();
+        assert_eq!(back.recovery.len(), 1);
+        let opened = unlock_entries_with_recovery(&back, rk.as_str()).unwrap();
+        assert_eq!(opened.len(), 1);
+        assert_eq!(opened[0].0, 1);
+        assert_eq!(opened[0].1.expose(), dek.expose());
+        assert_eq!(
+            err_of(unlock_entries_with_recovery(&back, "AAAAA-BBBBB-CCCCC")),
+            "wrong recovery key"
+        );
+    }
+
+    #[test]
+    fn vault_exists_is_true_from_cached_entries_without_a_local_record() {
+        let s = store();
+        assert!(!vault_exists(&s).unwrap());
+        let (rec, _rk, _dek) = crate::vault::setup("pw").unwrap();
+        let entries = VaultEntries {
+            mine: vec![mine(1, rec)],
+            recovery: vec![],
+        };
+        s.set_vault_entries(&entries.to_json()).unwrap();
+        assert!(
+            s.vault_record().unwrap().is_none(),
+            "a freshly synced device has no local record yet"
+        );
+        assert!(
+            vault_exists(&s).unwrap(),
+            "such a device must be offered unlock, not setup"
+        );
+    }
+
+    #[test]
+    fn a_new_device_mirrors_the_generation_one_record_and_marks_itself_migrated() {
+        let s = store();
+        let (rec, rk, dek) = crate::vault::setup("pw").unwrap();
+        let entries = VaultEntries {
+            recovery: vec![recovery_of(1, &rec)],
+            mine: vec![mine(1, rec)],
+        };
+        let plan = plan_entry_unlock(None, &entries, &VaultSecret::Passphrase("pw")).unwrap();
+        assert!(plan.reconciled, "nothing local to disagree with");
+        apply_entry_unlock(&s, None, &entries, &plan).unwrap();
+
+        // The mirrored record opens with BOTH the passphrase and the recovery
+        // key, so biometric enrolment and `ensure_dek_check` keep working.
+        let mirrored = load_vault_record(&s).unwrap();
+        assert_eq!(
+            vault_unlock_passphrase(&mirrored, "pw").unwrap().expose(),
+            dek.expose()
+        );
+        assert_eq!(
+            vault_unlock_recovery(&mirrored, rk.as_str())
+                .unwrap()
+                .expose(),
+            dek.expose()
+        );
+        assert_eq!(
+            crate::migrate::get_meta_i64_opt(&s.conn, "vault_migrated").unwrap(),
+            Some(1)
+        );
+    }
+
+    /// meta helper: `None` when unset.
+    fn meta(s: &Store, key: &str) -> Option<i64> {
+        crate::migrate::get_meta_i64_opt(&s.conn, key).unwrap()
+    }
+
+    /// A local record plus a recorded conflict, as the sync hook leaves it.
+    fn conflicted(s: &Store, rec: &VaultRecord) {
+        s.set_vault_record(&rec.to_json()).unwrap();
+        crate::migrate::set_meta_i64(&s.conn, "vault_conflict", 1).unwrap();
+    }
+
+    #[test]
+    fn the_same_vault_on_both_sides_installs_every_generation_and_reconciles() {
+        let s = store();
+        let (local, _rk, dek) = crate::vault::setup("pw").unwrap();
+        conflicted(&s, &local);
+        // The workspace wraps the SAME DEK at generation 1 (plus a later
+        // rotation), so the two are provably one vault.
+        let gen2 = Dek::random();
+        let entries = VaultEntries {
+            mine: vec![
+                mine(1, crate::vault::rewrap_passphrase(&local, &dek, "pw")),
+                mine(2, crate::vault::rewrap_passphrase(&local, &gen2, "pw")),
+            ],
+            recovery: vec![],
+        };
+        let plan =
+            plan_entry_unlock(Some(&local), &entries, &VaultSecret::Passphrase("pw")).unwrap();
+
+        assert!(plan.reconciled);
+        assert_eq!(
+            plan.install.iter().map(|(g, _)| *g).collect::<Vec<_>>(),
+            vec![1, 2],
+            "a second device must get every generation"
+        );
+        assert_eq!(plan.install[0].1.expose(), dek.expose());
+        apply_entry_unlock(&s, Some(&local), &entries, &plan).unwrap();
+        assert_eq!(meta(&s, "vault_conflict"), None, "same vault: resolved");
+        assert_eq!(meta(&s, "vault_migrated"), Some(1));
+    }
+
+    #[test]
+    fn a_checkless_local_record_reconciles_and_heals_when_the_deks_match() {
+        let s = store();
+        let (mut local, _rk, dek) = crate::vault::setup("pw").unwrap();
+        local.dek_check = None; // predates the check: nothing to verify against
+        conflicted(&s, &local);
+        let entries = VaultEntries {
+            mine: vec![mine(1, crate::vault::rewrap_passphrase(&local, &dek, "pw"))],
+            recovery: vec![],
+        };
+        let plan =
+            plan_entry_unlock(Some(&local), &entries, &VaultSecret::Passphrase("pw")).unwrap();
+
+        assert!(
+            plan.reconciled,
+            "no check to verify against -> the DEKs themselves are compared"
+        );
+        apply_entry_unlock(&s, Some(&local), &entries, &plan).unwrap();
+        assert!(
+            load_vault_record(&s).unwrap().dek_check.is_some(),
+            "healed from a DEK proved to be this record's own"
+        );
+        assert_eq!(meta(&s, "vault_conflict"), None);
+        assert_eq!(meta(&s, "vault_migrated"), Some(1));
+    }
+
+    #[test]
+    fn a_checkless_local_record_reconciles_through_the_recovery_key_too() {
+        let s = store();
+        let (mut local, rk, dek) = crate::vault::setup("pw").unwrap();
+        local.dek_check = None;
+        conflicted(&s, &local);
+        let entries = VaultEntries {
+            mine: vec![],
+            recovery: vec![recovery_of(1, &local)],
+        };
+        let plan =
+            plan_entry_unlock(Some(&local), &entries, &VaultSecret::Recovery(rk.as_str())).unwrap();
+
+        assert!(plan.reconciled);
+        assert_eq!(plan.install[0].1.expose(), dek.expose());
+        apply_entry_unlock(&s, Some(&local), &entries, &plan).unwrap();
+        assert_eq!(meta(&s, "vault_conflict"), None);
+        assert_eq!(meta(&s, "vault_migrated"), Some(1));
+    }
+
+    #[test]
+    fn a_foreign_workspace_vault_installs_only_the_local_key_and_keeps_the_conflict() {
+        // Device A set its vault up offline; another device seeded the
+        // workspace with the same passphrase but a different DEK.
+        let s = store();
+        let (mut local, _rk, local_dek) = crate::vault::setup("pw").unwrap();
+        local.dek_check = None; // so a stray heal would be visible
+        conflicted(&s, &local);
+        let before = s.vault_record().unwrap().unwrap();
+        let (server, _rk2, server_dek) = crate::vault::setup("pw").unwrap();
+        assert_ne!(local_dek.expose(), server_dek.expose());
+        let entries = VaultEntries {
+            mine: vec![mine(1, server)],
+            recovery: vec![],
+        };
+        let plan =
+            plan_entry_unlock(Some(&local), &entries, &VaultSecret::Passphrase("pw")).unwrap();
+
+        assert!(!plan.reconciled);
+        assert_eq!(plan.install.len(), 1, "never mixed with the workspace ring");
+        assert_eq!(plan.install[0].0, 1);
+        assert_eq!(
+            plan.install[0].1.expose(),
+            local_dek.expose(),
+            "this device keeps reading its OWN protected notes"
+        );
+        apply_entry_unlock(&s, Some(&local), &entries, &plan).unwrap();
+        assert_eq!(
+            s.vault_record().unwrap().unwrap(),
+            before,
+            "no heal from a foreign DEK — that would break biometric unlock"
+        );
+        assert!(load_vault_record(&s).unwrap().dek_check.is_none());
+        assert_eq!(meta(&s, "vault_conflict"), Some(1), "still surfaced");
+        assert_eq!(
+            meta(&s, "vault_migrated"),
+            None,
+            "unclaimed, so the sync hook keeps re-marking the conflict"
+        );
+    }
+
+    #[test]
+    fn a_foreign_workspace_vault_falls_back_to_its_ring_when_the_local_record_stays_shut() {
+        // Same as above, but the local vault has a different passphrase too,
+        // so only the workspace ring can be installed.
+        let s = store();
+        let (local, _rk, _local_dek) = crate::vault::setup("other").unwrap();
+        conflicted(&s, &local);
+        let before = s.vault_record().unwrap().unwrap();
+        let (server, _rk2, server_dek) = crate::vault::setup("pw").unwrap();
+        let entries = VaultEntries {
+            mine: vec![mine(1, server)],
+            recovery: vec![],
+        };
+        let plan =
+            plan_entry_unlock(Some(&local), &entries, &VaultSecret::Passphrase("pw")).unwrap();
+
+        assert!(!plan.reconciled);
+        assert_eq!(plan.install[0].1.expose(), server_dek.expose());
+        apply_entry_unlock(&s, Some(&local), &entries, &plan).unwrap();
+        assert_eq!(s.vault_record().unwrap().unwrap(), before);
+        assert_eq!(meta(&s, "vault_conflict"), Some(1));
+        assert_eq!(meta(&s, "vault_migrated"), None);
+    }
+
+    #[test]
+    fn a_workspace_vault_that_does_not_open_never_locks_this_device_out() {
+        // Device A's own vault has a DIFFERENT passphrase from the one the
+        // workspace vault was seeded with. Typing A's passphrase must still
+        // open A's vault rather than failing on the workspace entries.
+        let s = store();
+        let (local, _rk, local_dek) = crate::vault::setup("mine").unwrap();
+        conflicted(&s, &local);
+        let entries = VaultEntries {
+            mine: vec![mine(1, crate::vault::setup("theirs").unwrap().0)],
+            recovery: vec![],
+        };
+
+        let plan =
+            plan_entry_unlock(Some(&local), &entries, &VaultSecret::Passphrase("mine")).unwrap();
+
+        assert!(!plan.reconciled);
+        assert_eq!(plan.install.len(), 1);
+        assert_eq!(plan.install[0].1.expose(), local_dek.expose());
+        apply_entry_unlock(&s, Some(&local), &entries, &plan).unwrap();
+        assert_eq!(meta(&s, "vault_conflict"), Some(1));
+        assert_eq!(meta(&s, "vault_migrated"), None);
+
+        // A secret that opens neither is still a plain refusal.
+        assert_eq!(
+            err_of(plan_entry_unlock(
+                Some(&local),
+                &entries,
+                &VaultSecret::Passphrase("neither")
+            )),
+            "wrong passphrase"
+        );
+    }
+
+    #[test]
+    fn an_entry_whose_check_belongs_to_another_dek_is_rejected() {
+        // The wrap opens, but the check proves the DEK is not this vault's —
+        // exactly the foreign-key case `verify_dek` exists for.
+        let (mut rec, _rk, _dek) = crate::vault::setup("pw").unwrap();
+        rec.dek_check = Some(crate::vault::make_dek_check(&Dek::random()));
+        let entries = VaultEntries {
+            mine: vec![mine(1, rec)],
+            recovery: vec![],
+        };
+        assert_eq!(
+            err_of(unlock_entries_with_passphrase(&entries, "pw")),
+            "wrong passphrase"
+        );
+    }
+
+    #[test]
+    fn decode_opt_b64_maps_an_empty_string_to_none() {
+        assert_eq!(decode_opt_b64("").unwrap(), None);
+        assert_eq!(
+            decode_opt_b64(&STANDARD.encode(b"hi")).unwrap(),
+            Some(b"hi".to_vec())
+        );
+        assert!(decode_opt_b64("not base64!!").is_err());
+    }
+
+    #[test]
+    fn the_servers_literal_vault_keys_body_parses_and_unlocks() {
+        // Every other entries test round-trips our own `to_json`, which
+        // cannot catch a naming/encoding disagreement with the server. This
+        // one is hand-written the way the server echoes the body back:
+        // camelCase entry fields, and `kdfParams` verbatim as the client
+        // wrote it (snake_case cost fields, salt as a JSON number array).
+        let (rec, rk, dek) = crate::vault::setup("pw").unwrap();
+        let check = STANDARD.encode(rec.dek_check.as_deref().unwrap());
+        let salt = rec
+            .kdf_params
+            .salt
+            .iter()
+            .map(u8::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        let body = format!(
+            concat!(
+                r#"{{"mine":[{{"generation":1,"#,
+                r#""kdfParams":{{"salt":[{salt}],"m_cost":{m},"t_cost":{t},"p_cost":{p}}},"#,
+                r#""dekWrapped":"{wrapped}","dekCheck":"{check}"}}],"#,
+                r#""recovery":[{{"generation":1,"recoverySalt":"{rsalt}","#,
+                r#""dekWrappedRecovery":"{rwrapped}","dekCheck":"{check}"}}]}}"#
+            ),
+            salt = salt,
+            m = rec.kdf_params.m_cost,
+            t = rec.kdf_params.t_cost,
+            p = rec.kdf_params.p_cost,
+            wrapped = STANDARD.encode(&rec.dek_wrapped_pass),
+            check = check,
+            rsalt = STANDARD.encode(rec.recovery_salt),
+            rwrapped = STANDARD.encode(&rec.dek_wrapped_recovery),
+        );
+
+        let entries = VaultEntries::from_json(&body).unwrap();
+
+        assert_eq!(entries.mine.len(), 1);
+        assert_eq!(entries.recovery.len(), 1);
+        assert_eq!(
+            unlock_entries_with_passphrase(&entries, "pw").unwrap()[0]
+                .1
+                .expose(),
+            dek.expose(),
+            "the server's own body must open for real"
+        );
+        assert_eq!(
+            unlock_entries_with_recovery(&entries, rk.as_str()).unwrap()[0]
+                .1
+                .expose(),
+            dek.expose()
+        );
+        // ...and what we send back has exactly that shape.
+        let ours: serde_json::Value = serde_json::from_str(&entries.to_json()).unwrap();
+        let theirs: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(ours, theirs);
+    }
+
+    #[test]
+    fn rewrap_for_server_produces_one_upload_per_generation_and_keeps_the_dek() {
+        let (local, rk, dek) = crate::vault::setup("old").unwrap();
+        let entries = VaultEntries {
+            mine: vec![mine(
+                1,
+                crate::vault::rewrap_passphrase(&local, &dek, "old"),
+            )],
+            recovery: vec![recovery_of(1, &local)],
+        };
+
+        let out = rewrap_for_server(Some(&local), &entries, "old", "new").unwrap();
+
+        assert_eq!(out.uploads.len(), 1);
+        assert_eq!(out.uploads[0].generation, 1);
+        assert_eq!(out.deks.len(), 1);
+        assert_eq!(out.deks[0].1.expose(), dek.expose(), "same DEK, new wrap");
+
+        // The rewrapped cache opens with the NEW passphrase only.
+        assert!(unlock_entries_with_passphrase(&out.entries, "old").is_err());
+        assert_eq!(
+            unlock_entries_with_passphrase(&out.entries, "new").unwrap()[0]
+                .1
+                .expose(),
+            dek.expose()
+        );
+        // The recovery wrap is carried through untouched.
+        assert_eq!(
+            unlock_entries_with_recovery(&out.entries, rk.as_str()).unwrap()[0]
+                .1
+                .expose(),
+            dek.expose()
+        );
+        // And so is the local record, rewrapped under the new passphrase.
+        let new_local = out.record.unwrap();
+        assert!(vault_unlock_passphrase(&new_local, "old").is_err());
+        assert_eq!(
+            vault_unlock_passphrase(&new_local, "new").unwrap().expose(),
+            dek.expose()
+        );
+    }
+
+    #[test]
+    fn rewrap_for_server_refuses_a_wrong_current_passphrase() {
+        let (local, _rk, dek) = crate::vault::setup("old").unwrap();
+        let entries = VaultEntries {
+            mine: vec![mine(
+                1,
+                crate::vault::rewrap_passphrase(&local, &dek, "old"),
+            )],
+            recovery: vec![],
+        };
+        assert_eq!(
+            err_of(rewrap_for_server(Some(&local), &entries, "nope", "new")),
+            "wrong passphrase"
+        );
+    }
+
+    #[test]
+    fn migration_plan_uploads_only_an_unmigrated_local_record_on_a_vaultless_workspace() {
+        let s = store();
+        // No local record yet -> nothing to migrate.
+        assert!(matches!(
+            vault_migration_plan(&s).unwrap(),
+            VaultMigration::None
+        ));
+
+        vault_setup(&s, "pw").unwrap();
+        crate::migrate::set_meta_i64(&s.conn, "vault_generation", 0).unwrap();
+        assert!(matches!(
+            vault_migration_plan(&s).unwrap(),
+            VaultMigration::Upload(_)
+        ));
+
+        // The workspace already has a vault this record did not create.
+        crate::migrate::set_meta_i64(&s.conn, "vault_generation", 1).unwrap();
+        assert!(matches!(
+            vault_migration_plan(&s).unwrap(),
+            VaultMigration::Conflict
+        ));
+
+        // Once migrated (or against a legacy server) the hook stays quiet.
+        crate::migrate::set_meta_i64(&s.conn, "vault_migrated", 1).unwrap();
+        assert!(matches!(
+            vault_migration_plan(&s).unwrap(),
+            VaultMigration::None
+        ));
+        crate::migrate::delete_meta(&s.conn, "vault_migrated").unwrap();
+        crate::migrate::set_meta_i64(&s.conn, "vault_server_legacy", 1).unwrap();
+        assert!(matches!(
+            vault_migration_plan(&s).unwrap(),
+            VaultMigration::None
+        ));
+    }
+
+    #[test]
+    fn migration_plan_skips_a_record_that_has_no_dek_check_yet() {
+        let s = store();
+        let (mut rec, _rk, _dek) = crate::vault::setup("pw").unwrap();
+        rec.dek_check = None;
+        s.set_vault_record(&rec.to_json()).unwrap();
+        crate::migrate::set_meta_i64(&s.conn, "vault_generation", 0).unwrap();
+        assert!(
+            matches!(vault_migration_plan(&s).unwrap(), VaultMigration::None),
+            "skipped silently until an unlock self-heals the record"
+        );
+    }
+
+    #[test]
+    fn unlock_inputs_read_both_halves_in_one_lock_scope() {
+        let s = store();
+        let empty = load_vault_unlock_inputs(&s).unwrap();
+        assert!(empty.record.is_none() && empty.entries.is_none());
+
+        vault_setup(&s, "pw").unwrap();
+        let (rec, _rk, _dek) = crate::vault::setup("pw").unwrap();
+        s.set_vault_entries(
+            &VaultEntries {
+                mine: vec![mine(1, rec)],
+                recovery: vec![],
+            }
+            .to_json(),
+        )
+        .unwrap();
+
+        let both = load_vault_unlock_inputs(&s).unwrap();
+        assert!(both.record.is_some());
+        assert_eq!(both.entries.unwrap().mine.len(), 1);
+    }
+
+    #[test]
+    fn a_corrupt_entry_cache_is_ignored_rather_than_failing_the_unlock() {
+        let s = store();
+        vault_setup(&s, "pw").unwrap();
+        s.set_vault_entries("not json at all").unwrap();
+        assert!(
+            cached_vault_entries(&s).unwrap().is_none(),
+            "unparsable cache is reported as absent, never a panic"
+        );
+        let inputs = load_vault_unlock_inputs(&s).unwrap();
+        assert!(
+            inputs.entries.is_none(),
+            "unparsable cache falls back to the local record"
+        );
+        assert!(inputs.record.is_some());
     }
 }
 

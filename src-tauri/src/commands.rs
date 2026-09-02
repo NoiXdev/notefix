@@ -1105,7 +1105,11 @@ pub async fn run_sync_cycle(app: &AppHandle) -> Result<(), String> {
                 ops::commit_sync_result(&s, &note_ids, &folder_ids, &pull, now_ms())?;
             }
             broadcast_context_changed(app); // refresh the UI from the updated cache
-                                            // S2b: transfer referenced images (non-fatal — notes already synced).
+                                            // A vault set up while this context was local (or offline)
+                                            // joins the workspace here. Non-fatal — a network failure is
+                                            // retried on the next cycle, exactly like the image phase.
+            let _ = run_vault_migration(app, &ctx, &tokens.access_token).await;
+            // S2b: transfer referenced images (non-fatal — notes already synced).
             let _ = run_image_phase(app, &ctx, &tokens.access_token).await;
             let _ = app.emit(
                 "sync-status",
@@ -1156,6 +1160,43 @@ pub fn notes_search_all(
         ops::registry_contexts(&r)
     };
     Ok(ops::search_all_contexts(&contexts, &query, unlocked))
+}
+
+/// After a successful sync round-trip: put a local-only vault record onto the
+/// workspace, or record that the workspace already holds a vault this record
+/// did not create (meta `vault_conflict` — the UI surfaces it, and a
+/// successful unlock from the workspace entries clears it again, since the
+/// same DEK proves the two are one vault).
+///
+/// Non-fatal by design: the note sync is already committed, so a network
+/// failure here is swallowed by the caller and retried next cycle. No Store
+/// lock is held across the `.await`.
+pub async fn run_vault_migration(
+    app: &AppHandle,
+    ctx: &crate::profiles::ContextEntry,
+    token: &str,
+) -> Result<(), String> {
+    let store_state = app.state::<Mutex<Store>>();
+    let plan = {
+        let s = store_state.lock().map_err(|e| e.to_string())?;
+        ops::vault_migration_plan(&s)?
+    };
+    let outcome = match plan {
+        ops::VaultMigration::None => return Ok(()),
+        // The workspace already has a vault; no point asking it again.
+        ops::VaultMigration::Conflict => "vault_conflict",
+        ops::VaultMigration::Upload(payload) => {
+            match crate::sync::vault_create(&ctx.server_url, token, &ctx.workspace_id, &payload)
+                .await
+                .map_err(|e| e.to_string())?
+            {
+                crate::sync::VaultCreateOutcome::Created => "vault_migrated",
+                crate::sync::VaultCreateOutcome::AlreadyExists => "vault_conflict",
+            }
+        }
+    };
+    let s = store_state.lock().map_err(|e| e.to_string())?;
+    ops::record_vault_migration(&s, outcome)
 }
 
 /// S2b: after the note phase, transfer referenced image blobs for a bound server
@@ -1244,6 +1285,50 @@ fn active_context_id(reg: &State<'_, Mutex<crate::profiles::Registry>>) -> Resul
         .ok_or_else(|| "no active context".to_string())
 }
 
+/// Installs every unlocked `(generation, DEK)` into the ring.
+fn install_generations(
+    vault: &VaultStateHandle<'_>,
+    opened: &[(u32, crate::vault::aead::Dek)],
+) -> Result<(), String> {
+    let mut v = vault.lock().map_err(|e| e.to_string())?;
+    for (generation, dek) in opened {
+        v.unlock(*generation, dek.clone());
+    }
+    Ok(())
+}
+
+/// Where this context's vault keys live on the server, if they do: a bound
+/// server context plus a usable access token. `None` — meaning "purely local
+/// vault" — for a local context, an unbound or unauthenticated one, and for a
+/// server that predates workspace vault keys (meta `vault_server_legacy`,
+/// set by `ops::apply_vault_keys` when a pull carried no `vaultKeys`).
+///
+/// Takes the Registry and Store locks one after the other, never nested —
+/// Registry -> Store, per the lock-order convention near `swap_store_to`.
+fn vault_server_target(
+    app: &AppHandle,
+) -> Result<Option<(crate::profiles::ContextEntry, String)>, String> {
+    let reg_state = app.state::<Mutex<crate::profiles::Registry>>();
+    let store_state = app.state::<Mutex<Store>>();
+    let ctx = {
+        let r = reg_state.lock().map_err(|e| e.to_string())?;
+        ops::active_server(&r)
+    };
+    let Some(ctx) = ctx.filter(|c| !c.workspace_id.is_empty()) else {
+        return Ok(None);
+    };
+    let legacy = {
+        let s = store_state.lock().map_err(|e| e.to_string())?;
+        crate::migrate::get_meta_i64_opt(&s.conn, "vault_server_legacy")
+            .map_err(|e| e.to_string())?
+            .is_some()
+    };
+    if legacy {
+        return Ok(None);
+    }
+    Ok(crate::auth::load_tokens(&ctx.id)?.map(|t| (ctx, t.access_token)))
+}
+
 #[tauri::command]
 pub fn vault_status(
     store: State<'_, Mutex<Store>>,
@@ -1253,7 +1338,10 @@ pub fn vault_status(
     let context_id = active_context_id(&reg)?;
     let exists = {
         let store = store.lock().map_err(|e| e.to_string())?;
-        store.vault_record().map_err(|e| e.to_string())?.is_some()
+        // A device that has only pulled its wrapped keys has no local record
+        // yet, but its vault definitely exists — it must be offered "unlock",
+        // never "set up" (which would mint a second, incompatible DEK).
+        ops::vault_exists(&store)?
     };
     let unlocked = vault.lock().map_err(|e| e.to_string())?.is_unlocked();
     Ok(VaultStatus {
@@ -1336,67 +1424,130 @@ pub async fn vault_unlock_biometric(
 /// Creates a new vault: wraps a fresh DEK under `passphrase`, persists the
 /// record, and unlocks it immediately. Returns the one-time recovery key
 /// split into its dash-separated groups — the only place it is ever exposed.
+///
+/// In a bound server context the workspace is the home of the wrapped keys,
+/// so the record this device just stored is uploaded as generation 1. The
+/// local setup runs first and the upload is built from the stored record, so
+/// device and workspace can never end up holding different vaults. If the
+/// workspace already has one (another device won the race), the local record
+/// is rolled back and the user is sent to the unlock screen — a half-created
+/// local vault the server never saw must not survive.
+///
+/// Async because of that upload; the frontend calls it exactly as before.
 #[tauri::command]
-pub fn vault_setup(
-    store: State<'_, Mutex<Store>>,
-    vault: VaultStateHandle<'_>,
-    passphrase: String,
-) -> Result<Vec<String>, String> {
-    let (groups, dek) = {
-        let store = store.lock().map_err(|e| e.to_string())?;
-        ops::vault_setup(&store, &passphrase)?
+pub async fn vault_setup(app: AppHandle, passphrase: String) -> Result<Vec<String>, String> {
+    let target = vault_server_target(&app)?;
+    let store_state = app.state::<Mutex<Store>>();
+
+    let (groups, dek, payload) = {
+        let store = store_state.lock().map_err(|e| e.to_string())?;
+        let (groups, dek) = ops::vault_setup(&store, &passphrase)?;
+        let payload = match target.is_some() {
+            true => Some(ops::migration_payload(&ops::load_vault_record(&store)?)?),
+            false => None,
+        };
+        (groups, dek, payload)
     };
-    vault.lock().map_err(|e| e.to_string())?.unlock(1, dek);
+
+    if let (Some((ctx, token)), Some(payload)) = (target, payload) {
+        let outcome =
+            crate::sync::vault_create(&ctx.server_url, &token, &ctx.workspace_id, &payload).await;
+        let rejected = match outcome {
+            Ok(crate::sync::VaultCreateOutcome::Created) => None,
+            Ok(crate::sync::VaultCreateOutcome::AlreadyExists) => Some(
+                "vault: already set up on the server — unlock with your passphrase".to_string(),
+            ),
+            Err(e) => Some(e.to_string()),
+        };
+        let store = store_state.lock().map_err(|e| e.to_string())?;
+        match rejected {
+            None => ops::record_vault_migration(&store, "vault_migrated")?,
+            Some(e) => {
+                let _ = store.clear_vault_record();
+                return Err(e);
+            }
+        }
+    }
+
+    app.state::<Mutex<crate::vault::state::VaultState>>()
+        .lock()
+        .map_err(|e| e.to_string())?
+        .unlock(1, dek);
     Ok(groups)
 }
 
+/// Shared body of [`vault_unlock`] and [`vault_unlock_recovery`].
+///
+/// Where the workspace has handed this caller a wrapped key per generation
+/// (cached by `ops::apply_vault_keys` on every pull), the cache is the way
+/// in: `ops::plan_entry_unlock` decides which generations may be installed
+/// and whether the workspace vault is provably this device's own vault
+/// before anything is written back. Otherwise the local record is the only
+/// way in, exactly as before.
+///
+/// The store lock is held only for the reads and for the write-back — never
+/// across the KDF derivations, which would stall every other store consumer.
+/// Lock order stays Store -> VaultState.
+fn unlock_vault_with(
+    store: &State<'_, Mutex<Store>>,
+    vault: &VaultStateHandle<'_>,
+    secret: ops::VaultSecret<'_>,
+) -> Result<(), String> {
+    let inputs = {
+        let store = store.lock().map_err(|e| e.to_string())?;
+        ops::load_vault_unlock_inputs(&store)?
+    };
+
+    let Some(entries) = inputs.entries.filter(|e| secret.entries_usable(e)) else {
+        // Purely local vault: today's path.
+        let record = inputs
+            .record
+            .ok_or_else(|| "vault: not set up".to_string())?;
+        let dek = secret.open(&record)?;
+        let backfill_dek = dek.clone();
+        vault.lock().map_err(|e| e.to_string())?.unlock(1, dek);
+        if let Ok(store) = store.lock() {
+            ops::ensure_dek_check(&store, &record, &backfill_dek);
+            // Store -> VaultState, per the lock-order convention near `swap_store_to`.
+            if let Ok(v) = vault.lock() {
+                ops::backfill_protected_titles(&store, &v);
+            }
+        }
+        return Ok(());
+    };
+
+    let plan = ops::plan_entry_unlock(inputs.record.as_ref(), &entries, &secret)?;
+    install_generations(vault, &plan.install)?;
+    if let Ok(store) = store.lock() {
+        ops::apply_entry_unlock(&store, inputs.record.as_ref(), &entries, &plan)?;
+        // Store -> VaultState, per the lock-order convention near `swap_store_to`.
+        if let Ok(v) = vault.lock() {
+            ops::backfill_protected_titles(&store, &v);
+        }
+    }
+    Ok(())
+}
+
+/// Unlocks the vault with `passphrase`. Stays synchronous: the entry cache
+/// is local, so no network is involved.
 #[tauri::command]
 pub fn vault_unlock(
     store: State<'_, Mutex<Store>>,
     vault: VaultStateHandle<'_>,
     passphrase: String,
 ) -> Result<(), String> {
-    // The store lock is held only for the record read — never across the
-    // Argon2 derivation below, which would stall every other store consumer.
-    let record = {
-        let store = store.lock().map_err(|e| e.to_string())?;
-        ops::load_vault_record(&store)?
-    };
-    let dek = ops::vault_unlock_passphrase(&record, &passphrase)?;
-    let backfill_dek = dek.clone();
-    vault.lock().map_err(|e| e.to_string())?.unlock(1, dek);
-    if let Ok(store) = store.lock() {
-        ops::ensure_dek_check(&store, &record, &backfill_dek);
-        // Store -> VaultState, per the lock-order convention near `swap_store_to`.
-        if let Ok(v) = vault.lock() {
-            ops::backfill_protected_titles(&store, &v);
-        }
-    }
-    Ok(())
+    unlock_vault_with(&store, &vault, ops::VaultSecret::Passphrase(&passphrase))
 }
 
+/// [`vault_unlock`] via the one-time recovery key — the workspace's recovery
+/// wraps when it has them, the local record otherwise.
 #[tauri::command]
 pub fn vault_unlock_recovery(
     store: State<'_, Mutex<Store>>,
     vault: VaultStateHandle<'_>,
     recovery: String,
 ) -> Result<(), String> {
-    // Store lock scoped to the record read only — see `vault_unlock`.
-    let record = {
-        let store = store.lock().map_err(|e| e.to_string())?;
-        ops::load_vault_record(&store)?
-    };
-    let dek = ops::vault_unlock_recovery(&record, &recovery)?;
-    let backfill_dek = dek.clone();
-    vault.lock().map_err(|e| e.to_string())?.unlock(1, dek);
-    if let Ok(store) = store.lock() {
-        ops::ensure_dek_check(&store, &record, &backfill_dek);
-        // Store -> VaultState, per the lock-order convention near `swap_store_to`.
-        if let Ok(v) = vault.lock() {
-            ops::backfill_protected_titles(&store, &v);
-        }
-    }
-    Ok(())
+    unlock_vault_with(&store, &vault, ops::VaultSecret::Recovery(&recovery))
 }
 
 #[tauri::command]
@@ -1413,19 +1564,73 @@ pub fn vault_lock(vault: VaultStateHandle<'_>) -> Result<(), String> {
 /// cryptographically re-verified via `unlock_passphrase`, so re-arming the
 /// session with the (unchanged) DEK is safe rather than forcing a redundant
 /// unlock.
+///
+/// In a bound server context the workspace holds the wraps, so EVERY
+/// generation is rewrapped and PUT back. Strict order — compute, then
+/// network, then persist: nothing is written locally until every upload has
+/// landed, so a failed PUT leaves this device on `current`, exactly in step
+/// with the workspace.
 #[tauri::command]
-pub fn vault_change_passphrase(
-    store: State<'_, Mutex<Store>>,
-    vault: VaultStateHandle<'_>,
+pub async fn vault_change_passphrase(
+    app: AppHandle,
     current: String,
     next: String,
 ) -> Result<(), String> {
-    let dek = {
-        let store = store.lock().map_err(|e| e.to_string())?;
-        ops::vault_change_passphrase(&store, &current, &next)?
+    let target = vault_server_target(&app)?;
+    let store_state = app.state::<Mutex<Store>>();
+    let vault_state = app.state::<Mutex<crate::vault::state::VaultState>>();
+
+    // Rewrap the single local record in place — the path for a local
+    // context, a legacy server, and a workspace that holds no key for this
+    // caller yet (the migration hook has not run, or it hit a conflict).
+    let local_only = || -> Result<(), String> {
+        let dek = {
+            let store = store_state.lock().map_err(|e| e.to_string())?;
+            ops::vault_change_passphrase(&store, &current, &next)?
+        };
+        vault_state
+            .lock()
+            .map_err(|e| e.to_string())?
+            .unlock(1, dek);
+        Ok(())
     };
-    vault.lock().map_err(|e| e.to_string())?.unlock(1, dek);
-    Ok(())
+
+    let Some((ctx, token)) = target else {
+        return local_only();
+    };
+
+    // (a) read both halves under the lock, then drop it.
+    let inputs = {
+        let store = store_state.lock().map_err(|e| e.to_string())?;
+        ops::load_vault_unlock_inputs(&store)?
+    };
+    let Some(entries) = inputs.entries.filter(|e| !e.mine.is_empty()) else {
+        return local_only();
+    };
+
+    // (b) rewrap in memory — no store writes, no network.
+    let rewrap = ops::rewrap_for_server(inputs.record.as_ref(), &entries, &current, &next)?;
+
+    // (c) upload first; any failure aborts before a single local write.
+    for entry in &rewrap.uploads {
+        crate::sync::vault_put_my_key(&ctx.server_url, &token, &ctx.workspace_id, entry)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+
+    // (d) every generation landed: persist, then re-arm the ring.
+    {
+        let store = store_state.lock().map_err(|e| e.to_string())?;
+        if let Some(record) = &rewrap.record {
+            store
+                .set_vault_record(&record.to_json())
+                .map_err(|e| e.to_string())?;
+        }
+        store
+            .set_vault_entries(&rewrap.entries.to_json())
+            .map_err(|e| e.to_string())?;
+    }
+    install_generations(&vault_state, &rewrap.deks)
 }
 
 /// Changes a context's vault passphrase from the Kontexte page, without
@@ -1436,10 +1641,9 @@ pub fn vault_change_passphrase(
 /// DB, rewraps its DEK there, and never touches `VaultState` — that state
 /// always tracks the active context only.
 #[tauri::command]
-pub fn context_vault_change_passphrase(
+pub async fn context_vault_change_passphrase(
+    app: AppHandle,
     reg: State<'_, Mutex<crate::profiles::Registry>>,
-    store: State<'_, Mutex<Store>>,
-    vault: VaultStateHandle<'_>,
     id: String,
     current: String,
     next: String,
@@ -1449,7 +1653,9 @@ pub fn context_vault_change_passphrase(
         r.active_id == id
     };
     if is_active {
-        return vault_change_passphrase(store, vault, current, next);
+        // Async now, because the active context may have to rewrap its keys
+        // on the server too — the registry lock above is already released.
+        return vault_change_passphrase(app, current, next).await;
     }
     let r = reg.lock().map_err(|e| e.to_string())?;
     ops::change_context_vault_passphrase(&r, &id, &current, &next)

@@ -62,6 +62,7 @@ impl From<VaultError> for String {
 /// Not yet called from app code — wired in by a later task — so items here
 /// carry `#[allow(dead_code)]` per the Task 1/2 precedent in this module.
 #[allow(dead_code)]
+#[derive(Clone)]
 pub struct VaultRecord {
     pub kdf_params: KdfParams,
     pub dek_wrapped_pass: Vec<u8>,
@@ -166,6 +167,30 @@ fn recovery_kdf_params(recovery_salt: [u8; 16]) -> KdfParams {
     KdfParams {
         salt: recovery_salt,
         ..KdfParams::new_default()
+    }
+}
+
+/// A record standing in for a server-side **recovery** entry: it carries only
+/// the recovery-key wrapping, so [`unlock_recovery`] (which reads
+/// `recovery_salt` / `dek_wrapped_recovery` and derives its own KDF params
+/// from the salt) works against it, while the passphrase half stays empty.
+///
+/// Used by `ops::unlock_entries_with_recovery`, where the workspace hands
+/// back one recovery wrap per key generation rather than whole records.
+/// `kdf_params` is the recovery-side derivation and is deliberately never
+/// used to unwrap `dek_wrapped_pass` — that field is empty here, so
+/// [`unlock_passphrase`] on such a record always fails.
+pub fn recovery_only_record(
+    recovery_salt: [u8; 16],
+    dek_wrapped_recovery: Vec<u8>,
+    dek_check: Option<Vec<u8>>,
+) -> VaultRecord {
+    VaultRecord {
+        kdf_params: recovery_kdf_params(recovery_salt),
+        dek_wrapped_pass: Vec::new(),
+        recovery_salt,
+        dek_wrapped_recovery,
+        dek_check,
     }
 }
 

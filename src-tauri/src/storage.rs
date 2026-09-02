@@ -616,8 +616,9 @@ impl Store {
         Ok(())
     }
 
-    /// Remove the vault record (e.g. when the protected vault is reset).
-    #[allow(dead_code)]
+    /// Remove the vault record — used when a `vault_setup` upload is
+    /// rejected by the workspace and the just-written local record has to be
+    /// rolled back.
     pub fn clear_vault_record(&self) -> rusqlite::Result<()> {
         self.conn.execute("DELETE FROM vault WHERE id = 1", [])?;
         Ok(())
@@ -626,7 +627,6 @@ impl Store {
     /// The cached JSON of the caller's own wrapped entries from the server
     /// (schema v15) — `{"mine":[...],"recovery":[...]}`, camelCase, matching
     /// the wire shape. `None` if nothing has been cached yet.
-    #[allow(dead_code)] // read by a vault-status command in a later task
     pub fn vault_entries(&self) -> rusqlite::Result<Option<String>> {
         use rusqlite::OptionalExtension;
         self.conn
