@@ -25,6 +25,7 @@ import SearchModal from './components/SearchModal';
 import ConfettiEasterEgg from './components/ConfettiEasterEgg';
 import VaultSetup from './components/VaultSetup';
 import VaultUnlock from './components/VaultUnlock';
+import ConfirmDialog from './components/ConfirmDialog';
 import WhatsNew from './components/WhatsNew';
 import { shouldShowUpdateBanner } from './updateCheck';
 import type { UpdateInfo, ReleaseInfo } from './api';
@@ -40,6 +41,28 @@ import type { Folder, Stats } from './types';
 
 const windowNoteId = new URLSearchParams(window.location.search).get('windowNoteId');
 
+/**
+ * Remembers that the "images stay unencrypted" hint has been acknowledged, so
+ * it is shown once per device rather than before every protected note.
+ * Storage can throw (private mode, disabled site data) — a hint that cannot be
+ * remembered is simply shown again, never an error.
+ */
+const IMAGES_HINT_KEY = 'vault.imagesHintSeen';
+const imagesHintSeen = () => {
+  try {
+    return localStorage.getItem(IMAGES_HINT_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
+const rememberImagesHint = () => {
+  try {
+    localStorage.setItem(IMAGES_HINT_KEY, '1');
+  } catch {
+    /* nothing to remember it in — the hint just shows again */
+  }
+};
+
 export default function App() {
   const { t } = useTranslation();
   const { notes, loading, createNote, updateNote, deleteNote, setPinned, setArchived, setColor, setDue, setFolder, reorderNotes, trashed, restoreNote, purgeNote, emptyTrash, reload: reloadNotes } = useNotes();
@@ -48,6 +71,8 @@ export default function App() {
   const vault = useVault();
   const [pendingProtect, setPendingProtect] = useState<{ kind: 'note' | 'folder'; id: string; next: boolean } | null>(null);
   const [vaultDialog, setVaultDialog] = useState<'setup' | 'unlock' | null>(null);
+  // A protect that is waiting on the one-time "images stay unencrypted" hint.
+  const [imagesHint, setImagesHint] = useState<{ kind: 'note' | 'folder'; id: string; next: boolean } | null>(null);
   // 'perNote' lock scope: notes unlocked this session, so re-locking the note
   // list doesn't force re-entering the passphrase for a note already shown.
   const [revealedNotes, setRevealedNotes] = useState<Set<string>>(new Set());
@@ -404,7 +429,8 @@ export default function App() {
     await reloadFolders();
   };
 
-  const requestProtect = (kind: 'note' | 'folder', id: string, next: boolean) => {
+  // Route a protect through the vault gate: set up, unlock, or just apply it.
+  const gateProtect = (kind: 'note' | 'folder', id: string, next: boolean) => {
     if (!vault.status.exists) {
       setPendingProtect({ kind, id, next });
       setVaultDialog('setup');
@@ -414,6 +440,28 @@ export default function App() {
     } else {
       void applyProtect(kind, id, next);
     }
+  };
+
+  /** Whether this note's stored HTML embeds an image. */
+  const noteHasImages = async (id: string) => {
+    try {
+      return (await api.notes.loadOne(id)).includes('<img');
+    } catch {
+      return false;
+    }
+  };
+
+  const requestProtect = (kind: 'note' | 'folder', id: string, next: boolean) => {
+    // Protecting a note seals its HTML, but the images it references stay as
+    // plain files on disk. Say so once, before the first such note is locked.
+    if (kind === 'note' && next && !imagesHintSeen()) {
+      void noteHasImages(id).then(has => {
+        if (has) setImagesHint({ kind, id, next });
+        else gateProtect(kind, id, next);
+      });
+      return;
+    }
+    gateProtect(kind, id, next);
   };
 
   // "Hide from MCP" is a plaintext local flag — no vault involved, so (unlike
@@ -632,10 +680,25 @@ export default function App() {
           onClose={() => { void setSetting('lastSeenVersion', whatsNewAuto.current); setWhatsNewAuto(null); }}
         />
       )}
+      {imagesHint && (
+        <ConfirmDialog
+          title={t('vault.imagesUnencryptedTitle')}
+          message={t('vault.imagesUnencryptedHint')}
+          confirmLabel={t('vault.lockNote')}
+          onConfirm={() => {
+            const p = imagesHint;
+            rememberImagesHint();
+            setImagesHint(null);
+            gateProtect(p.kind, p.id, p.next);
+          }}
+          onCancel={() => setImagesHint(null)}
+        />
+      )}
       {vaultDialog === 'setup' && <VaultSetup setup={vault.setup} onSuccess={afterUnlockOrSetup} onCancel={cancelVaultDialog} />}
       {vaultDialog === 'unlock' && (
         <VaultUnlock
           biometricAvailable={vault.status.biometric}
+          recoveryAvailable={vault.status.recoveryHolder}
           unlock={vault.unlock}
           unlockRecovery={vault.unlockRecovery}
           unlockBiometric={vault.unlockBiometric}

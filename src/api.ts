@@ -110,6 +110,15 @@ export const api = {
     /** Change a context's vault passphrase without switching into it. */
     vaultChangePassphrase: (id: string, current: string, next: string): Promise<void> =>
       invoke("context_vault_change_passphrase", { id, current, next }),
+    /** Turn a pasted invitation link (or a bare id) into the invitation id. */
+    vaultInviteResolve: (reference: string): Promise<number> =>
+      invoke("vault_invite_resolve", { reference }),
+    /** Attach the vault key to an invitation; returns the one-time code. */
+    vaultInviteShare: (invitationId: number): Promise<string> =>
+      invoke("vault_invite_share", { invitationId }),
+    /** Redeem an invite code and install a key wrapped under `passphrase`. */
+    vaultInviteAccept: (invitationId: number, code: string, passphrase: string): Promise<void> =>
+      invoke("vault_invite_accept", { invitationId, code, passphrase }),
   },
 
   vault: {

@@ -18,6 +18,8 @@ import ShortcutsSettings from "./ShortcutsSettings";
 import PromptDialog from "./PromptDialog";
 import VaultSetup from "./VaultSetup";
 import VaultUnlock from "./VaultUnlock";
+import VaultInviteCodeDialog from "./VaultInviteCodeDialog";
+import VaultAcceptInviteDialog from "./VaultAcceptInviteDialog";
 import WhatsNew from "./WhatsNew";
 import { runSystemChecks } from "../systemChecks";
 import { OSS_LIBS } from "../licenses";
@@ -299,6 +301,16 @@ function SecurityPage({ settings, onSetSetting }: {
       )}
       <p className="text-xs text-gray-500 mb-6">{t("security.otherContextsHint")}</p>
 
+      {vault.status.conflict && (
+        <div
+          role="status"
+          className="mb-6 rounded border px-3 py-2 text-sm"
+          style={{ borderColor: "#d97706", background: "#fffbeb", color: "#7c2d12" }}
+        >
+          {t("vault.conflict.hint")}
+        </div>
+      )}
+
       <SettingsTabs tabs={tabs} active={tab} onChange={id => setTab(id as "vault" | "autoLock")} />
 
       {tab === "vault" && (
@@ -390,6 +402,7 @@ function SecurityPage({ settings, onSetSetting }: {
       {showUnlockForBiometric && (
         <VaultUnlock
           biometricAvailable={false}
+          recoveryAvailable={vault.status.recoveryHolder}
           unlock={vault.unlock}
           unlockRecovery={vault.unlockRecovery}
           unlockBiometric={vault.unlockBiometric}
@@ -956,6 +969,8 @@ type CtxDialog =
   | { mode: "rename"; c: ContextInfo }
   | { mode: "remove"; c: ContextInfo }
   | { mode: "vault"; c: ContextInfo }
+  | { mode: "inviteShare"; c: ContextInfo }
+  | { mode: "inviteAccept"; c: ContextInfo }
   | null;
 
 function ContextsPage() {
@@ -965,6 +980,36 @@ function ContextsPage() {
   const [deleteFile, setDeleteFile] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [inviteCode, setInviteCode] = useState<string | null>(null);
+
+  // The invite commands act on the ACTIVE server context (they resolve their
+  // workspace and tokens from it), so they are only offered on that row —
+  // never on some other context the backend would not be talking to.
+  const canInvite = (c: ContextInfo) => c.active && c.kind === "server" && c.workspaceId !== "";
+
+  /**
+   * Resolve whatever was pasted into an invitation id, then attach the key.
+   * The two halves fail for unrelated reasons — a link nobody can resolve on
+   * the one hand, and a closed invitation, a wrap already attached, a rotated
+   * generation or a locked vault on the other — so they are reported apart,
+   * and the attach failure carries the backend's own words.
+   */
+  const shareVault = async (reference: string) => {
+    close();
+    setError(null);
+    let id: number;
+    try {
+      id = await api.contexts.vaultInviteResolve(reference);
+    } catch {
+      setError(t("vault.invite.resolveFailed"));
+      return;
+    }
+    try {
+      setInviteCode(await api.contexts.vaultInviteShare(id));
+    } catch (e) {
+      setError(t("vault.invite.shareFailed", { error: e instanceof Error ? e.message : String(e) }));
+    }
+  };
 
   useEffect(() => {
     void api.contexts.list().then(setCtx);
@@ -1018,11 +1063,27 @@ function ContextsPage() {
                     {t("contexts.vault.touchId")}
                   </span>
                 )}
+                {c.vaultGeneration > 1 && (
+                  <span className="rounded px-1.5 py-0.5 text-[10px] font-medium" style={{ background: "var(--line-muted)", color: "#1c1917" }}>
+                    {t("contexts.vault.generation", { n: c.vaultGeneration })}
+                  </span>
+                )}
+                {c.vaultRotationPending && (
+                  <span className="rounded px-1.5 py-0.5 text-[10px] font-medium" style={{ background: "#fef3c7", color: "#7c2d12" }}>
+                    {t("contexts.vault.rotationPending")}
+                  </span>
+                )}
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
               {c.vaultExists && (
                 <button onClick={() => setDialog({ mode: "vault", c })} className="px-3 py-1 rounded text-xs font-medium border" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>{t("contexts.vault.changePassphrase")}</button>
+              )}
+              {canInvite(c) && c.vaultExists && (
+                <button onClick={() => { setError(null); setDialog({ mode: "inviteShare", c }); }} className="px-3 py-1 rounded text-xs font-medium border" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>{t("vault.invite.share")}</button>
+              )}
+              {canInvite(c) && (
+                <button onClick={() => { setError(null); setDialog({ mode: "inviteAccept", c }); }} className="px-3 py-1 rounded text-xs font-medium border" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>{t("vault.invite.enter")}</button>
               )}
               <button onClick={() => setDialog({ mode: "rename", c })} className="px-3 py-1 rounded text-xs font-medium border" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>{t("contexts.rename")}</button>
               <button onClick={() => setDialog({ mode: "remove", c })} disabled={c.active} className="px-3 py-1 rounded text-xs font-medium border disabled:opacity-40 disabled:cursor-not-allowed" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>{t("contexts.remove")}</button>
@@ -1062,6 +1123,24 @@ function ContextsPage() {
           initialValue={dialog.c.label}
           placeholder={t("contexts.addPrompt")}
           onSubmit={async name => { setCtx(await api.contexts.rename(dialog.c.id, name)); close(); }}
+          onCancel={close}
+        />
+      )}
+      {dialog?.mode === "inviteShare" && (
+        <PromptDialog
+          title={t("vault.invite.share")}
+          confirmLabel={t("vault.invite.share")}
+          placeholder={t("vault.invite.reference")}
+          onSubmit={reference => void shareVault(reference)}
+          onCancel={close}
+        />
+      )}
+      {inviteCode && <VaultInviteCodeDialog code={inviteCode} onClose={() => setInviteCode(null)} />}
+      {dialog?.mode === "inviteAccept" && (
+        <VaultAcceptInviteDialog
+          resolve={api.contexts.vaultInviteResolve}
+          accept={api.contexts.vaultInviteAccept}
+          onSuccess={() => { close(); void api.contexts.list().then(setCtx); }}
           onCancel={close}
         />
       )}

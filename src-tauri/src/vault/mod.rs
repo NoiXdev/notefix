@@ -80,8 +80,8 @@ pub struct VaultRecord {
 
 /// AAD + plaintext of the DEK check blob. Both are constants, so the blob
 /// reveals nothing about the DEK; a wrong key simply fails to open it.
-const DEK_CHECK_AAD: &[u8] = b"notefix-vault-dek-check";
-const DEK_CHECK_MAGIC: &[u8] = b"notefix-vault-ok";
+pub(crate) const DEK_CHECK_AAD: &[u8] = b"notefix-vault-dek-check";
+pub(crate) const DEK_CHECK_MAGIC: &[u8] = b"notefix-vault-ok";
 
 /// Seals the check magic under `dek` (fresh nonce each time).
 pub fn make_dek_check(dek: &Dek) -> Vec<u8> {

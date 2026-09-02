@@ -12,6 +12,10 @@ export interface ContextInfo {
   vaultExists: boolean;
   /** Whether this context has a Touch ID keychain item enrolled. */
   vaultBiometric: boolean;
+  /** Newest workspace key generation this context has pulled; 0 when local. */
+  vaultGeneration: number;
+  /** Whether the workspace still owes this context's vault a key rotation. */
+  vaultRotationPending: boolean;
 }
 
 /**

@@ -739,6 +739,65 @@ describe("App — vault dialogs complete the pending protect action", () => {
   });
 });
 
+describe("App — images stay unencrypted hint", () => {
+  const withImage = '<p>hi <img src="notefix-img://a.png"> there</p>';
+  beforeEach(() => localStorage.clear());
+  afterEach(() => localStorage.clear());
+
+  /** Create a note and pick "Notiz sperren" from its context menu. */
+  const lockFirstNote = async () => {
+    render(<App />);
+    await waitFor(() => screen.getByTitle("Neue Notiz"));
+    fireEvent.click(screen.getByTitle("Neue Notiz"));
+    await waitFor(() => expect(screen.getByText("Ohne Titel")).toBeInTheDocument());
+    fireEvent.contextMenu(screen.getByText("Ohne Titel"));
+    fireEvent.click(screen.getByText("Notiz sperren"));
+  };
+
+  it("warns once before protecting a note that embeds an image, then proceeds", async () => {
+    vi.mocked(api.notes.loadOne).mockResolvedValue(withImage);
+    await lockFirstNote();
+
+    expect(await screen.findByText("Bilder bleiben unverschlüsselt")).toBeInTheDocument();
+    // Nothing has been protected yet — the vault gate has not even been reached.
+    expect(api.vault.protectNote).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Notiz sperren" }));
+    await waitFor(() => expect(screen.getByText("Tresor einrichten")).toBeInTheDocument());
+    expect(localStorage.getItem("vault.imagesHintSeen")).toBe("1");
+  });
+
+  it("does not warn again once the hint has been acknowledged", async () => {
+    localStorage.setItem("vault.imagesHintSeen", "1");
+    vi.mocked(api.notes.loadOne).mockResolvedValue(withImage);
+    await lockFirstNote();
+
+    await waitFor(() => expect(screen.getByText("Tresor einrichten")).toBeInTheDocument());
+    expect(screen.queryByText("Bilder bleiben unverschlüsselt")).not.toBeInTheDocument();
+  });
+
+  it("does not warn for a note without images", async () => {
+    vi.mocked(api.notes.loadOne).mockResolvedValue("<p>just text</p>");
+    await lockFirstNote();
+
+    await waitFor(() => expect(screen.getByText("Tresor einrichten")).toBeInTheDocument());
+    expect(screen.queryByText("Bilder bleiben unverschlüsselt")).not.toBeInTheDocument();
+  });
+
+  it("cancelling the hint drops the protect and keeps the hint for next time", async () => {
+    vi.mocked(api.notes.loadOne).mockResolvedValue(withImage);
+    await lockFirstNote();
+
+    expect(await screen.findByText("Bilder bleiben unverschlüsselt")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Abbrechen" }));
+
+    await waitFor(() => expect(screen.queryByText("Bilder bleiben unverschlüsselt")).not.toBeInTheDocument());
+    expect(screen.queryByText("Tresor einrichten")).not.toBeInTheDocument();
+    expect(api.vault.protectNote).not.toHaveBeenCalled();
+    expect(localStorage.getItem("vault.imagesHintSeen")).toBeNull();
+  });
+});
+
 describe("App — perNote reveal flow", () => {
   it("unlocking from the locked-note placeholder reveals just that note (perNote scope)", async () => {
     // Persistent (not just the initial call): the dialog's own unlock() calls

@@ -54,6 +54,13 @@ pub struct ContextInfo {
     pub active: bool,
     pub vault_exists: bool,
     pub vault_biometric: bool,
+    /// The newest key generation this context's workspace vault has reached,
+    /// as last pulled into that context's own database. 0 for a local context
+    /// and for a server context that has never pulled the field.
+    pub vault_generation: u32,
+    /// Whether the workspace still owes this context's vault a key rotation
+    /// (a member was removed and the key has not been rolled yet).
+    pub vault_rotation_pending: bool,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -79,6 +86,15 @@ pub struct VaultStatus {
     pub exists: bool,
     pub unlocked: bool,
     pub biometric: bool,
+    /// The workspace already held a vault that this device's own record did
+    /// not create (meta `vault_conflict`, written by the sync migration hook).
+    /// Surfaced as a warning — nothing is blocked, and it clears itself once
+    /// an unlock proves the two are one vault.
+    pub conflict: bool,
+    /// Whether the recovery-key paths apply to this user at all — see
+    /// [`vault_recovery_holder`]. An invited member holds no recovery key, so
+    /// offering them "unlock with your recovery key" would be a dead end.
+    pub recovery_holder: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -709,7 +725,12 @@ pub fn load_vault_record(store: &Store) -> Result<VaultRecord, String> {
 /// rather than relying on the frontend to gate it. Nothing is generated or
 /// persisted until we know no record exists.
 pub fn vault_setup(store: &Store, passphrase: &str) -> Result<(Vec<String>, Dek), String> {
-    if store.vault_record().map_err(|e| e.to_string())?.is_some() {
+    // [`vault_exists`], not just the local record: a device that joined a
+    // workspace vault through an invitation for a generation > 1 mirrors no
+    // record at all, and letting it "set up" here would mint a SECOND,
+    // incompatible DEK for a context whose notes are sealed under the
+    // workspace's.
+    if vault_exists(store)? {
         return Err("vault: a vault already exists".to_string());
     }
     let (record, recovery_key, dek) = crate::vault::setup(passphrase).map_err(String::from)?;
@@ -1088,7 +1109,7 @@ pub fn vault_setup_payload(passphrase: &str) -> Result<(SetupPayload, Vec<String
 /// empty, or it cannot be parsed. An unparsable cache is deliberately not an
 /// error: the local record is still a valid way in, and failing every unlock
 /// over a corrupt cache would lock the user out of their own notes.
-fn cached_vault_entries(store: &Store) -> Result<Option<VaultEntries>, String> {
+pub fn cached_vault_entries(store: &Store) -> Result<Option<VaultEntries>, String> {
     let Some(json) = store.vault_entries().map_err(|e| e.to_string())? else {
         return Ok(None);
     };
@@ -1458,20 +1479,293 @@ pub fn record_vault_migration(store: &Store, key: &str) -> Result<(), String> {
     crate::migrate::set_meta_i64(&store.conn, key, 1).map_err(|e| e.to_string())
 }
 
-/// Whether the context DB at `path` has a vault record — used by
-/// `contexts_list` to show each context's vault state in the Kontexte page
-/// without switching into it. Opens and migrates a throwaway `Store` handle
-/// on that path; any failure (missing file, unreadable DB, ...) is treated
-/// as "no vault" rather than surfaced, since this is best-effort UI
-/// decoration, not a security gate — the real gate is still
-/// `load_vault_record` on the context actually made active.
-pub fn context_vault_exists(path: &Path) -> bool {
-    (|| -> Result<bool, String> {
+// ---------------------------------------------------------------------------
+// Vault invites
+//
+// How a workspace owner lets an invited member into the vault. The owner
+// wraps the NEWEST DEK under a freshly generated one-time code and attaches
+// that wrap to the invitation; the invitee opens it with the code and, in the
+// same breath, replaces it with a wrap under a passphrase only they know.
+//
+// The code travels out of band (the owner reads it out) and is never stored:
+// the server only ever sees wraps it cannot open, and the invite wrap is
+// deleted the moment the member's own wrap takes its place.
+// ---------------------------------------------------------------------------
+
+/// The invite wrap: the body of `POST …/vault/invites/{id}` and — under the
+/// server's `dekWrappedInvite` name — the response of the matching `GET`.
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct InviteWrap {
+    pub generation: u32,
+    pub kdf_params: KdfParams,
+    /// Sent as `dekWrapped`; the alias also accepts the `dekWrappedInvite`
+    /// the fetch endpoint answers with, so one struct serves both directions.
+    #[serde(alias = "dekWrappedInvite")]
+    pub dek_wrapped: String,
+    pub dek_check: String,
+}
+
+/// Wraps `dek` under a fresh one-time invite code, returning the code
+/// (dash-grouped, for the owner to pass on) and the wrap to attach.
+pub fn make_invite_wrap(dek: &Dek, generation: u32) -> (String, InviteWrap) {
+    let code = crate::vault::recovery::InviteCode::generate();
+    let kdf_params = KdfParams::new_default();
+    let kek = crate::vault::kdf::derive_kek(
+        &crate::vault::recovery::InviteCode::normalize(code.as_str()),
+        &kdf_params,
+    )
+    .expect("KdfParams::new_default() always produces valid Argon2 parameters");
+    let wrap = InviteWrap {
+        generation,
+        kdf_params,
+        dek_wrapped: STANDARD.encode(crate::vault::kdf::wrap_dek(&kek, dek)),
+        dek_check: STANDARD.encode(crate::vault::make_dek_check(dek)),
+    };
+    (code.as_str().to_string(), wrap)
+}
+
+/// Opens an [`InviteWrap`] with the code the owner handed over. Accepts the
+/// code however the user typed it (same normalization as a recovery key) and
+/// proves the unwrapped DEK is the one the wrap was built from before handing
+/// it back.
+///
+/// Every failure collapses to the same message on purpose: a rejected code
+/// must not reveal *how* it was wrong.
+pub fn open_invite_wrap(wrap: &InviteWrap, code: &str) -> Result<Dek, String> {
+    let invalid = || "invalid invite code".to_string();
+    let normalized = crate::vault::recovery::InviteCode::normalize(code);
+    let kek =
+        crate::vault::kdf::derive_kek(&normalized, &wrap.kdf_params).map_err(|_| invalid())?;
+    let wrapped = STANDARD.decode(&wrap.dek_wrapped).map_err(|_| invalid())?;
+    let dek = crate::vault::kdf::unwrap_dek(&kek, &wrapped).map_err(|_| invalid())?;
+    let check = STANDARD.decode(&wrap.dek_check).map_err(|_| invalid())?;
+    match crate::vault::aead::open(&dek, crate::vault::DEK_CHECK_AAD, &check) {
+        Ok(pt) if pt == crate::vault::DEK_CHECK_MAGIC => Ok(dek),
+        _ => Err(invalid()),
+    }
+}
+
+/// The caller's own wrap for `generation` under `passphrase`: the body that
+/// replaces the invite wrap on accept, and the entry cached locally
+/// afterwards. Fresh KDF params, so it shares nothing with the invite wrap
+/// beyond the DEK itself.
+pub fn my_entry_for(dek: &Dek, generation: u32, passphrase: &str) -> MyEntryWire {
+    let kdf_params = KdfParams::new_default();
+    let kek = crate::vault::kdf::derive_kek(passphrase, &kdf_params)
+        .expect("KdfParams::new_default() always produces valid Argon2 parameters");
+    MyEntryWire {
+        generation,
+        kdf_params,
+        dek_wrapped: STANDARD.encode(crate::vault::kdf::wrap_dek(&kek, dek)),
+        dek_check: STANDARD.encode(crate::vault::make_dek_check(dek)),
+    }
+}
+
+/// How the user identified an invitation.
+///
+/// Nobody ever sees an invitation's numeric id — the share page hands out a
+/// link, `https://<server>/invite/<token>` — but the vault endpoints are keyed
+/// by that id. So both dialogs take one free-form field and this decides what
+/// was pasted; a `Token` is turned into an id by `vault_invite_resolve`.
+#[derive(Debug, PartialEq, Eq)]
+pub enum InvitationRef {
+    Id(u64),
+    Token(String),
+}
+
+/// Bare digits are an id; anything carrying an `/invite/<token>` segment is
+/// that token (query and fragment stripped); anything else is taken as a bare
+/// token, since that is what a user copying "just the code out of the link"
+/// ends up with.
+pub fn parse_invitation_ref(input: &str) -> Result<InvitationRef, String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err("invitation: nothing entered".to_string());
+    }
+    if let Ok(id) = trimmed.parse::<u64>() {
+        return Ok(InvitationRef::Id(id));
+    }
+    let token = match trimmed.split("/invite/").nth(1) {
+        Some(rest) => rest
+            .split(['/', '?', '#'])
+            .next()
+            .unwrap_or_default()
+            .trim(),
+        None => trimmed,
+    };
+    if token.is_empty() {
+        return Err("invitation: no token in that link".to_string());
+    }
+    Ok(InvitationRef::Token(token.to_string()))
+}
+
+/// Merges a freshly accepted wrap into the cached entries, replacing any entry
+/// that already covers the same generation (accepting a second invitation for
+/// a generation this device already holds must not leave two wraps behind).
+/// The recovery half is untouched — an invited member never gets one.
+pub fn merge_my_entry(entries: &VaultEntries, entry: MyEntryWire) -> Result<VaultEntries, String> {
+    let generation = entry.generation;
+    let parsed = MyEntry::try_from(entry)?;
+    let mut mine: Vec<MyEntry> = entries
+        .mine
+        .iter()
+        .filter(|e| e.generation != generation)
+        .cloned()
+        .collect();
+    mine.push(parsed);
+    mine.sort_by_key(|e| e.generation);
+    Ok(VaultEntries {
+        mine,
+        recovery: entries.recovery.clone(),
+    })
+}
+
+/// Everything an accepted invitation settles locally: the merged entry cache,
+/// and — for a device that has no vault record of its own yet — the mirrored
+/// record that `vault_status`, biometric enrolment and `ensure_dek_check` all
+/// read. Pure, so the command layer only has to write what it returns.
+pub struct AcceptedInvite {
+    pub entries: VaultEntries,
+    pub record: Option<VaultRecord>,
+    /// Whether `vault_conflict` may be cleared — see [`accept_invite_entry`].
+    pub clear_conflict: bool,
+}
+
+/// Folds `entry` into `cached` and, when `local` is `None`, mirrors the
+/// generation-1 entry into a local record the same way an unlock from the
+/// workspace entries does ([`apply_entry_unlock`]).
+///
+/// Accepting an invitation proves nothing about a vault this device set up on
+/// its own: the workspace DEK it just installed and the local record's DEK can
+/// be two different keys. So `clear_conflict` is only true when there is
+/// nothing to disagree with (no local record — the mirrored one IS the
+/// workspace's) or when the local record provably holds the same DEK
+/// ([`same_vault`], which falls back to opening the record with the new
+/// passphrase for a record that predates `dek_check`). Otherwise the flag
+/// stays, and its banner keeps telling the truth: notes protected on this
+/// device before joining remain sealed under this device's own key.
+pub fn accept_invite_entry(
+    cached: Option<&VaultEntries>,
+    local: Option<&VaultRecord>,
+    entry: MyEntryWire,
+    dek: &Dek,
+    passphrase: &str,
+) -> Result<AcceptedInvite, String> {
+    let base = cached.cloned().unwrap_or_default();
+    let entries = merge_my_entry(&base, entry)?;
+    let (record, clear_conflict) = match local {
+        None => (mirrored_record(&entries), true),
+        Some(rec) => (
+            None,
+            same_vault(rec, dek, &VaultSecret::Passphrase(passphrase)),
+        ),
+    };
+    Ok(AcceptedInvite {
+        entries,
+        record,
+        clear_conflict,
+    })
+}
+
+/// Whether this user holds a recovery key for this context's vault at all —
+/// the gate for every recovery-key control in the UI.
+///
+/// A local vault's recovery key was minted on this device, so its owner always
+/// holds one. On a workspace, three things can prove it:
+///
+/// - the workspace handed back a recovery wrap for this caller, or
+/// - this device's own record carries recovery material. That covers the
+///   creator between `vault_setup` and the first pull that caches the
+///   entries, and any window where the cache is missing or unparsable — they
+///   were shown a recovery key and it still works. An invitee's MIRRORED
+///   record has a zero salt and an empty recovery wrap, so it does not count.
+///
+/// Otherwise the recovery paths are a dead end and must not be offered.
+pub fn vault_recovery_holder(
+    entries: Option<&VaultEntries>,
+    record: Option<&VaultRecord>,
+    is_server_context: bool,
+) -> bool {
+    !is_server_context
+        || entries.is_some_and(|e| !e.recovery.is_empty())
+        || record.is_some_and(|r| !r.dek_wrapped_recovery.is_empty())
+}
+
+/// The store-derived halves of `vault_status`, read under one lock: whether a
+/// vault exists for this context, whether the workspace migration hit a
+/// conflict, and whether the recovery paths apply to this user.
+pub struct VaultStatusFlags {
+    pub exists: bool,
+    pub conflict: bool,
+    pub recovery_holder: bool,
+}
+
+pub fn vault_status_flags(
+    store: &Store,
+    is_server_context: bool,
+) -> Result<VaultStatusFlags, String> {
+    let raw_record = store.vault_record().map_err(|e| e.to_string())?;
+    // A record that will not parse is treated as absent for the recovery
+    // question — exactly how `cached_vault_entries` treats an unparsable
+    // cache. `exists` deliberately still counts it: something IS set up here,
+    // and offering "set up a vault" over it would mint a second DEK.
+    let record = raw_record
+        .as_deref()
+        .and_then(|json| VaultRecord::from_json(json).ok());
+    let entries = cached_vault_entries(store)?;
+    Ok(VaultStatusFlags {
+        exists: raw_record.is_some() || entries.as_ref().is_some_and(|e| !e.mine.is_empty()),
+        conflict: crate::migrate::get_meta_i64_opt(&store.conn, "vault_conflict")
+            .map_err(|e| e.to_string())?
+            .is_some(),
+        recovery_holder: vault_recovery_holder(
+            entries.as_ref(),
+            record.as_ref(),
+            is_server_context,
+        ),
+    })
+}
+
+/// What `contexts_list` reads out of one context's own database: whether it
+/// has a vault, and where that vault's workspace key ring stands. All three
+/// fields come from the same short-lived `Store` handle, so a context's row
+/// costs one open, not three.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ContextVaultInfo {
+    pub exists: bool,
+    pub generation: u32,
+    pub rotation_pending: bool,
+}
+
+/// One context's vault state, read without switching into it — used by
+/// `contexts_list` to decorate the Kontexte page. Opens and migrates a
+/// throwaway `Store` handle on `path`; any failure (missing file, unreadable
+/// DB, ...) reports the default "no vault, no generations" rather than
+/// surfacing, since this is best-effort UI decoration, not a security gate —
+/// the real gate is still `load_vault_record` on the context actually made
+/// active. A local context has no key-ring meta rows and so reports
+/// generation 0.
+pub fn context_vault_info(path: &Path) -> ContextVaultInfo {
+    (|| -> Result<ContextVaultInfo, String> {
         let store = Store::open(path).map_err(|e| e.to_string())?;
         crate::migrate::run_migrations(&store.conn).map_err(|e| e.to_string())?;
-        Ok(store.vault_record().map_err(|e| e.to_string())?.is_some())
+        Ok(ContextVaultInfo {
+            exists: store.vault_record().map_err(|e| e.to_string())?.is_some(),
+            generation: u32::try_from(crate::migrate::get_meta_i64(
+                &store.conn,
+                "vault_generation",
+                0,
+            ))
+            .unwrap_or(0),
+            rotation_pending: crate::migrate::get_meta_i64(
+                &store.conn,
+                "vault_rotation_pending",
+                0,
+            ) != 0,
+        })
     })()
-    .unwrap_or(false)
+    .unwrap_or_default()
 }
 
 /// `context_vault_change_passphrase` for a NON-active context: open that
@@ -1647,21 +1941,26 @@ pub fn set_folder_locked(
 /// its own `contexts.list()` call anyway.
 pub fn to_infos_with(
     reg: &Registry,
-    vault_exists: impl Fn(&ContextEntry) -> bool,
+    vault: impl Fn(&ContextEntry) -> ContextVaultInfo,
     biometric: impl Fn(&ContextEntry) -> bool,
 ) -> Vec<ContextInfo> {
     reg.contexts
         .iter()
-        .map(|c| ContextInfo {
-            id: c.id.clone(),
-            label: c.label.clone(),
-            kind: c.kind.clone(),
-            path: c.path.clone(),
-            server_url: c.server_url.clone(),
-            workspace_id: c.workspace_id.clone(),
-            active: c.id == reg.active_id,
-            vault_exists: vault_exists(c),
-            vault_biometric: biometric(c),
+        .map(|c| {
+            let v = vault(c);
+            ContextInfo {
+                id: c.id.clone(),
+                label: c.label.clone(),
+                kind: c.kind.clone(),
+                path: c.path.clone(),
+                server_url: c.server_url.clone(),
+                workspace_id: c.workspace_id.clone(),
+                active: c.id == reg.active_id,
+                vault_exists: v.exists,
+                vault_biometric: biometric(c),
+                vault_generation: v.generation,
+                vault_rotation_pending: v.rotation_pending,
+            }
         })
         .collect()
 }
@@ -1670,7 +1969,7 @@ pub fn to_infos_with(
 /// (comparatively expensive) vault flags — every context-mutation op that
 /// returns a fresh snapshot after `add`/`rename`/`remove`/etc.
 pub fn to_infos(reg: &Registry) -> Vec<ContextInfo> {
-    to_infos_with(reg, |_| false, |_| false)
+    to_infos_with(reg, |_| ContextVaultInfo::default(), |_| false)
 }
 
 /// Snapshot the registry's contexts as aggregator `Ctx` descriptors
@@ -4565,8 +4864,377 @@ mod vault_entries_tests {
     }
 }
 
+/// Sharing a workspace vault through a one-time invite code, and what the
+/// invitee's device settles locally once the server accepted their own wrap.
 #[cfg(test)]
-mod context_vault_exists_tests {
+mod vault_invite_tests {
+    use super::test_support::err_of;
+    use super::*;
+
+    #[test]
+    fn invite_wrap_opens_with_the_code_and_only_the_code() {
+        let dek = Dek::random();
+        let (code, wrap) = make_invite_wrap(&dek, 2);
+        assert_eq!(wrap.generation, 2);
+        assert_eq!(
+            open_invite_wrap(&wrap, &code).unwrap().expose(),
+            dek.expose()
+        );
+        assert_eq!(
+            open_invite_wrap(&wrap, &code.to_lowercase().replace('-', " "))
+                .unwrap()
+                .expose(),
+            dek.expose(),
+            "formatting-tolerant"
+        );
+        assert_eq!(
+            err_of(open_invite_wrap(&wrap, "AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AA")),
+            "invalid invite code"
+        );
+        let entry = my_entry_for(&dek, 2, "member-pw");
+        let rec =
+            VaultEntries::from_json(&serde_json::json!({"mine":[entry],"recovery":[]}).to_string())
+                .unwrap();
+        assert_eq!(
+            unlock_entries_with_passphrase(&rec, "member-pw").unwrap()[0].0,
+            2
+        );
+    }
+
+    #[test]
+    fn a_corrupt_invite_wrap_is_rejected_like_a_wrong_code() {
+        let dek = Dek::random();
+        let (code, wrap) = make_invite_wrap(&dek, 1);
+
+        let bad_wrap = InviteWrap {
+            dek_wrapped: "not base64!!".to_string(),
+            ..wrap.clone()
+        };
+        assert_eq!(
+            err_of(open_invite_wrap(&bad_wrap, &code)),
+            "invalid invite code"
+        );
+        let bad_check = InviteWrap {
+            dek_check: "not base64!!".to_string(),
+            ..wrap.clone()
+        };
+        assert_eq!(
+            err_of(open_invite_wrap(&bad_check, &code)),
+            "invalid invite code"
+        );
+        // A check that belongs to a DIFFERENT vault: the unwrap succeeds, the
+        // proof does not.
+        let foreign = InviteWrap {
+            dek_check: STANDARD.encode(crate::vault::make_dek_check(&Dek::random())),
+            ..wrap
+        };
+        assert_eq!(
+            err_of(open_invite_wrap(&foreign, &code)),
+            "invalid invite code"
+        );
+    }
+
+    #[test]
+    fn the_invite_wrap_travels_as_the_server_names_it_in_both_directions() {
+        let dek = Dek::random();
+        let (_code, wrap) = make_invite_wrap(&dek, 3);
+        let sent: serde_json::Value = serde_json::from_str(&serde_json::to_string(&wrap).unwrap())
+            .expect("InviteWrap serializes");
+        assert_eq!(sent["generation"], 3);
+        assert!(sent["dekWrapped"].is_string() && sent["dekCheck"].is_string());
+
+        // The fetch endpoint answers with `dekWrappedInvite` instead.
+        let fetched: InviteWrap = serde_json::from_value(serde_json::json!({
+            "generation": 3,
+            "kdfParams": sent["kdfParams"],
+            "dekWrappedInvite": sent["dekWrapped"],
+            "dekCheck": sent["dekCheck"],
+        }))
+        .unwrap();
+        assert_eq!(fetched.dek_wrapped, wrap.dek_wrapped);
+    }
+
+    #[test]
+    fn an_invitation_reference_is_an_id_a_link_or_a_bare_token() {
+        assert_eq!(parse_invitation_ref(" 42 ").unwrap(), InvitationRef::Id(42));
+        assert_eq!(
+            parse_invitation_ref("https://notes.example.com/invite/abc123").unwrap(),
+            InvitationRef::Token("abc123".into())
+        );
+        assert_eq!(
+            parse_invitation_ref("https://notes.example.com/invite/abc123?ref=mail#top").unwrap(),
+            InvitationRef::Token("abc123".into())
+        );
+        assert_eq!(
+            parse_invitation_ref("/invite/abc123/").unwrap(),
+            InvitationRef::Token("abc123".into())
+        );
+        assert_eq!(
+            parse_invitation_ref("abc123").unwrap(),
+            InvitationRef::Token("abc123".into())
+        );
+        assert_eq!(
+            parse_invitation_ref("   ").unwrap_err(),
+            "invitation: nothing entered"
+        );
+        assert_eq!(
+            parse_invitation_ref("https://notes.example.com/invite/").unwrap_err(),
+            "invitation: no token in that link"
+        );
+    }
+
+    #[test]
+    fn accepting_replaces_the_entry_for_that_generation_and_keeps_the_rest() {
+        let dek1 = Dek::random();
+        let dek2 = Dek::random();
+        let cached = VaultEntries::from_json(
+            &serde_json::json!({
+                "mine": [my_entry_for(&dek1, 1, "old-pw")],
+                "recovery": [],
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let accepted = accept_invite_entry(
+            Some(&cached),
+            None,
+            my_entry_for(&dek2, 2, "member-pw"),
+            &dek2,
+            "member-pw",
+        )
+        .unwrap();
+        assert_eq!(
+            accepted
+                .entries
+                .mine
+                .iter()
+                .map(|e| e.generation)
+                .collect::<Vec<_>>(),
+            vec![1, 2],
+            "a new generation is added, not replaced"
+        );
+
+        // Accepting again for generation 1 replaces that entry in place.
+        let again = accept_invite_entry(
+            Some(&accepted.entries),
+            None,
+            my_entry_for(&dek1, 1, "new-pw"),
+            &dek1,
+            "new-pw",
+        )
+        .unwrap();
+        assert_eq!(again.entries.mine.len(), 2);
+        let opened = unlock_entries_with_passphrase(&again.entries, "new-pw").unwrap();
+        assert_eq!(opened.len(), 1);
+        assert_eq!(opened[0].0, 1);
+        assert_eq!(opened[0].1.expose(), dek1.expose());
+        assert!(
+            unlock_entries_with_passphrase(&again.entries, "old-pw").is_err(),
+            "the superseded wrap is gone"
+        );
+    }
+
+    #[test]
+    fn a_device_without_a_record_mirrors_generation_one_and_one_with_a_record_does_not() {
+        let dek = Dek::random();
+
+        let fresh =
+            accept_invite_entry(None, None, my_entry_for(&dek, 1, "pw"), &dek, "pw").unwrap();
+        let mirrored = fresh.record.expect("a new device gets a local record");
+        assert_eq!(
+            vault_unlock_passphrase(&mirrored, "pw").unwrap().expose(),
+            dek.expose()
+        );
+
+        // Generation 2 only: nothing to mirror (the local record IS generation 1).
+        assert!(
+            accept_invite_entry(None, None, my_entry_for(&dek, 2, "pw"), &dek, "pw")
+                .unwrap()
+                .record
+                .is_none()
+        );
+
+        // A device that already has a record keeps it untouched.
+        let (local, _rk, _d) = crate::vault::setup("local-pw").unwrap();
+        assert!(
+            accept_invite_entry(None, Some(&local), my_entry_for(&dek, 1, "pw"), &dek, "pw")
+                .unwrap()
+                .record
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn accepting_clears_the_conflict_only_when_the_two_vaults_are_provably_one() {
+        // (a) No local record: the mirrored one IS the workspace's key.
+        let dek = Dek::random();
+        assert!(
+            accept_invite_entry(None, None, my_entry_for(&dek, 1, "pw"), &dek, "pw")
+                .unwrap()
+                .clear_conflict
+        );
+
+        // (b) A local record whose DEK is the one the invite handed over —
+        // `dek_check` settles it without needing the local passphrase.
+        let (local, _rk, local_dek) = crate::vault::setup("local-pw").unwrap();
+        assert!(
+            accept_invite_entry(
+                None,
+                Some(&local),
+                my_entry_for(&local_dek, 1, "member-pw"),
+                &local_dek,
+                "member-pw"
+            )
+            .unwrap()
+            .clear_conflict
+        );
+
+        // (c) A local record holding a DIFFERENT vault: the flag stays, so the
+        // banner keeps saying the pre-join notes are sealed under another key.
+        assert!(
+            !accept_invite_entry(
+                None,
+                Some(&local),
+                my_entry_for(&dek, 1, "member-pw"),
+                &dek,
+                "member-pw"
+            )
+            .unwrap()
+            .clear_conflict
+        );
+
+        // (d) A record predating `dek_check` falls back to opening it with the
+        // new passphrase — which only works when it really is the same vault.
+        let mut checkless = crate::vault::rewrap_passphrase(&local, &local_dek, "member-pw");
+        checkless.dek_check = None;
+        assert!(
+            accept_invite_entry(
+                None,
+                Some(&checkless),
+                my_entry_for(&local_dek, 1, "member-pw"),
+                &local_dek,
+                "member-pw"
+            )
+            .unwrap()
+            .clear_conflict
+        );
+        assert!(
+            !accept_invite_entry(
+                None,
+                Some(&checkless),
+                my_entry_for(&dek, 1, "member-pw"),
+                &dek,
+                "member-pw"
+            )
+            .unwrap()
+            .clear_conflict
+        );
+    }
+
+    #[test]
+    fn only_a_workspace_member_holding_a_recovery_wrap_counts_as_a_recovery_holder() {
+        let dek = Dek::random();
+        let mine_only = VaultEntries::from_json(
+            &serde_json::json!({"mine": [my_entry_for(&dek, 1, "pw")], "recovery": []}).to_string(),
+        )
+        .unwrap();
+
+        // A local context always is: its recovery key was minted here.
+        assert!(vault_recovery_holder(None, None, false));
+        assert!(vault_recovery_holder(Some(&mine_only), None, false));
+        // On a workspace, an invited member holds wraps but no recovery key.
+        assert!(!vault_recovery_holder(Some(&mine_only), None, true));
+        assert!(!vault_recovery_holder(None, None, true));
+
+        let (rec, _rk, _d) = crate::vault::setup("pw").unwrap();
+        let with_recovery = VaultEntries {
+            mine: mine_only.mine.clone(),
+            recovery: vec![RecoveryEntry {
+                generation: 1,
+                recovery_salt: rec.recovery_salt,
+                dek_wrapped_recovery: rec.dek_wrapped_recovery.clone(),
+                dek_check: rec.dek_check.clone(),
+            }],
+        };
+        assert!(vault_recovery_holder(Some(&with_recovery), None, true));
+    }
+
+    #[test]
+    fn the_vault_creator_is_a_recovery_holder_before_the_first_pull_caches_anything() {
+        // `vault_setup` on a server context writes a full local record long
+        // before a pull can hand the entries back. Its owner was shown a
+        // recovery key and it still works, so the controls must stay.
+        let (created, _rk, _dek) = crate::vault::setup("pw").unwrap();
+        assert!(vault_recovery_holder(None, Some(&created), true));
+
+        // The invitee's MIRRORED record carries a zero salt and an empty
+        // recovery wrap — nothing to offer.
+        let dek = Dek::random();
+        let mirrored = accept_invite_entry(None, None, my_entry_for(&dek, 1, "pw"), &dek, "pw")
+            .unwrap()
+            .record
+            .expect("generation 1 mirrors a record");
+        assert!(mirrored.dek_wrapped_recovery.is_empty());
+        assert!(!vault_recovery_holder(None, Some(&mirrored), true));
+        // ...and a local context is a holder either way.
+        assert!(vault_recovery_holder(None, Some(&mirrored), false));
+    }
+
+    #[test]
+    fn vault_status_flags_read_existence_the_conflict_and_the_recovery_question() {
+        let s = test_support::store();
+        let flags = vault_status_flags(&s, true).unwrap();
+        assert!(!flags.exists && !flags.conflict && !flags.recovery_holder);
+
+        // The creator of a server-context vault: a record, no cache yet.
+        vault_setup(&s, "pw").unwrap();
+        crate::migrate::set_meta_i64(&s.conn, "vault_conflict", 1).unwrap();
+        let flags = vault_status_flags(&s, true).unwrap();
+        assert!(flags.exists && flags.conflict && flags.recovery_holder);
+
+        // An invitee's device: cached `mine` only, no record at all.
+        let s2 = test_support::store();
+        let dek = Dek::random();
+        s2.set_vault_entries(
+            &serde_json::json!({"mine": [my_entry_for(&dek, 2, "pw")], "recovery": []}).to_string(),
+        )
+        .unwrap();
+        let flags = vault_status_flags(&s2, true).unwrap();
+        assert!(
+            flags.exists,
+            "the workspace key counts as an existing vault"
+        );
+        assert!(!flags.conflict && !flags.recovery_holder);
+        assert!(
+            vault_status_flags(&s2, false).unwrap().recovery_holder,
+            "a local context is always a holder"
+        );
+    }
+
+    #[test]
+    fn setting_up_again_is_refused_once_the_workspace_holds_a_key_for_this_caller() {
+        // The generation-2 case that has no local record to trip over: without
+        // this guard `vault_setup` would mint a SECOND, incompatible DEK.
+        let s = test_support::store();
+        let dek = Dek::random();
+        s.set_vault_entries(
+            &serde_json::json!({"mine": [my_entry_for(&dek, 2, "member-pw")], "recovery": []})
+                .to_string(),
+        )
+        .unwrap();
+        assert!(s.vault_record().unwrap().is_none(), "no local record");
+
+        assert_eq!(
+            err_of(vault_setup(&s, "another-pw")),
+            "vault: a vault already exists"
+        );
+        assert!(s.vault_record().unwrap().is_none(), "nothing was written");
+    }
+}
+
+#[cfg(test)]
+mod context_vault_info_tests {
     use super::*;
 
     #[test]
@@ -4578,21 +5246,43 @@ mod context_vault_exists_tests {
             crate::migrate::run_migrations(&s.conn).unwrap();
         }
 
-        assert!(!context_vault_exists(&path));
+        assert_eq!(context_vault_info(&path), ContextVaultInfo::default());
 
         {
             let s = Store::open(&path).unwrap();
             vault_setup(&s, "hunter2").unwrap();
         }
 
-        assert!(context_vault_exists(&path));
+        assert!(context_vault_info(&path).exists);
+    }
+
+    #[test]
+    fn the_key_ring_state_comes_from_that_context_s_own_meta() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("c.db");
+        {
+            let s = Store::open(&path).unwrap();
+            crate::migrate::run_migrations(&s.conn).unwrap();
+            vault_setup(&s, "hunter2").unwrap();
+            crate::migrate::set_meta_i64(&s.conn, "vault_generation", 3).unwrap();
+            crate::migrate::set_meta_i64(&s.conn, "vault_rotation_pending", 1).unwrap();
+        }
+
+        assert_eq!(
+            context_vault_info(&path),
+            ContextVaultInfo {
+                exists: true,
+                generation: 3,
+                rotation_pending: true,
+            }
+        );
     }
 
     #[test]
     fn a_missing_db_file_reports_no_vault_rather_than_erroring() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("does-not-exist.db");
-        assert!(!context_vault_exists(&path));
+        assert_eq!(context_vault_info(&path), ContextVaultInfo::default());
     }
 }
 
@@ -5133,21 +5823,32 @@ mod registry_view_tests {
     #[test]
     fn to_infos_defaults_the_vault_flags_to_false() {
         let r = registry();
-        assert!(to_infos(&r)
-            .iter()
-            .all(|i| !i.vault_exists && !i.vault_biometric));
+        assert!(to_infos(&r).iter().all(|i| !i.vault_exists
+            && !i.vault_biometric
+            && i.vault_generation == 0
+            && !i.vault_rotation_pending));
     }
 
     #[test]
     fn to_infos_with_maps_the_supplied_vault_flags_per_entry() {
         let r = registry();
 
-        let infos = to_infos_with(&r, |c| c.label == "Work", |c| c.label == "Personal");
+        let infos = to_infos_with(
+            &r,
+            |c| ContextVaultInfo {
+                exists: c.label == "Work",
+                generation: if c.label == "Work" { 2 } else { 0 },
+                rotation_pending: c.label == "Work",
+            },
+            |c| c.label == "Personal",
+        );
 
         let work = infos.iter().find(|i| i.label == "Work").unwrap();
         let personal = infos.iter().find(|i| i.label == "Personal").unwrap();
         assert!(work.vault_exists && !work.vault_biometric);
+        assert!(work.vault_generation == 2 && work.vault_rotation_pending);
         assert!(!personal.vault_exists && personal.vault_biometric);
+        assert!(personal.vault_generation == 0 && !personal.vault_rotation_pending);
     }
 
     #[test]

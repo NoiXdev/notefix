@@ -27,6 +27,9 @@ const {
   mockContextsRename,
   mockContextsRemove,
   mockContextsVaultChangePassphrase,
+  mockInviteResolve,
+  mockInviteShare,
+  mockInviteAccept,
   mockServerAuthBegin,
   mockOnContextChanged,
   mockOpenExternal,
@@ -57,6 +60,9 @@ const {
   mockContextsRename: vi.fn(() => Promise.resolve([])),
   mockContextsRemove: vi.fn(() => Promise.resolve([])),
   mockContextsVaultChangePassphrase: vi.fn(() => Promise.resolve()),
+  mockInviteResolve: vi.fn((_reference: string) => Promise.resolve(7)),
+  mockInviteShare: vi.fn((_id: number) => Promise.resolve("ABCDE-FGHJK-MNPQR")),
+  mockInviteAccept: vi.fn((_id: number, _code: string, _passphrase: string) => Promise.resolve()),
   mockServerAuthBegin: vi.fn(() => Promise.resolve("https://server.example.com/authorize")),
   mockOnContextChanged: vi.fn(() => () => {}),
   mockOpenExternal: vi.fn(),
@@ -96,6 +102,9 @@ vi.mock("../api", () => ({
       rename: mockContextsRename,
       remove: mockContextsRemove,
       vaultChangePassphrase: mockContextsVaultChangePassphrase,
+      vaultInviteResolve: mockInviteResolve,
+      vaultInviteShare: mockInviteShare,
+      vaultInviteAccept: mockInviteAccept,
       serverAuthBegin: mockServerAuthBegin,
     },
   },
@@ -359,6 +368,47 @@ describe("Settings — Security", () => {
     render(<Settings onClose={vi.fn()} settings={full} onSetSetting={vi.fn()} onExport={vi.fn()} />);
     fireEvent.click(screen.getByText("Sicherheit"));
     await waitFor(() => expect(screen.getByText("Mit Touch ID entsperren")).toBeInTheDocument());
+  });
+
+  it("warns about a vault conflict on the workspace without blocking anything", async () => {
+    mockVaultStatus.mockResolvedValueOnce({ exists: true, unlocked: true, biometric: false, conflict: true, recoveryHolder: true });
+    render(<Settings onClose={vi.fn()} settings={full} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Sicherheit"));
+    await waitFor(() => expect(screen.getByText(/hatte bereits einen Tresor mit einem anderen Schlüssel/)).toBeInTheDocument());
+    // Purely informational: the usual actions stay available.
+    expect(screen.getByText("Jetzt sperren")).toBeInTheDocument();
+  });
+
+  it("shows no conflict warning when the workspace and this device hold one vault", async () => {
+    mockVaultStatus.mockResolvedValueOnce({ exists: true, unlocked: true, biometric: false, conflict: false, recoveryHolder: true });
+    render(<Settings onClose={vi.fn()} settings={full} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Sicherheit"));
+    await waitFor(() => expect(screen.getByText("Entsperrt")).toBeInTheDocument());
+    expect(screen.queryByText(/hatte bereits einen Tresor/)).not.toBeInTheDocument();
+  });
+
+  it("offers the recovery key only to a recovery holder", async () => {
+    // An invited member holds a wrapped key but no recovery key.
+    mockVaultStatus.mockResolvedValueOnce({ exists: true, unlocked: false, biometric: false, conflict: false, recoveryHolder: false });
+    mockBiometricAvailable.mockResolvedValueOnce(true);
+    render(<Settings onClose={vi.fn()} settings={full} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Sicherheit"));
+    await waitFor(() => expect(screen.getByRole("switch", { name: "Mit Touch ID entsperren" })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("switch", { name: "Mit Touch ID entsperren" }));
+
+    await waitFor(() => expect(screen.getByText("Tresor entsperren")).toBeInTheDocument());
+    expect(screen.queryByText("Wiederherstellungs-Schlüssel verwenden")).not.toBeInTheDocument();
+  });
+
+  it("keeps the recovery key for a holder", async () => {
+    mockVaultStatus.mockResolvedValueOnce({ exists: true, unlocked: false, biometric: false, conflict: false, recoveryHolder: true });
+    mockBiometricAvailable.mockResolvedValueOnce(true);
+    render(<Settings onClose={vi.fn()} settings={full} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Sicherheit"));
+    await waitFor(() => expect(screen.getByRole("switch", { name: "Mit Touch ID entsperren" })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("switch", { name: "Mit Touch ID entsperren" }));
+
+    await waitFor(() => expect(screen.getByText("Wiederherstellungs-Schlüssel verwenden")).toBeInTheDocument());
   });
 
   it("names the active context this page manages, and hints that other contexts live under Contexts", async () => {
@@ -878,6 +928,194 @@ describe("Settings — Contexts page", () => {
     expect(screen.getByText("Touch ID")).toBeInTheDocument();
     // Only one row (c-server) gets the change-passphrase button.
     expect(screen.getAllByRole("button", { name: "Passwort ändern" })).toHaveLength(1);
+  });
+
+  /** The active, workspace-bound server context — the only row the invite actions act on. */
+  const serverActive = [
+    { id: "c-server", label: "Team", kind: "server" as const, path: "", serverUrl: "https://s.example.com", workspaceId: "w1", active: true, vaultExists: true, vaultBiometric: false, vaultGeneration: 2, vaultRotationPending: true },
+    { id: "c-local", label: "", kind: "local" as const, path: "/local.db", serverUrl: "", workspaceId: "", active: false, vaultExists: false, vaultBiometric: false, vaultGeneration: 0, vaultRotationPending: false },
+  ];
+
+  it("shows the workspace key generation and a pending rotation per context", async () => {
+    mockContextsList.mockResolvedValueOnce(serverActive);
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Kontexte"));
+    await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+
+    expect(screen.getByText("Schlüssel 2")).toBeInTheDocument();
+    expect(screen.getByText("Schlüsselwechsel offen")).toBeInTheDocument();
+  });
+
+  it("offers the invite actions only on the active workspace context", async () => {
+    mockContextsList.mockResolvedValueOnce(serverActive);
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Kontexte"));
+    await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+
+    // Exactly one row (the active server one) gets each action; the local row gets neither.
+    expect(screen.getAllByRole("button", { name: "Tresor freigeben" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Einladungs-Code eingeben" })).toHaveLength(1);
+  });
+
+  it("hides the invite actions when no server context is active", async () => {
+    mockContextsList.mockResolvedValueOnce(contexts); // c-local is the active one
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Kontexte"));
+    await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+
+    expect(screen.queryByRole("button", { name: "Tresor freigeben" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Einladungs-Code eingeben" })).not.toBeInTheDocument();
+  });
+
+  it("resolves a pasted invitation link, attaches the key and shows the one-time code", async () => {
+    mockContextsList.mockResolvedValueOnce(serverActive);
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Kontexte"));
+    await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Tresor freigeben" }));
+    const input = screen.getByPlaceholderText("Einladungs-Link oder -Nummer");
+    fireEvent.change(input, { target: { value: "https://s.example.com/invite/tok" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => expect(mockInviteResolve).toHaveBeenCalledWith("https://s.example.com/invite/tok"));
+    await waitFor(() => expect(mockInviteShare).toHaveBeenCalledWith(7));
+    expect(await screen.findByText("ABCDE-FGHJK-MNPQR")).toBeInTheDocument();
+
+    expect(screen.getByText(/auf einem anderen Weg weiter als den Einladungs-Link/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Fertig" }));
+    await waitFor(() => expect(screen.queryByText("ABCDE-FGHJK-MNPQR")).not.toBeInTheDocument());
+  });
+
+  it("copies the one-time code to the clipboard", async () => {
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    mockContextsList.mockResolvedValueOnce(serverActive);
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Kontexte"));
+    await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Tresor freigeben" }));
+    const input = screen.getByPlaceholderText("Einladungs-Link oder -Nummer");
+    fireEvent.change(input, { target: { value: "7" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(await screen.findByText("ABCDE-FGHJK-MNPQR")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Kopieren" }));
+    expect(writeText).toHaveBeenCalledWith("ABCDE-FGHJK-MNPQR");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Kopiert" })).toBeInTheDocument());
+  });
+
+  it("tells the invitee when their invitation link cannot be resolved", async () => {
+    mockContextsList.mockResolvedValueOnce(serverActive);
+    mockInviteResolve.mockRejectedValueOnce(new Error("404"));
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Kontexte"));
+    await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Einladungs-Code eingeben" }));
+    fireEvent.change(screen.getByPlaceholderText("Einladungs-Link oder -Nummer"), { target: { value: "nonsense" } });
+    fireEvent.change(screen.getByPlaceholderText("Einmal-Code"), { target: { value: "ABCDE" } });
+    fireEvent.change(screen.getByPlaceholderText("Neues Passwort"), { target: { value: "member123" } });
+    fireEvent.change(screen.getByPlaceholderText("Neues Passwort bestätigen"), { target: { value: "member123" } });
+    fireEvent.click(screen.getByRole("button", { name: "Freischalten" }));
+
+    await waitFor(() => expect(screen.getByText("Einladung nicht gefunden")).toBeInTheDocument());
+    expect(mockInviteAccept).not.toHaveBeenCalled();
+  });
+
+  it("reports an invitation it cannot resolve instead of minting a code", async () => {
+    mockContextsList.mockResolvedValueOnce(serverActive);
+    mockInviteResolve.mockRejectedValueOnce(new Error("404"));
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Kontexte"));
+    await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Tresor freigeben" }));
+    const input = screen.getByPlaceholderText("Einladungs-Link oder -Nummer");
+    fireEvent.change(input, { target: { value: "nonsense" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => expect(screen.getByText("Einladung nicht gefunden")).toBeInTheDocument());
+    expect(mockInviteShare).not.toHaveBeenCalled();
+  });
+
+  it("reports an attach failure in the backend's own words, not as a missing invitation", async () => {
+    mockContextsList.mockResolvedValueOnce(serverActive);
+    mockInviteShare.mockRejectedValueOnce(new Error("vault invite HTTP 410"));
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Kontexte"));
+    await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Tresor freigeben" }));
+    const input = screen.getByPlaceholderText("Einladungs-Link oder -Nummer");
+    fireEvent.change(input, { target: { value: "7" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => expect(mockInviteShare).toHaveBeenCalledWith(7));
+    expect(await screen.findByText("Freigabe fehlgeschlagen: vault invite HTTP 410")).toBeInTheDocument();
+    expect(screen.queryByText("Einladung nicht gefunden")).not.toBeInTheDocument();
+    // No code was minted, so no code dialog.
+    expect(screen.queryByText("Einmal-Code")).not.toBeInTheDocument();
+  });
+
+  it("redeems an invite code with a new passphrase", async () => {
+    mockContextsList.mockResolvedValueOnce(serverActive);
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Kontexte"));
+    await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Einladungs-Code eingeben" }));
+    fireEvent.change(screen.getByPlaceholderText("Einladungs-Link oder -Nummer"), { target: { value: "https://s.example.com/invite/tok" } });
+    fireEvent.change(screen.getByPlaceholderText("Einmal-Code"), { target: { value: "ABCDE-FGHJK" } });
+    fireEvent.change(screen.getByPlaceholderText("Neues Passwort"), { target: { value: "member123" } });
+    fireEvent.change(screen.getByPlaceholderText("Neues Passwort bestätigen"), { target: { value: "member123" } });
+    fireEvent.click(screen.getByRole("button", { name: "Freischalten" }));
+
+    await waitFor(() => expect(mockInviteAccept).toHaveBeenCalledWith(7, "ABCDE-FGHJK", "member123"));
+    // The form is replaced by a confirmation the member has to acknowledge.
+    expect(await screen.findByText("Tresor freigeschaltet")).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Einmal-Code")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Fertig" }));
+    await waitFor(() => expect(screen.queryByText("Tresor freigeschaltet")).not.toBeInTheDocument());
+  });
+
+  it("keeps the accept dialog open and explains a rejected code", async () => {
+    mockContextsList.mockResolvedValueOnce(serverActive);
+    mockInviteAccept.mockRejectedValueOnce(new Error("invalid invite code"));
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Kontexte"));
+    await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Einladungs-Code eingeben" }));
+    fireEvent.change(screen.getByPlaceholderText("Einladungs-Link oder -Nummer"), { target: { value: "7" } });
+    fireEvent.change(screen.getByPlaceholderText("Einmal-Code"), { target: { value: "WRONG" } });
+    fireEvent.change(screen.getByPlaceholderText("Neues Passwort"), { target: { value: "member123" } });
+    fireEvent.change(screen.getByPlaceholderText("Neues Passwort bestätigen"), { target: { value: "member123" } });
+    fireEvent.click(screen.getByRole("button", { name: "Freischalten" }));
+
+    await waitFor(() => expect(screen.getByText("Code ungültig oder bereits eingelöst")).toBeInTheDocument());
+    expect(screen.getByPlaceholderText("Einmal-Code")).toBeInTheDocument();
+  });
+
+  it("refuses to redeem when the two passphrases differ", async () => {
+    mockContextsList.mockResolvedValueOnce(serverActive);
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Kontexte"));
+    await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Einladungs-Code eingeben" }));
+    fireEvent.change(screen.getByPlaceholderText("Einladungs-Link oder -Nummer"), { target: { value: "7" } });
+    fireEvent.change(screen.getByPlaceholderText("Einmal-Code"), { target: { value: "ABCDE" } });
+    fireEvent.change(screen.getByPlaceholderText("Neues Passwort"), { target: { value: "member123" } });
+    fireEvent.change(screen.getByPlaceholderText("Neues Passwort bestätigen"), { target: { value: "typo" } });
+    fireEvent.click(screen.getByRole("button", { name: "Freischalten" }));
+
+    await waitFor(() => expect(screen.getByText("Passwörter stimmen nicht überein")).toBeInTheDocument());
+    expect(mockInviteResolve).not.toHaveBeenCalled();
+    expect(mockInviteAccept).not.toHaveBeenCalled();
   });
 
   it("changes a non-active context's vault passphrase without switching into it", async () => {

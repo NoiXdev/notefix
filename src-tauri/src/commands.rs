@@ -582,7 +582,7 @@ pub fn contexts_list(
     let r = reg.lock().map_err(|e| e.to_string())?;
     Ok(ops::to_infos_with(
         &r,
-        |c| ops::context_vault_exists(std::path::Path::new(&c.path)),
+        |c| ops::context_vault_info(std::path::Path::new(&c.path)),
         |c| crate::vault::biometric::is_available() && crate::vault::biometric::is_enrolled(&c.id),
     ))
 }
@@ -1335,18 +1335,24 @@ pub fn vault_status(
     vault: VaultStateHandle<'_>,
     reg: State<'_, Mutex<crate::profiles::Registry>>,
 ) -> Result<VaultStatus, String> {
-    let context_id = active_context_id(&reg)?;
-    let exists = {
+    let (context_id, is_server) = {
+        let r = reg.lock().map_err(|e| e.to_string())?;
+        let c = r.active().ok_or_else(|| "no active context".to_string())?;
+        (c.id.clone(), c.kind == "server")
+    };
+    // A device that has only pulled its wrapped keys has no local record yet,
+    // but its vault definitely exists — it must be offered "unlock", never
+    // "set up" (which would mint a second, incompatible DEK).
+    let flags = {
         let store = store.lock().map_err(|e| e.to_string())?;
-        // A device that has only pulled its wrapped keys has no local record
-        // yet, but its vault definitely exists — it must be offered "unlock",
-        // never "set up" (which would mint a second, incompatible DEK).
-        ops::vault_exists(&store)?
+        ops::vault_status_flags(&store, is_server)?
     };
     let unlocked = vault.lock().map_err(|e| e.to_string())?.is_unlocked();
     Ok(VaultStatus {
-        exists,
+        exists: flags.exists,
         unlocked,
+        conflict: flags.conflict,
+        recovery_holder: flags.recovery_holder,
         // Biometric unlock is offered only when the device can evaluate Touch
         // ID (`is_available`) AND the user has enrolled a wrapped DEK
         // (`is_enrolled`). `is_enrolled` reads the keychain without prompting.
@@ -1631,6 +1637,148 @@ pub async fn vault_change_passphrase(
             .map_err(|e| e.to_string())?;
     }
     install_generations(&vault_state, &rewrap.deks)
+}
+
+/// The active server context's vault endpoint, or an error explaining why the
+/// invite flow does not apply here: an invitation belongs to a workspace, so a
+/// local context (or an unbound/legacy server one) has nothing to share.
+fn vault_invite_target(app: &AppHandle) -> Result<(crate::profiles::ContextEntry, String), String> {
+    vault_server_target(app)?.ok_or_else(|| "vault: invites need a server workspace".to_string())
+}
+
+/// Turns whatever the user pasted into the numeric invitation id the vault
+/// endpoints are keyed by. A bare id is taken at face value; a share link (or
+/// the bare token out of one) is looked up on the server, which answers only
+/// for the workspace owner and for the invitee who accepted it.
+#[tauri::command]
+pub async fn vault_invite_resolve(app: AppHandle, reference: String) -> Result<u64, String> {
+    match ops::parse_invitation_ref(&reference)? {
+        ops::InvitationRef::Id(id) => Ok(id),
+        ops::InvitationRef::Token(invite_token) => {
+            let (ctx, token) = vault_invite_target(&app)?;
+            crate::sync::vault_resolve_invite(
+                &ctx.server_url,
+                &token,
+                &ctx.workspace_id,
+                &invite_token,
+            )
+            .await
+            .map_err(|e| e.to_string())
+        }
+    }
+}
+
+/// Shares the workspace vault with an invited member: wraps the ring's NEWEST
+/// DEK under a freshly generated one-time code and attaches that wrap to the
+/// invitation. Returns the code, which the owner passes to the invitee out of
+/// band — this is the only place it ever exists, and the server never sees it.
+///
+/// Requires the vault to be unlocked: the DEK is taken from the live ring,
+/// never re-derived. The DEK is cloned out before the (deliberately slow) KDF
+/// derivation so the vault mutex is not held across it.
+#[tauri::command]
+pub async fn vault_invite_share(app: AppHandle, invitation_id: u64) -> Result<String, String> {
+    let (ctx, token) = vault_invite_target(&app)?;
+    let (dek, generation) = {
+        let vault_state = app.state::<Mutex<crate::vault::state::VaultState>>();
+        let v = vault_state.lock().map_err(|e| e.to_string())?;
+        let dek = v.dek().ok_or_else(|| "vault locked".to_string())?.clone();
+        let generation = v
+            .newest_generation()
+            .ok_or_else(|| "vault locked".to_string())?;
+        (dek, generation)
+    };
+    let (code, wrap) = ops::make_invite_wrap(&dek, generation);
+    crate::sync::vault_attach_invite(
+        &ctx.server_url,
+        &token,
+        &ctx.workspace_id,
+        invitation_id,
+        &wrap,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(code)
+}
+
+/// Accepts an invitation into the workspace vault: fetch the wrap, open it
+/// with the one-time code, immediately re-wrap the same DEK under a
+/// passphrase only this member knows, and hand that to the server — which
+/// deletes the invite wrap in the same transaction, spending the code.
+///
+/// Order matters: nothing is written locally until the server accepted the
+/// member's own wrap, so a failed accept leaves this device exactly as it was.
+/// Afterwards the entry is cached, the migration conflict (if any) is cleared
+/// — the key just installed IS the workspace's — and the ring is armed.
+#[tauri::command]
+pub async fn vault_invite_accept(
+    app: AppHandle,
+    invitation_id: u64,
+    code: String,
+    passphrase: String,
+) -> Result<(), String> {
+    let (ctx, token) = vault_invite_target(&app)?;
+    let wrap =
+        crate::sync::vault_fetch_invite(&ctx.server_url, &token, &ctx.workspace_id, invitation_id)
+            .await
+            .map_err(|e| e.to_string())?;
+    let dek = ops::open_invite_wrap(&wrap, &code)?;
+    let entry = ops::my_entry_for(&dek, wrap.generation, &passphrase);
+    crate::sync::vault_accept_invite(
+        &ctx.server_url,
+        &token,
+        &ctx.workspace_id,
+        invitation_id,
+        &entry,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let store_state = app.state::<Mutex<Store>>();
+    {
+        let store = store_state.lock().map_err(|e| e.to_string())?;
+        let inputs = ops::load_vault_unlock_inputs(&store)?;
+        let accepted = ops::accept_invite_entry(
+            inputs.entries.as_ref(),
+            inputs.record.as_ref(),
+            entry,
+            &dek,
+            &passphrase,
+        )?;
+        store
+            .set_vault_entries(&accepted.entries.to_json())
+            .map_err(|e| e.to_string())?;
+        if let Some(record) = &accepted.record {
+            store
+                .set_vault_record(&record.to_json())
+                .map_err(|e| e.to_string())?;
+        }
+        // The workspace now holds a key for this caller, so the migration hook
+        // has nothing left to upload either way.
+        crate::migrate::set_meta_i64(&store.conn, "vault_migrated", 1)
+            .map_err(|e| e.to_string())?;
+        if accepted.clear_conflict {
+            crate::migrate::delete_meta(&store.conn, "vault_conflict")
+                .map_err(|e| e.to_string())?;
+        }
+    }
+
+    let vault_state = app.state::<Mutex<crate::vault::state::VaultState>>();
+    vault_state
+        .lock()
+        .map_err(|e| e.to_string())?
+        .unlock(wrap.generation, dek);
+    if let Ok(store) = store_state.lock() {
+        // Store -> VaultState, per the lock-order convention near `swap_store_to`.
+        if let Ok(v) = vault_state.lock() {
+            ops::backfill_protected_titles(&store, &v);
+        }
+    }
+    // The vault this context just gained is invisible to the frontend
+    // otherwise: `App` only re-reads `vault_status` on this event, and a stale
+    // `exists: false` would route the next "protect" into vault SETUP.
+    broadcast_context_changed(&app);
+    Ok(())
 }
 
 /// Changes a context's vault passphrase from the Kontexte page, without

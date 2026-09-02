@@ -64,4 +64,15 @@ export interface VaultStatus {
   exists: boolean;
   unlocked: boolean;
   biometric: boolean;
+  /**
+   * The workspace already held a vault this device's own record did not
+   * create. Surfaced as a warning on the Security page — nothing is blocked.
+   */
+  conflict: boolean;
+  /**
+   * Whether a recovery key exists for this user at all. An invited member is
+   * handed a wrapped key but never a recovery key, so the recovery controls
+   * would be a dead end for them.
+   */
+  recoveryHolder: boolean;
 }

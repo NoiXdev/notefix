@@ -485,6 +485,33 @@ describe('api.contexts', () => {
       undefined,
     );
   });
+
+  it('vaultInviteResolve(reference) calls vault_invite_resolve with { reference }', async () => {
+    await expectInvoke(
+      () => api.contexts.vaultInviteResolve('https://s.example.com/invite/tok'),
+      'vault_invite_resolve',
+      { reference: 'https://s.example.com/invite/tok' },
+      7,
+    );
+  });
+
+  it('vaultInviteShare(invitationId) calls vault_invite_share with { invitationId }', async () => {
+    await expectInvoke(
+      () => api.contexts.vaultInviteShare(7),
+      'vault_invite_share',
+      { invitationId: 7 },
+      'ABCDE-FGHJK',
+    );
+  });
+
+  it('vaultInviteAccept(id, code, passphrase) calls vault_invite_accept with the exact args', async () => {
+    await expectInvoke(
+      () => api.contexts.vaultInviteAccept(7, 'c', 'p'),
+      'vault_invite_accept',
+      { invitationId: 7, code: 'c', passphrase: 'p' },
+      undefined,
+    );
+  });
 });
 
 describe('api.vault', () => {

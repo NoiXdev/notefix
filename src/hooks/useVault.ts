@@ -3,7 +3,7 @@ import { api } from '../api';
 import type { VaultStatus } from '../types';
 
 export function useVault() {
-  const [status, setStatus] = useState<VaultStatus>({ exists: false, unlocked: false, biometric: false });
+  const [status, setStatus] = useState<VaultStatus>({ exists: false, unlocked: false, biometric: false, conflict: false, recoveryHolder: true });
 
   const refresh = useCallback(async () => {
     setStatus(await api.vault.status());

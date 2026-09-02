@@ -3,6 +3,14 @@ import { useTranslation } from 'react-i18next';
 
 interface Props {
   biometricAvailable: boolean;
+  /**
+   * Whether this user holds a recovery key at all. On a workspace vault only
+   * the members the server handed a recovery wrap to do — an invited member
+   * gets a wrapped key and nothing else — so offering them the recovery field
+   * would be a dead end. Defaults to `true`: a local vault's recovery key was
+   * minted on this device.
+   */
+  recoveryAvailable?: boolean;
   unlock: (passphrase: string) => Promise<void>;
   unlockRecovery: (recovery: string) => Promise<void>;
   unlockBiometric: () => Promise<void>;
@@ -14,7 +22,7 @@ interface Props {
  * In-app "unlock the vault" dialog: Touch ID (if available), passphrase, or
  * a recovery key as a fallback.
  */
-export default function VaultUnlock({ biometricAvailable, unlock, unlockRecovery, unlockBiometric, onSuccess, onCancel }: Props) {
+export default function VaultUnlock({ biometricAvailable, recoveryAvailable = true, unlock, unlockRecovery, unlockBiometric, onSuccess, onCancel }: Props) {
   const { t } = useTranslation();
   const [mode, setMode] = useState<'passphrase' | 'recovery'>('passphrase');
   const [passphrase, setPassphrase] = useState('');
@@ -116,12 +124,14 @@ export default function VaultUnlock({ biometricAvailable, unlock, unlockRecovery
           </div>
         )}
 
-        <button
-          onClick={() => switchMode(mode === 'passphrase' ? 'recovery' : 'passphrase')}
-          className="text-xs text-gray-400 hover:text-gray-200 underline mb-3"
-        >
-          {mode === 'passphrase' ? t('vault.useRecovery') : t('vault.usePassphrase')}
-        </button>
+        {recoveryAvailable && (
+          <button
+            onClick={() => switchMode(mode === 'passphrase' ? 'recovery' : 'passphrase')}
+            className="text-xs text-gray-400 hover:text-gray-200 underline mb-3"
+          >
+            {mode === 'passphrase' ? t('vault.useRecovery') : t('vault.usePassphrase')}
+          </button>
+        )}
 
         <div className="flex justify-end gap-2">
           <button onClick={onCancel} className="px-3 py-1.5 rounded text-sm text-gray-300 hover:bg-gray-800">

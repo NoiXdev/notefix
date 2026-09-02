@@ -16,6 +16,13 @@ const RECOVERY_KEY_BYTES: usize = 20;
 /// Size of each dash-separated group in the formatted recovery key.
 const GROUP_LEN: usize = 5;
 
+/// A one-time **invite code**: the secret an owner reads out to an invited
+/// member so their client can open the vault key wrapped onto the invitation.
+/// Same construction as a recovery key — the same amount of entropy, the same
+/// unambiguous alphabet, the same "type it however you like" normalization —
+/// so it is a deliberate alias rather than a second implementation.
+pub type InviteCode = RecoveryKey;
+
 /// A one-time recovery key, formatted for display as dash-separated groups
 /// of Crockford base32 characters (e.g. `ABCDE-FGHJK-...`).
 ///

@@ -366,6 +366,24 @@ fn vault_my_key_url(server_url: &str, ws: &str) -> String {
     format!("{}/api/workspaces/{ws}/vault/keys/me", base(server_url))
 }
 
+fn vault_invite_url(server_url: &str, ws: &str, invitation_id: u64) -> String {
+    format!(
+        "{}/api/workspaces/{ws}/vault/invites/{invitation_id}",
+        base(server_url)
+    )
+}
+
+fn vault_invite_accept_url(server_url: &str, ws: &str, invitation_id: u64) -> String {
+    format!("{}/accept", vault_invite_url(server_url, ws, invitation_id))
+}
+
+fn vault_invite_by_token_url(server_url: &str, ws: &str, token: &str) -> String {
+    format!(
+        "{}/api/workspaces/{ws}/vault/invites/by-token/{token}",
+        base(server_url)
+    )
+}
+
 /// Whether `POST …/vault` seeded the workspace vault, or found one already
 /// there. `AlreadyExists` is a normal outcome, not an error: two devices can
 /// legitimately race to seed the same workspace.
@@ -420,6 +438,101 @@ pub async fn vault_put_my_key(
         .await
         .map_err(|e| SyncError::Offline(e.to_string()))?;
     classify_status(resp.status(), "vault key")
+}
+
+/// POST …/vault/invites/{id} — attach the newest DEK, wrapped under a
+/// one-time invite code, to an invitation the owner just created.
+pub async fn vault_attach_invite(
+    server_url: &str,
+    token: &str,
+    ws: &str,
+    invitation_id: u64,
+    wrap: &crate::ops::InviteWrap,
+) -> Result<(), SyncError> {
+    let resp = client()?
+        .post(vault_invite_url(server_url, ws, invitation_id))
+        .bearer_auth(token)
+        .header("Accept", "application/json")
+        .json(wrap)
+        .send()
+        .await
+        .map_err(|e| SyncError::Offline(e.to_string()))?;
+    classify_status(resp.status(), "vault invite")
+}
+
+/// GET …/vault/invites/{id} — the invite wrap waiting for this caller. Only
+/// the invitee who accepted the invitation can fetch it; everyone else gets a
+/// 404, which arrives here as a `Fatal`.
+pub async fn vault_fetch_invite(
+    server_url: &str,
+    token: &str,
+    ws: &str,
+    invitation_id: u64,
+) -> Result<crate::ops::InviteWrap, SyncError> {
+    let resp = client()?
+        .get(vault_invite_url(server_url, ws, invitation_id))
+        .bearer_auth(token)
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| SyncError::Offline(e.to_string()))?;
+    classify_status(resp.status(), "vault invite")?;
+    resp.json()
+        .await
+        .map_err(|e| SyncError::Fatal(e.to_string()))
+}
+
+/// POST …/vault/invites/{id}/accept — swap the invite wrap for the member's
+/// own passphrase wrap. The server deletes the invite wrap in the same
+/// transaction, so the one-time code is spent.
+pub async fn vault_accept_invite(
+    server_url: &str,
+    token: &str,
+    ws: &str,
+    invitation_id: u64,
+    entry: &crate::ops::MyEntryWire,
+) -> Result<(), SyncError> {
+    let resp = client()?
+        .post(vault_invite_accept_url(server_url, ws, invitation_id))
+        .bearer_auth(token)
+        .header("Accept", "application/json")
+        .json(entry)
+        .send()
+        .await
+        .map_err(|e| SyncError::Offline(e.to_string()))?;
+    classify_status(resp.status(), "vault invite accept")
+}
+
+/// GET …/vault/invites/by-token/{token} — the numeric id behind a share link.
+/// Users only ever see the link, but every other invite endpoint is keyed by
+/// the id.
+pub async fn vault_resolve_invite(
+    server_url: &str,
+    token: &str,
+    ws: &str,
+    invite_token: &str,
+) -> Result<u64, SyncError> {
+    let resp = client()?
+        .get(vault_invite_by_token_url(server_url, ws, invite_token))
+        .bearer_auth(token)
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| SyncError::Offline(e.to_string()))?;
+    classify_status(resp.status(), "vault invite lookup")?;
+    let body: Value = resp
+        .json()
+        .await
+        .map_err(|e| SyncError::Fatal(e.to_string()))?;
+    parse_invitation_id(&body)
+}
+
+/// The `{"invitationId": n}` body of the lookup above. Pulled out so the
+/// parsing is testable without a network call.
+fn parse_invitation_id(body: &Value) -> Result<u64, SyncError> {
+    body["invitationId"]
+        .as_u64()
+        .ok_or_else(|| SyncError::Fatal("vault invite lookup: no invitation id".into()))
 }
 
 #[cfg(test)]
@@ -814,6 +927,27 @@ mod tests {
             vault_my_key_url("https://s", "ws1"),
             "https://s/api/workspaces/ws1/vault/keys/me"
         );
+        assert_eq!(
+            vault_invite_url("https://s/", "ws1", 7),
+            "https://s/api/workspaces/ws1/vault/invites/7"
+        );
+        assert_eq!(
+            vault_invite_accept_url("https://s", "ws1", 7),
+            "https://s/api/workspaces/ws1/vault/invites/7/accept"
+        );
+        assert_eq!(
+            vault_invite_by_token_url("https://s", "ws1", "tok"),
+            "https://s/api/workspaces/ws1/vault/invites/by-token/tok"
+        );
+    }
+
+    #[test]
+    fn parse_invitation_id_reads_the_id_and_rejects_a_body_without_one() {
+        assert_eq!(parse_invitation_id(&json!({"invitationId": 7})).unwrap(), 7);
+        assert!(matches!(
+            parse_invitation_id(&json!({})),
+            Err(SyncError::Fatal(m)) if m == "vault invite lookup: no invitation id"
+        ));
     }
 
     #[test]
