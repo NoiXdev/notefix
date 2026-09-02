@@ -73,6 +73,11 @@ pub fn note_from_wire(v: &Value) -> Note {
         // Missing/unknown-to-server field defaults to unprotected — matches
         // today's behavior for a server that doesn't persist this field yet.
         protected: v["protected"].as_bool().unwrap_or(false),
+        // Did the wire payload actually carry `protected`? A server that
+        // omits the field entirely must not be read as an explicit `false`
+        // that would unprotect the note on pull — see
+        // `upsert_note_from_server_conn`.
+        protected_known: v["protected"].as_bool().is_some(),
         title: v["title"].as_str().unwrap_or_default().to_string(),
         // `mcp_hidden` is a LOCAL-only flag (see `storage::Note::mcp_hidden`)
         // and is never put on the wire in the first place — always false
@@ -352,6 +357,7 @@ mod tests {
             deleted_at: None,
             dirty: true,
             protected: false,
+            protected_known: false,
             title: "My Title".into(),
             mcp_hidden: false,
         };
@@ -420,6 +426,18 @@ mod tests {
         // must not be mistaken for an explicit `false` that unprotects a note.
         let v = json!({ "id": "n1", "content": "<p>x</p>" });
         assert!(!note_from_wire(&v).protected);
+    }
+
+    #[test]
+    fn note_from_wire_marks_protected_unknown_when_field_missing() {
+        let n = note_from_wire(
+            &json!({"id":"a","content":"cipher==","updatedAt":"2026-01-01T00:00:00Z"}),
+        );
+        assert!(!n.protected_known);
+        let m = note_from_wire(
+            &json!({"id":"a","content":"<p>x</p>","protected":false,"updatedAt":"2026-01-01T00:00:00Z"}),
+        );
+        assert!(m.protected_known && !m.protected);
     }
 
     #[test]

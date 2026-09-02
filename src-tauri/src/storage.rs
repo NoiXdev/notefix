@@ -31,6 +31,11 @@ pub struct Note {
     /// the (always-verbatim) content.
     #[serde(default)]
     pub protected: bool,
+    /// Whether the last wire payload carried an explicit `protected`. A pull
+    /// from a server that doesn't know the flag must not unprotect a note
+    /// (see `upsert_note_from_server_conn`). Local-only; never on the wire.
+    #[serde(default, skip_serializing)]
+    pub protected_known: bool,
     /// Plaintext title (schema v13), derived from the first line of the
     /// note's content via `note_preview`. Unlike `content`, this is NEVER
     /// encrypted — even for a protected note — so the note stays findable in
@@ -84,6 +89,10 @@ fn row_to_note(r: &rusqlite::Row) -> rusqlite::Result<Note> {
         deleted_at: r.get(9)?,
         dirty: r.get(10)?,
         protected: r.get(11)?,
+        // Not a stored column — only meaningful for a `Note` freshly built
+        // from a sync pull (see `sync::note_from_wire`). A row loaded from
+        // local storage has no "did the wire say so" to report.
+        protected_known: false,
         title: r.get(12)?,
         mcp_hidden: r.get(13)?,
     })
@@ -841,9 +850,23 @@ pub fn upsert_note_from_server_conn(conn: &rusqlite::Connection, n: &Note) -> ru
             content=excluded.content, updated_at=excluded.updated_at, pinned=excluded.pinned,
             archived=excluded.archived, color=excluded.color, due_at=excluded.due_at,
             folder_id=excluded.folder_id, position=excluded.position, deleted_at=excluded.deleted_at, dirty=0,
-            protected=excluded.protected, title=excluded.title
+            protected = CASE WHEN ?13 THEN excluded.protected ELSE notes.protected END, title=excluded.title
          WHERE excluded.updated_at >= notes.updated_at",
-        (&n.id, &n.content, n.updated_at, n.pinned, n.archived, &n.color, n.due_at, &n.folder_id, n.position, n.deleted_at, n.protected, &n.title),
+        (
+            &n.id,
+            &n.content,
+            n.updated_at,
+            n.pinned,
+            n.archived,
+            &n.color,
+            n.due_at,
+            &n.folder_id,
+            n.position,
+            n.deleted_at,
+            n.protected,
+            &n.title,
+            n.protected_known,
+        ),
     )?;
     Ok(())
 }
@@ -879,6 +902,7 @@ mod tests {
             deleted_at: None,
             dirty: false,
             protected: false,
+            protected_known: false,
             title: String::new(),
             mcp_hidden: false,
         }
@@ -1292,6 +1316,23 @@ mod tests {
         let all = s.load_all_notes().unwrap();
         assert_eq!(all[0].content, "server");
         assert!(!all[0].dirty);
+    }
+
+    #[test]
+    fn pull_without_protected_keeps_the_local_flag() {
+        let s = store();
+        s.save_note(&note("a", "cipher==", 1000)).unwrap();
+        s.set_note_protected("a", true).unwrap();
+        let mut pulled = note("a", "cipher==", 2000); // newer, but the server didn't say
+        pulled.protected = false;
+        pulled.protected_known = false;
+        upsert_note_from_server_conn(&s.conn, &pulled).unwrap();
+        assert!(s.note_protected("a").unwrap(), "unknown must not unprotect");
+        let mut explicit = note("a", "<p>plain</p>", 3000);
+        explicit.protected = false;
+        explicit.protected_known = true;
+        upsert_note_from_server_conn(&s.conn, &explicit).unwrap();
+        assert!(!s.note_protected("a").unwrap(), "explicit false unprotects");
     }
 
     #[test]

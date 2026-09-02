@@ -329,6 +329,7 @@ mod tests {
             deleted_at: None,
             dirty: false,
             protected: false,
+            protected_known: false,
             title: String::new(),
             mcp_hidden: false,
         }
