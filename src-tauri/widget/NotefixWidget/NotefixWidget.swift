@@ -26,7 +26,7 @@ struct Provider: TimelineProvider {
 
     static func read() -> Snapshot {
         guard let dir = FileManager.default.containerURL(
-                forSecurityApplicationGroupIdentifier: "group.dev.noix.notefix"),
+                forSecurityApplicationGroupIdentifier: "5V8ZCK434F.dev.noix.notefix"),
               let data = try? Data(contentsOf: dir.appendingPathComponent("widget.json")),
               let snap = try? JSONDecoder().decode(Snapshot.self, from: data)
         else { return Snapshot() }

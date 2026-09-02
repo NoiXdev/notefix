@@ -10,7 +10,14 @@ use serde::Serialize;
 
 use crate::storage::Note;
 
-const APP_GROUP: &str = "group.dev.noix.notefix";
+// Team-ID-prefixed on purpose: on macOS 15+ a `group.*` identifier without a
+// provisioning profile makes the OS ask the user for consent ("wants to access
+// data from other apps") on every launch — and the sandboxed widget extension,
+// which has no UI to consent with, is silently denied and renders empty. A
+// `<TeamID>.<name>` group is trusted from the code signature alone, for both
+// the app and the widget. Must match `widget/NotefixWidget/NotefixWidget.swift`
+// and both entitlements files.
+const APP_GROUP: &str = "5V8ZCK434F.dev.noix.notefix";
 const MAX_PINNED: usize = 6;
 const MAX_RECENT: usize = 8;
 
@@ -290,7 +297,7 @@ mod tests {
         let home = PathBuf::from("/Users/someone");
         assert_eq!(
             container_dir_in(&home),
-            PathBuf::from("/Users/someone/Library/Group Containers/group.dev.noix.notefix")
+            PathBuf::from("/Users/someone/Library/Group Containers/5V8ZCK434F.dev.noix.notefix")
         );
     }
 
