@@ -53,6 +53,19 @@ the biometric UI on that check rather than on `isMobilePlatform` alone.
 
 - `npx tsc --noEmit` and `npx vitest run` must stay green (i18n de/en/fr key
   parity is enforced by a test).
+- Coverage: `npm run test:coverage` (frontend, v8; all `src/` files are
+  reported, `main.tsx` excluded) and, from `src-tauri/`,
+  `cargo llvm-cov --lib --summary-only -- --test-threads=1` (needs
+  `cargo-llvm-cov` + the `llvm-tools-preview` rustup component; the
+  instrumented binary is SIGKILLed under default test parallelism, hence
+  `--test-threads=1`). Baseline after the coverage program: frontend ~96%
+  lines, backend ~79% lines.
+- Keep the backend testable: `commands.rs` is a THIN Tauri surface (acquire
+  `State` locks, delegate, emit events). Real logic — validation, branching,
+  store/vault mutations — lives as pure functions in `ops.rs` and is
+  unit-tested there with `Store::open_in_memory()`. New command logic goes in
+  `ops.rs`, not in the command body. `commands.rs`/`lib.rs` being near 0%
+  covered is expected (macro expansion + app builder), not a gap.
 - Android debug APK: `npx tauri android build --debug --apk --target aarch64`.
   Always delete `src-tauri/gen/android/app/build/outputs/apk` (or `gradlew
   clean`) first — rebuilding over an existing APK appends instead of rewriting
