@@ -1070,8 +1070,8 @@ describe("Settings — Contexts page", () => {
 
   /** The active, workspace-bound server context — the only row the invite actions act on. */
   const serverActive = [
-    { id: "c-server", label: "Team", kind: "server" as const, path: "", serverUrl: "https://s.example.com", workspaceId: "w1", active: true, vaultExists: true, vaultBiometric: false, vaultGeneration: 2, vaultRotationPending: true },
-    { id: "c-local", label: "", kind: "local" as const, path: "/local.db", serverUrl: "", workspaceId: "", active: false, vaultExists: false, vaultBiometric: false, vaultGeneration: 0, vaultRotationPending: false },
+    { id: "c-server", label: "Team", kind: "server" as const, path: "", serverUrl: "https://s.example.com", workspaceId: "w1", active: true, vaultExists: true, vaultBiometric: false, vaultGeneration: 2, vaultRotationPending: true, role: "owner", invitesNeedingCode: 0 },
+    { id: "c-local", label: "", kind: "local" as const, path: "/local.db", serverUrl: "", workspaceId: "", active: false, vaultExists: false, vaultBiometric: false, vaultGeneration: 0, vaultRotationPending: false, role: "", invitesNeedingCode: 0 },
   ];
 
   it("shows the workspace key generation and a pending rotation per context", async () => {

@@ -61,6 +61,12 @@ pub struct ContextInfo {
     /// Whether the workspace still owes this context's vault a key rotation
     /// (a member was removed and the key has not been rolled yet).
     pub vault_rotation_pending: bool,
+    /// The user's role in the workspace as of the last pull; "" for local
+    /// contexts.
+    pub role: String,
+    /// Open invitations whose vault code was lost in a rotation (owners
+    /// only).
+    pub invites_needing_code: u32,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -2743,11 +2749,17 @@ pub fn vault_status_flags(
 /// has a vault, and where that vault's workspace key ring stands. All three
 /// fields come from the same short-lived `Store` handle, so a context's row
 /// costs one open, not three.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ContextVaultInfo {
     pub exists: bool,
     pub generation: u32,
     pub rotation_pending: bool,
+    /// The user's role in the workspace as of the last pull; "" for local
+    /// contexts.
+    pub role: String,
+    /// Open invitations whose vault code was lost in a rotation (owners
+    /// only).
+    pub invites_needing_code: u32,
 }
 
 /// One context's vault state, read without switching into it — used by
@@ -2762,6 +2774,12 @@ pub fn context_vault_info(path: &Path) -> ContextVaultInfo {
     (|| -> Result<ContextVaultInfo, String> {
         let store = Store::open(path).map_err(|e| e.to_string())?;
         crate::migrate::run_migrations(&store.conn).map_err(|e| e.to_string())?;
+        let generation = u32::try_from(crate::migrate::get_meta_i64(
+            &store.conn,
+            "vault_generation",
+            0,
+        ))
+        .unwrap_or(0);
         Ok(ContextVaultInfo {
             // Same rule as `vault_status.exists` ([`vault_exists`]): a member
             // who joined a workspace at generation >= 2 has no local record —
@@ -2769,17 +2787,19 @@ pub fn context_vault_info(path: &Path) -> ContextVaultInfo {
             // vault is there. Reading only the record would leave their row
             // saying "no vault" and hide every vault action on it.
             exists: vault_exists(&store)?,
-            generation: u32::try_from(crate::migrate::get_meta_i64(
-                &store.conn,
-                "vault_generation",
-                0,
-            ))
-            .unwrap_or(0),
+            generation,
             rotation_pending: crate::migrate::get_meta_i64(
                 &store.conn,
                 "vault_rotation_pending",
                 0,
             ) != 0,
+            role: crate::migrate::get_meta(&store.conn, "workspace_role")
+                .map_err(|e| e.to_string())?
+                .unwrap_or_default(),
+            invites_needing_code: crate::migrate::get_meta(&store.conn, "vault_invites")
+                .map_err(|e| e.to_string())?
+                .map(|json| invites_needing_code(&json, generation).len() as u32)
+                .unwrap_or(0),
         })
     })()
     .unwrap_or_default()
@@ -2998,6 +3018,8 @@ pub fn to_infos_with(
                 vault_biometric: biometric(c),
                 vault_generation: v.generation,
                 vault_rotation_pending: v.rotation_pending,
+                role: v.role.clone(),
+                invites_needing_code: v.invites_needing_code,
             }
         })
         .collect()
@@ -3333,12 +3355,39 @@ pub fn apply_vault_keys(store: &Store, pull: &crate::sync::PullBody) -> Result<(
                 i64::from(pull.vault_rotation_pending),
             )
             .map_err(|e| e.to_string())?;
+            if let Some(role) = &pull.workspace_role {
+                crate::migrate::set_meta(&store.conn, "workspace_role", role)
+                    .map_err(|e| e.to_string())?;
+            }
+            if let Some(invites) = &pull.vault_invites {
+                crate::migrate::set_meta(&store.conn, "vault_invites", &invites.to_string())
+                    .map_err(|e| e.to_string())?;
+            }
             crate::migrate::delete_meta(&store.conn, "vault_server_legacy")
                 .map_err(|e| e.to_string())
         }
         None => crate::migrate::set_meta_i64(&store.conn, "vault_server_legacy", 1)
             .map_err(|e| e.to_string()),
     }
+}
+
+/// Invitation ids whose vault wrap is missing or older than `generation` —
+/// the owner has to hand out a fresh code for each. Unparsable input → empty.
+pub fn invites_needing_code(invites_json: &str, generation: u32) -> Vec<u64> {
+    let Ok(serde_json::Value::Array(items)) =
+        serde_json::from_str::<serde_json::Value>(invites_json)
+    else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter(|i| {
+            i["generation"]
+                .as_u64()
+                .is_none_or(|g| (g as u32) < generation)
+        })
+        .filter_map(|i| i["invitationId"].as_u64())
+        .collect()
 }
 
 /// Of the image paths a context references, the subset that actually exists in
@@ -7597,6 +7646,7 @@ mod context_vault_info_tests {
                 exists: true,
                 generation: 3,
                 rotation_pending: true,
+                ..Default::default()
             }
         );
     }
@@ -7632,6 +7682,7 @@ mod context_vault_info_tests {
                 exists: true,
                 generation: 2,
                 rotation_pending: false,
+                ..Default::default()
             }
         );
     }
@@ -8783,6 +8834,7 @@ mod registry_view_tests {
                 exists: c.label == "Work",
                 generation: if c.label == "Work" { 2 } else { 0 },
                 rotation_pending: c.label == "Work",
+                ..Default::default()
             },
             |c| c.label == "Personal",
         );
@@ -9869,6 +9921,8 @@ mod sync_cycle_tests {
             vault_keys: None,
             vault_generation: None,
             vault_rotation_pending: false,
+            workspace_role: None,
+            vault_invites: None,
         };
         commit_sync_result(&s, &push.note_ids, &push.folder_ids, &pull, 1_700).unwrap();
 
@@ -9905,6 +9959,8 @@ mod sync_cycle_tests {
             vault_keys: None,
             vault_generation: None,
             vault_rotation_pending: false,
+            workspace_role: None,
+            vault_invites: None,
         };
         commit_sync_result(&s, &push.note_ids, &push.folder_ids, &pull, 1).unwrap();
 
@@ -9938,6 +9994,8 @@ mod sync_cycle_tests {
             vault_keys: None,
             vault_generation: None,
             vault_rotation_pending: false,
+            workspace_role: None,
+            vault_invites: None,
         };
         commit_sync_result(&s, &[], &[], &pull, 1).unwrap();
 
@@ -9959,6 +10017,8 @@ mod sync_cycle_tests {
             vault_keys: Some(serde_json::json!({"mine": [], "recovery": []})),
             vault_generation: Some(1),
             vault_rotation_pending: false,
+            workspace_role: None,
+            vault_invites: None,
         };
         apply_vault_keys(&s, &with).unwrap();
         assert_eq!(
@@ -9980,6 +10040,8 @@ mod sync_cycle_tests {
             vault_keys: None,
             vault_generation: None,
             vault_rotation_pending: false,
+            workspace_role: None,
+            vault_invites: None,
         };
         apply_vault_keys(&s, &legacy).unwrap();
         assert_eq!(
@@ -9990,6 +10052,46 @@ mod sync_cycle_tests {
             s.vault_entries().unwrap().as_deref(),
             Some(r#"{"mine":[],"recovery":[]}"#),
             "cache untouched"
+        );
+    }
+
+    #[test]
+    fn invites_needing_code_lists_missing_and_stale_wraps() {
+        let json = r#"[{"invitationId":5,"generation":1},{"invitationId":6,"generation":null},{"invitationId":7,"generation":2}]"#;
+        assert_eq!(invites_needing_code(json, 2), vec![5, 6]);
+        assert_eq!(invites_needing_code(json, 1), vec![6]);
+        assert!(invites_needing_code("not json", 2).is_empty());
+    }
+
+    #[test]
+    fn apply_vault_keys_caches_the_role_and_the_open_invitations() {
+        let s = Store::open_in_memory().unwrap();
+        crate::migrate::run_migrations(&s.conn).unwrap();
+        let pull = crate::sync::PullBody {
+            cursor: 1,
+            folders: vec![],
+            notes: vec![],
+            vault_keys: Some(serde_json::json!({"mine": [], "recovery": [], "rotation": []})),
+            vault_generation: Some(2),
+            vault_rotation_pending: false,
+            workspace_role: Some("owner".into()),
+            vault_invites: Some(serde_json::json!([{"invitationId": 5, "generation": null}])),
+        };
+        apply_vault_keys(&s, &pull).unwrap();
+        assert_eq!(
+            crate::migrate::get_meta(&s.conn, "workspace_role")
+                .unwrap()
+                .as_deref(),
+            Some("owner")
+        );
+        assert_eq!(
+            invites_needing_code(
+                &crate::migrate::get_meta(&s.conn, "vault_invites")
+                    .unwrap()
+                    .unwrap(),
+                2
+            ),
+            vec![5]
         );
     }
 
@@ -10102,6 +10204,8 @@ mod database_error_tests {
             vault_keys: None,
             vault_generation: None,
             vault_rotation_pending: false,
+            workspace_role: None,
+            vault_invites: None,
         };
         assert!(commit_sync_result(&s, &[("n1".into(), 1)], &[], &pull, 1).is_err());
     }

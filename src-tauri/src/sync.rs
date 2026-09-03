@@ -277,6 +277,11 @@ pub struct PullBody {
     pub vault_keys: Option<Value>,
     pub vault_generation: Option<u32>,
     pub vault_rotation_pending: bool,
+    /// The caller's role in the workspace, when the server reports it.
+    pub workspace_role: Option<String>,
+    /// For an owner: the open invitations with their wrap generation
+    /// (`[{invitationId, generation|null}]`); absent on older servers.
+    pub vault_invites: Option<Value>,
 }
 
 /// Map the `…/changes` GET JSON body to a [`PullBody`]. The server may nest
@@ -299,6 +304,8 @@ pub fn parse_pull_response(body: &Value, since: i64) -> PullBody {
         vault_keys: body.get("vaultKeys").filter(|v| v.is_object()).cloned(),
         vault_generation: body["vaultGeneration"].as_u64().map(|g| g as u32),
         vault_rotation_pending: body["vaultRotationPending"].as_bool().unwrap_or(false),
+        workspace_role: body["workspaceRole"].as_str().map(str::to_string),
+        vault_invites: body.get("vaultInvites").filter(|v| v.is_array()).cloned(),
     }
 }
 
@@ -1094,6 +1101,18 @@ mod tests {
         assert_eq!(p.vault_keys.as_ref().unwrap()["mine"][0]["dekWrapped"], "w");
         let legacy = parse_pull_response(&json!({"cursor": 1, "folders": [], "notes": []}), 0);
         assert!(legacy.vault_keys.is_none() && legacy.vault_generation.is_none());
+
+        let body = json!({"cursor": 7, "folders": [], "notes": [], "vaultGeneration": 2, "vaultRotationPending": true,
+            "vaultKeys": {"mine": [], "recovery": [], "rotation": []},
+            "workspaceRole": "owner", "vaultInvites": [{"invitationId": 5, "generation": 1}, {"invitationId": 6, "generation": null}]});
+        let p = parse_pull_response(&body, 0);
+        assert_eq!(p.workspace_role.as_deref(), Some("owner"));
+        assert_eq!(
+            p.vault_invites.as_ref().unwrap()[1]["generation"],
+            serde_json::Value::Null
+        );
+        let legacy = parse_pull_response(&json!({"cursor": 1, "folders": [], "notes": []}), 0);
+        assert!(legacy.workspace_role.is_none() && legacy.vault_invites.is_none());
     }
 
     #[test]

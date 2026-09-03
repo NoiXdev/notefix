@@ -16,6 +16,10 @@ export interface ContextInfo {
   vaultGeneration: number;
   /** Whether the workspace still owes this context's vault a key rotation. */
   vaultRotationPending: boolean;
+  /** The user's role in the workspace as of the last pull; "" for local contexts. */
+  role: string;
+  /** Open invitations whose vault code was lost in a rotation (owners only). */
+  invitesNeedingCode: number;
 }
 
 /**
