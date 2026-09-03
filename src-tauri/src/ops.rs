@@ -304,6 +304,21 @@ pub fn seal_outdated(
     }
 }
 
+/// Whether this device may mint an invite wrap (share or re-code) of the
+/// ring's newest DEK. Refused when that DEK is not the workspace's current
+/// key: on a conflicted device whose ring still seals with its own vault's
+/// key, and on a device that has not redeemed the latest rotation — either
+/// would hand the invitee a wrap that opens the wrong or a retired key.
+pub fn invite_wrap_allowed(flags: &VaultStatusFlags, ring_newest: u32) -> Result<(), String> {
+    if flags.conflict && !flags.ring_is_workspace {
+        return Err("vault: resolve the vault conflict first".to_string());
+    }
+    if flags.server_generation > i64::from(ring_newest) {
+        return Err("vault: redeem the rotation code first".to_string());
+    }
+    Ok(())
+}
+
 /// True if any ancestor folder of `note_id` (not counting the note's own
 /// `protected` flag — see `Store::is_effectively_protected` for that) is
 /// `locked`. Cycle-safe via a visited set, mirroring the walk in
@@ -8169,6 +8184,40 @@ mod vault_rotation_tests {
         opened.sort_by_key(|(g, _)| *g);
         assert_eq!(opened[0].1.expose(), d1.expose());
         assert_eq!(opened[1].1.expose(), d2.expose());
+    }
+
+    fn mint_flags(
+        conflict: bool,
+        ring_is_workspace: bool,
+        server_generation: i64,
+    ) -> VaultStatusFlags {
+        VaultStatusFlags {
+            exists: true,
+            conflict,
+            recovery_holder: false,
+            rotation_code: false,
+            recovery_missing: false,
+            server_generation,
+            ring_is_workspace,
+            role: "owner".into(),
+        }
+    }
+
+    #[test]
+    fn invite_wrap_allowed_refuses_a_conflicted_or_outdated_ring() {
+        assert!(invite_wrap_allowed(&mint_flags(false, true, 2), 2).is_ok());
+        // Conflicted, but the ring's newest key IS the workspace's: fine.
+        assert!(invite_wrap_allowed(&mint_flags(true, true, 2), 2).is_ok());
+        assert_eq!(
+            invite_wrap_allowed(&mint_flags(true, false, 2), 2).unwrap_err(),
+            "vault: resolve the vault conflict first"
+        );
+        assert_eq!(
+            invite_wrap_allowed(&mint_flags(false, true, 3), 2).unwrap_err(),
+            "vault: redeem the rotation code first"
+        );
+        // A local context reports generation 0: never outdated.
+        assert!(invite_wrap_allowed(&mint_flags(false, false, 0), 1).is_ok());
     }
 
     #[test]

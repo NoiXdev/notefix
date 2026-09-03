@@ -1976,6 +1976,12 @@ pub async fn vault_invite_share(app: AppHandle, invitation_id: u64) -> Result<St
             .ok_or_else(|| "vault locked".to_string())?;
         (dek, generation)
     };
+    {
+        let store_state = app.state::<Mutex<Store>>();
+        let store = store_state.lock().map_err(|e| e.to_string())?;
+        let flags = ops::vault_status_flags(&store, true, Some((generation, &dek)))?;
+        ops::invite_wrap_allowed(&flags, generation)?;
+    }
     let (code, wrap) = ops::make_invite_wrap(&dek, generation);
     crate::sync::vault_attach_invite(
         &ctx.server_url,
@@ -2055,12 +2061,29 @@ pub async fn vault_invite_accept(
     Ok(())
 }
 
-/// One re-coded invitation and its fresh one-time code.
+/// One re-coded invitation and its fresh one-time code — a DTO, not the
+/// `vault::recovery::InviteCode` secret.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct InviteCode {
+pub struct RecodedInvite {
     pub invitation_id: u64,
     pub code: String,
+}
+
+/// Stamps the cached invitation list with the generation just attached.
+fn stamp_recoded(store: &Store, codes: &[RecodedInvite], generation: u32) -> Result<(), String> {
+    let Some(json) =
+        crate::migrate::get_meta(&store.conn, "vault_invites").map_err(|e| e.to_string())?
+    else {
+        return Ok(());
+    };
+    let done: Vec<u64> = codes.iter().map(|c| c.invitation_id).collect();
+    crate::migrate::set_meta(
+        &store.conn,
+        "vault_invites",
+        &ops::mark_invites_recoded(&json, &done, generation),
+    )
+    .map_err(|e| e.to_string())
 }
 
 /// Mints a fresh vault code for every open invitation whose wrap a rotation
@@ -2079,8 +2102,11 @@ pub struct InviteCode {
 /// once at least one invitation's wrap is already attached on the server,
 /// the loop stops but still returns the codes minted so far rather than
 /// discarding attaches that already landed.
+///
+/// Refuses on a conflicted or outdated device (`invite_wrap_allowed`), so a
+/// stamped invitation always carries the workspace's newest generation.
 #[tauri::command]
-pub async fn vault_invite_recode(app: AppHandle) -> Result<Vec<InviteCode>, String> {
+pub async fn vault_invite_recode(app: AppHandle) -> Result<Vec<RecodedInvite>, String> {
     // Captured before the target's registry read — see `run_sync_cycle`.
     let epoch = app.state::<ops::SyncEpoch>().current();
     let (ctx, token) = vault_invite_target(&app)?;
@@ -2096,6 +2122,8 @@ pub async fn vault_invite_recode(app: AppHandle) -> Result<Vec<InviteCode>, Stri
     };
     let targets = {
         let store = store_state.lock().map_err(|e| e.to_string())?;
+        let flags = ops::vault_status_flags(&store, true, Some((generation, &dek)))?;
+        ops::invite_wrap_allowed(&flags, generation)?;
         ops::recode_targets(&store)?
     };
     let mut codes = Vec::with_capacity(targets.len());
@@ -2110,7 +2138,7 @@ pub async fn vault_invite_recode(app: AppHandle) -> Result<Vec<InviteCode>, Stri
         )
         .await
         {
-            Ok(()) => codes.push(InviteCode {
+            Ok(()) => codes.push(RecodedInvite {
                 invitation_id: *invitation_id,
                 code,
             }),
@@ -2132,18 +2160,20 @@ pub async fn vault_invite_recode(app: AppHandle) -> Result<Vec<InviteCode>, Stri
         }
     }
     if !codes.is_empty() {
-        let store = store_state.lock().map_err(|e| e.to_string())?;
-        check_epoch(&app, epoch)?;
-        if let Some(json) =
-            crate::migrate::get_meta(&store.conn, "vault_invites").map_err(|e| e.to_string())?
-        {
-            let done: Vec<u64> = codes.iter().map(|c| c.invitation_id).collect();
-            crate::migrate::set_meta(
-                &store.conn,
-                "vault_invites",
-                &ops::mark_invites_recoded(&json, &done, generation),
-            )
-            .map_err(|e| e.to_string())?;
+        // Best effort: the wraps are attached and the codes are in hand, so
+        // a failure here (the context switched mid-flight, a poisoned lock,
+        // a write error) only leaves the invitations unstamped — the badge
+        // stays until the next pull rewrites the cache. Never trade the
+        // codes for a cache stamp.
+        match store_state.lock() {
+            Ok(store) => {
+                if let Err(e) = check_epoch(&app, epoch)
+                    .and_then(|()| stamp_recoded(&store, &codes, generation))
+                {
+                    eprintln!("vault: re-code cache stamp skipped: {e}");
+                }
+            }
+            Err(e) => eprintln!("vault: re-code cache stamp skipped: {e}"),
         }
     }
     broadcast_context_changed(&app);
