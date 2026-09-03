@@ -16,6 +16,7 @@ import Select from "./Select";
 import Toggle from "./Toggle";
 import ShortcutsSettings from "./ShortcutsSettings";
 import PromptDialog from "./PromptDialog";
+import ContextMenu from "./ContextMenu";
 import VaultSetup from "./VaultSetup";
 import VaultUnlock from "./VaultUnlock";
 import VaultInviteCodeDialog from "./VaultInviteCodeDialog";
@@ -419,6 +420,7 @@ function SecurityPage({ settings, onSetSetting }: {
                     {t("security.changePassphrase")}
                   </button>
                 </div>
+                <p className="mt-2 text-xs text-gray-500">{t("security.passphraseHint")}</p>
               </>
             )}
           </SettingsSection>
@@ -1091,6 +1093,8 @@ function ContextsPage() {
   // Kept apart from `error` (the add-a-context flow's, shown at the bottom):
   // a failed share belongs next to the row whose button started it.
   const [shareError, setShareError] = useState<string | null>(null);
+  // One open actions menu at a time, anchored below the row's trigger.
+  const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
 
   // The invite commands act on the ACTIVE server context (they resolve their
   // workspace and tokens from it), so they are only offered on that row —
@@ -1185,7 +1189,7 @@ function ContextsPage() {
       <p className="text-sm text-gray-500 mb-6">{t("contexts.subtitle")}</p>
       <SettingsSection title={t("contexts.sections.manage")}>
         {ctx.map(c => (
-          <div key={c.id} className="flex items-start justify-between gap-3 rounded border px-3 py-2" style={{ borderColor: "var(--line-muted)", background: "var(--paper-raised)" }}>
+          <div key={c.id} data-testid={`context-row-${c.id}`} className="flex items-start justify-between gap-3 rounded border px-3 py-2" style={{ borderColor: "var(--line-muted)", background: "var(--paper-raised)" }}>
             <div className="min-w-0">
               <div className="flex items-center gap-2 text-sm font-medium text-gray-800">
                 {c.kind === "server" && <FontAwesomeIcon icon={faGlobe} className="text-[11px] text-gray-500 shrink-0" />}
@@ -1216,29 +1220,45 @@ function ContextsPage() {
                 )}
               </div>
             </div>
-            {/* Wraps on a narrow window: five actions never fit one line on
-                a phone, and an un-wrapped row pushes the label off screen. */}
-            <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-              {c.vaultExists && (
-                <button onClick={() => setDialog({ mode: "vault", c })} className="px-3 py-1 rounded text-xs font-medium border" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>{t("contexts.vault.changePassphrase")}</button>
+            {/* Every row action lives in one menu: six buttons never fit a
+                phone-width row, and the menu only lists what applies here. */}
+            <div className="flex shrink-0 flex-col items-end gap-1">
+              <button
+                onClick={e => {
+                  // Keep the click away from the open menu's dismiss listener,
+                  // so switching rows opens the new menu instead of closing it.
+                  e.stopPropagation();
+                  const r = e.currentTarget.getBoundingClientRect();
+                  setMenu(m => (m?.id === c.id ? null : { id: c.id, x: r.left, y: r.bottom + 4 }));
+                }}
+                aria-haspopup="menu"
+                aria-expanded={menu?.id === c.id}
+                className="px-3 py-1 rounded text-xs font-medium border"
+                style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}
+              >
+                {t("contexts.actions")} ▾
+              </button>
+              {menu?.id === c.id && (
+                <ContextMenu
+                  x={menu.x}
+                  y={menu.y}
+                  onClose={() => setMenu(m => (m?.id === c.id ? null : m))}
+                  items={[
+                    { label: t("contexts.rename"), onClick: () => setDialog({ mode: "rename", c }) },
+                    ...(c.vaultExists ? [{ label: t("contexts.vault.changePassphrase"), onClick: () => setDialog({ mode: "vault", c }) }] : []),
+                    // Sharing and rotating both take the DEK out of the live ring,
+                    // so both are hidden while the vault is locked — with the hint
+                    // below saying why, rather than an item the backend refuses.
+                    ...(canShare(c) ? [{ label: t("vault.invite.share"), onClick: () => { setShareError(null); setDialog({ mode: "inviteShare", c }); } }] : []),
+                    ...(canRotate(c) ? [{ label: t("vault.rotation.run"), onClick: () => { setError(null); setDialog({ mode: "rotate", c }); } }] : []),
+                    ...(canInvite(c) ? [{ label: t("vault.invite.enter"), onClick: () => { setError(null); setDialog({ mode: "inviteAccept", c }); } }] : []),
+                    { label: t("contexts.remove"), disabled: c.active, onClick: () => setDialog({ mode: "remove", c }) },
+                  ]}
+                />
               )}
-              {/* Sharing and rotating both take the DEK out of the live ring,
-                  so both are hidden while the vault is locked — with the hint
-                  below saying why, rather than a button the backend refuses. */}
-              {canShare(c) && (
-                <button onClick={() => { setShareError(null); setDialog({ mode: "inviteShare", c }); }} className="px-3 py-1 rounded text-xs font-medium border" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>{t("vault.invite.share")}</button>
-              )}
-              {canRotate(c) && (
-                <button onClick={() => { setError(null); setDialog({ mode: "rotate", c }); }} className="px-3 py-1 rounded text-xs font-medium border" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>{t("vault.rotation.run")}</button>
-              )}
-              {canInvite(c) && (
-                <button onClick={() => { setError(null); setDialog({ mode: "inviteAccept", c }); }} className="px-3 py-1 rounded text-xs font-medium border" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>{t("vault.invite.enter")}</button>
-              )}
-              <button onClick={() => setDialog({ mode: "rename", c })} className="px-3 py-1 rounded text-xs font-medium border" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>{t("contexts.rename")}</button>
-              <button onClick={() => setDialog({ mode: "remove", c })} disabled={c.active} className="px-3 py-1 rounded text-xs font-medium border disabled:opacity-40 disabled:cursor-not-allowed" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>{t("contexts.remove")}</button>
-              {lockedOnly(c) && <span className="text-xs text-gray-500 w-full text-right">{t("vault.lockedHint")}</span>}
+              {lockedOnly(c) && <span className="text-xs text-gray-500 text-right">{t("vault.lockedHint")}</span>}
               {sharing && c.active && <span className="text-xs text-gray-500">{t("contexts.connecting")}</span>}
-              {shareError && c.active && <span className="text-xs text-red-600 w-full text-right" role="alert">{shareError}</span>}
+              {shareError && c.active && <span className="text-xs text-red-600 text-right" role="alert">{shareError}</span>}
             </div>
           </div>
         ))}

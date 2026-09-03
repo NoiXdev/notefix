@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const {
@@ -935,6 +935,10 @@ describe("Settings — Appearance (editor tab)", () => {
 });
 
 describe("Settings — Contexts page", () => {
+  /** Opens the row's actions menu; every row action lives behind it. */
+  const openActions = (id: string) =>
+    fireEvent.click(within(screen.getByTestId(`context-row-${id}`)).getByRole("button", { name: "Aktionen ▾" }));
+
   const contexts = [
     { id: "c-local", label: "", kind: "local" as const, path: "/local.db", serverUrl: "", workspaceId: "", active: true, vaultExists: false, vaultBiometric: false },
     { id: "c-server", label: "Team", kind: "server" as const, path: "", serverUrl: "https://s.example.com", workspaceId: "w1", active: false, vaultExists: true, vaultBiometric: true },
@@ -1006,7 +1010,8 @@ describe("Settings — Contexts page", () => {
     await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
 
     // Row order follows the list: [0] local ("Lokal"), [1] server ("Team").
-    fireEvent.click(screen.getAllByText("Umbenennen")[1]);
+    openActions("c-server");
+    fireEvent.click(screen.getByText("Umbenennen"));
     const input = screen.getByDisplayValue("Team");
     fireEvent.change(input, { target: { value: "Team Server" } });
     fireEvent.keyDown(input, { key: "Enter" });
@@ -1021,9 +1026,8 @@ describe("Settings — Contexts page", () => {
     fireEvent.click(screen.getByText("Kontexte"));
     await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
 
-    // The active local context's remove button stays disabled; the server row's is clickable and is last in the DOM.
-    const removeButtons = screen.getAllByRole("button", { name: "Entfernen" });
-    fireEvent.click(removeButtons[removeButtons.length - 1]);
+    openActions("c-server");
+    fireEvent.click(screen.getByRole("button", { name: "Entfernen" }));
 
     fireEvent.click(screen.getByLabelText("Datenbankdatei mitlöschen"));
     const confirmButtons = screen.getAllByRole("button", { name: "Entfernen" });
@@ -1043,8 +1047,14 @@ describe("Settings — Contexts page", () => {
     // c-server has a vault with Touch ID enrolled: "Tresor eingerichtet" + "Touch ID" badges.
     expect(screen.getByText("Tresor eingerichtet")).toBeInTheDocument();
     expect(screen.getByText("Touch ID")).toBeInTheDocument();
-    // Only one row (c-server) gets the change-passphrase button.
-    expect(screen.getAllByRole("button", { name: "Passwort ändern" })).toHaveLength(1);
+    // Only the c-server menu offers the vault passphrase change; the active
+    // row cannot be removed, so its menu item is inert.
+    openActions("c-local");
+    expect(screen.queryByRole("button", { name: "Tresor-Passwort ändern" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Entfernen" })).toBeDisabled();
+    openActions("c-server");
+    expect(screen.getByRole("button", { name: "Tresor-Passwort ändern" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Entfernen" })).toBeEnabled();
   });
 
   /** The active, workspace-bound server context — the only row the invite actions act on. */
@@ -1070,9 +1080,13 @@ describe("Settings — Contexts page", () => {
     fireEvent.click(screen.getByText("Kontexte"));
     await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
 
-    // Exactly one row (the active server one) gets each action; the local row gets neither.
-    expect(screen.getAllByRole("button", { name: "Tresor freigeben" })).toHaveLength(1);
-    expect(screen.getAllByRole("button", { name: "Einladungs-Code eingeben" })).toHaveLength(1);
+    // Only the active server row's menu offers the invite actions; the local row's has neither.
+    openActions("c-server");
+    expect(screen.getByRole("button", { name: "Tresor freigeben" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Einladungs-Code eingeben" })).toBeInTheDocument();
+    openActions("c-local");
+    expect(screen.queryByRole("button", { name: "Tresor freigeben" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Einladungs-Code eingeben" })).not.toBeInTheDocument();
   });
 
   it("offers the key change only on the active workspace context with an unlocked vault", async () => {
@@ -1080,6 +1094,7 @@ describe("Settings — Contexts page", () => {
     render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
     fireEvent.click(screen.getByText("Kontexte"));
     await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+    openActions("c-server");
 
     // Locked (the beforeEach default): the new key would have nowhere to go.
     expect(screen.queryByRole("button", { name: "Schlüssel jetzt wechseln" })).not.toBeInTheDocument();
@@ -1094,6 +1109,7 @@ describe("Settings — Contexts page", () => {
     render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
     fireEvent.click(screen.getByText("Kontexte"));
     await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+    openActions("c-server");
 
     fireEvent.click(await screen.findByRole("button", { name: "Schlüssel jetzt wechseln" }));
     // No recovery key field for a member who does not hold one.
@@ -1119,6 +1135,7 @@ describe("Settings — Contexts page", () => {
     render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
     fireEvent.click(screen.getByText("Kontexte"));
     await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+    openActions("c-server");
 
     fireEvent.click(await screen.findByRole("button", { name: "Schlüssel jetzt wechseln" }));
     fireEvent.change(screen.getByPlaceholderText("Passwort"), { target: { value: "owner-pw" } });
@@ -1138,6 +1155,7 @@ describe("Settings — Contexts page", () => {
     render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
     fireEvent.click(screen.getByText("Kontexte"));
     await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+    openActions("c-server");
 
     fireEvent.click(await screen.findByRole("button", { name: "Schlüssel jetzt wechseln" }));
     fireEvent.change(screen.getByPlaceholderText("Passwort"), { target: { value: "nope" } });
@@ -1154,6 +1172,7 @@ describe("Settings — Contexts page", () => {
     render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
     fireEvent.click(screen.getByText("Kontexte"));
     await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+    openActions("c-server");
 
     expect(screen.queryByRole("button", { name: "Tresor freigeben" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Schlüssel jetzt wechseln" })).not.toBeInTheDocument();
@@ -1171,6 +1190,7 @@ describe("Settings — Contexts page", () => {
     render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
     fireEvent.click(screen.getByText("Kontexte"));
     await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+    openActions("c-server");
 
     expect(screen.queryByRole("button", { name: "Schlüssel jetzt wechseln" })).not.toBeInTheDocument();
     // Sharing does not depend on a pending rotation.
@@ -1182,6 +1202,7 @@ describe("Settings — Contexts page", () => {
     render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
     fireEvent.click(screen.getByText("Kontexte"));
     await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+    openActions("c-server");
 
     expect(screen.queryByRole("button", { name: "Tresor freigeben" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Einladungs-Code eingeben" })).not.toBeInTheDocument();
@@ -1193,6 +1214,7 @@ describe("Settings — Contexts page", () => {
     render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
     fireEvent.click(screen.getByText("Kontexte"));
     await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+    openActions("c-server");
 
     fireEvent.click(screen.getByRole("button", { name: "Tresor freigeben" }));
     const input = screen.getByPlaceholderText("Einladungs-Link oder -Nummer");
@@ -1217,6 +1239,7 @@ describe("Settings — Contexts page", () => {
     render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
     fireEvent.click(screen.getByText("Kontexte"));
     await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+    openActions("c-server");
 
     fireEvent.click(screen.getByRole("button", { name: "Tresor freigeben" }));
     const input = screen.getByPlaceholderText("Einladungs-Link oder -Nummer");
@@ -1235,6 +1258,7 @@ describe("Settings — Contexts page", () => {
     render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
     fireEvent.click(screen.getByText("Kontexte"));
     await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+    openActions("c-server");
 
     fireEvent.click(screen.getByRole("button", { name: "Einladungs-Code eingeben" }));
     fireEvent.change(screen.getByPlaceholderText("Einladungs-Link oder -Nummer"), { target: { value: "nonsense" } });
@@ -1254,6 +1278,7 @@ describe("Settings — Contexts page", () => {
     render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
     fireEvent.click(screen.getByText("Kontexte"));
     await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+    openActions("c-server");
 
     fireEvent.click(screen.getByRole("button", { name: "Tresor freigeben" }));
     const input = screen.getByPlaceholderText("Einladungs-Link oder -Nummer");
@@ -1271,6 +1296,7 @@ describe("Settings — Contexts page", () => {
     render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
     fireEvent.click(screen.getByText("Kontexte"));
     await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+    openActions("c-server");
 
     fireEvent.click(screen.getByRole("button", { name: "Tresor freigeben" }));
     const input = screen.getByPlaceholderText("Einladungs-Link oder -Nummer");
@@ -1289,6 +1315,7 @@ describe("Settings — Contexts page", () => {
     render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
     fireEvent.click(screen.getByText("Kontexte"));
     await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+    openActions("c-server");
 
     fireEvent.click(screen.getByRole("button", { name: "Einladungs-Code eingeben" }));
     fireEvent.change(screen.getByPlaceholderText("Einladungs-Link oder -Nummer"), { target: { value: "https://s.example.com/invite/tok" } });
@@ -1312,6 +1339,7 @@ describe("Settings — Contexts page", () => {
     render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
     fireEvent.click(screen.getByText("Kontexte"));
     await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+    openActions("c-server");
 
     fireEvent.click(screen.getByRole("button", { name: "Einladungs-Code eingeben" }));
     fireEvent.change(screen.getByPlaceholderText("Einladungs-Link oder -Nummer"), { target: { value: "7" } });
@@ -1329,6 +1357,7 @@ describe("Settings — Contexts page", () => {
     render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
     fireEvent.click(screen.getByText("Kontexte"));
     await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+    openActions("c-server");
 
     fireEvent.click(screen.getByRole("button", { name: "Einladungs-Code eingeben" }));
     fireEvent.change(screen.getByPlaceholderText("Einladungs-Link oder -Nummer"), { target: { value: "7" } });
@@ -1347,8 +1376,9 @@ describe("Settings — Contexts page", () => {
     render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
     fireEvent.click(screen.getByText("Kontexte"));
     await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+    openActions("c-server");
 
-    fireEvent.click(screen.getByRole("button", { name: "Passwort ändern" }));
+    fireEvent.click(screen.getByRole("button", { name: "Tresor-Passwort ändern" }));
     fireEvent.change(screen.getByPlaceholderText("Aktuelles Passwort"), { target: { value: "old" } });
     fireEvent.change(screen.getByPlaceholderText("Neues Passwort"), { target: { value: "new123" } });
     fireEvent.change(screen.getByPlaceholderText("Neues Passwort bestätigen"), { target: { value: "new123" } });
@@ -1567,5 +1597,15 @@ describe("Settings — remaining behaviors", () => {
 
     await waitFor(() => expect(screen.queryByText("Verbinde…")).not.toBeInTheDocument());
     expect(mockContextsList).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("SecurityPage — passphrase wording", () => {
+  it("explains that lock, unlock and encryption share the one vault passphrase", async () => {
+    mockVaultStatus.mockResolvedValue({ exists: true, unlocked: true, biometric: false, conflict: false, recoveryHolder: true, rotationCode: false, recoveryMissing: false, sealOutdated: false });
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Sicherheit"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Passwort ändern" })).toBeInTheDocument());
+    expect(screen.getByText(/Sperren und Entsperren nutzen dasselbe Passwort/)).toBeInTheDocument();
   });
 });

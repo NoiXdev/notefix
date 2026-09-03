@@ -5,6 +5,8 @@ export interface ContextMenuItem {
   label: string;
   icon?: ReactNode;
   onClick?: () => void;
+  /** Shown but inert — e.g. "remove" on the active context. */
+  disabled?: boolean;
   submenu?: ContextMenuItem[];
 }
 
@@ -52,6 +54,7 @@ export default function ContextMenu({ x, y, items, swatches, onClose }: Props) {
 
   return (
     <div
+      role="menu"
       className="fixed z-50 w-max min-w-[11rem] sm:min-w-[7rem] max-w-72 py-1 rounded-md bg-gray-900 border border-gray-700 shadow-lg"
       style={{ left: Math.min(x, window.innerWidth - 180), top: Math.min(y, window.innerHeight - 140) }}
       onClick={e => e.stopPropagation()}
@@ -98,7 +101,7 @@ export default function ContextMenu({ x, y, items, swatches, onClose }: Props) {
             )}
           </div>
         ) : (
-          <button key={i} onClick={() => { item.onClick?.(); onClose(); }} className="w-full text-left px-3 py-2.5 sm:py-1.5 text-sm text-gray-200 hover:bg-gray-800 transition-colors flex items-center gap-2.5 whitespace-nowrap">
+          <button key={i} disabled={item.disabled} onClick={() => { if (item.disabled) return; item.onClick?.(); onClose(); }} className="w-full text-left px-3 py-2.5 sm:py-1.5 text-sm text-gray-200 hover:bg-gray-800 transition-colors flex items-center gap-2.5 whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent">
             {item.icon && <span className="w-4 flex justify-center text-gray-400 shrink-0">{item.icon}</span>}
             <span>{item.label}</span>
           </button>
