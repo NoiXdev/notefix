@@ -23,7 +23,7 @@ describe('VaultCodesDialog', () => {
     expect(screen.getByRole('button', { name: 'Kopieren — Mitglied 3' })).toBeInTheDocument();
   });
 
-  it('copies one entry\'s code and shows the confirmation only on that row', async () => {
+  it('copies one entry’s code and shows the confirmation only on that row', async () => {
     const writeText = vi.fn(() => Promise.resolve());
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
     render(<VaultCodesDialog title="T" hint="H" emptyText="Nichts mehr" entries={entries} onClose={vi.fn()} />);
