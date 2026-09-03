@@ -2082,8 +2082,8 @@ pub enum ConflictMode {
     /// inside a locked folder, which is merged instead. Folder locks are the
     /// user's standing instruction and are never changed here, and
     /// `protected = 0` under a locked ancestor is a state
-    /// `Store::set_note_protected` refuses outright: it would push plaintext
-    /// to the server and be silently re-sealed on the next edit.
+    /// [`set_note_protected`] refuses outright: it would push plaintext to
+    /// the server and be silently re-sealed on the next edit.
     Unprotect,
 }
 
@@ -2139,13 +2139,16 @@ pub fn open_conflict_sides(
 /// unconditional: a note inside a locked folder is MERGED instead (sealed,
 /// stamped, dirty) and counted in `changed` all the same. Unprotecting it
 /// would leave `protected = 0` below a locked ancestor, exactly the state
-/// [`Store::set_note_protected`]'s "note is protected by its folder" refusal
+/// [`set_note_protected`]'s "note is protected by its folder" refusal
 /// exists to prevent.
 ///
 /// Trashed protected notes are in the work list too (see
 /// [`Store::protected_note_ids`]): the device's own record is replaced right
 /// after this, so anything left sealed under the local DEK could never be
 /// opened again.
+///
+/// Refuses outright, before any note moves, when the ring's newest
+/// generation is behind the workspace's ([`guard_seal_generation`]).
 pub fn resolve_conflict(
     store: &Store,
     ring: &[(u32, Dek)],
@@ -2157,6 +2160,14 @@ pub fn resolve_conflict(
         .max_by_key(|(g, _)| *g)
         .map(|(g, d)| (*g, d))
         .ok_or_else(|| "vault: no workspace keys".to_string())?;
+    // `Merge` seals under `newest`, and so does `Unprotect` for a note under
+    // a locked folder — both go through the same choke point every other seal
+    // does. Without it a device whose cached entries stop at generation N-1
+    // while the workspace is already on N would move its notes onto the
+    // RETIRED key. The conflict exemption inside the guard does not fire
+    // here: this ring came from the verified workspace entries, so
+    // `ring_key_is_the_workspaces` says yes and the normal comparison applies.
+    guard_seal_generation(store, newest_dek, newest)?;
     let mut outcome = ConflictOutcome::default();
     if ring.iter().any(|(_, d)| d.expose() == local_dek.expose()) {
         return Ok(outcome); // one vault on both sides — nothing to move
@@ -2165,15 +2176,25 @@ pub fn resolve_conflict(
         let Some(stored) = store.load_note_content(&id).map_err(|e| e.to_string())? else {
             continue;
         };
-        if ring
-            .iter()
-            .any(|(_, d)| open_content(d, &id, &stored).is_ok())
-        {
-            continue; // already the workspace's
-        }
-        let Ok(plaintext) = open_content(local_dek, &id, &stored) else {
-            outcome.skipped += 1;
-            continue;
+        // The LOCAL key first: on a conflicted device most protected notes
+        // are the ones this resolution exists to move, so asking the ring
+        // first would run the whole ring's AEAD over every one of them before
+        // the key that actually opens it. Same three outcomes as asking the
+        // other way round — no two distinct keys open the same ciphertext,
+        // and a local key that IS in the ring already returned above.
+        let plaintext = match open_content(local_dek, &id, &stored) {
+            Ok(plaintext) => plaintext,
+            Err(_) => {
+                // Not this device's. Either a workspace generation opens it
+                // (already the workspace's — leave it) or nothing does.
+                if !ring
+                    .iter()
+                    .any(|(_, d)| open_content(d, &id, &stored).is_ok())
+                {
+                    outcome.skipped += 1;
+                }
+                continue;
+            }
         };
         // A locked ancestor overrides `Unprotect` — see the note on
         // [`ConflictMode::Unprotect`]. Asked per note rather than hoisted:
@@ -6885,6 +6906,71 @@ mod conflict_resolution_tests {
             }
         );
         assert!(s.load_dirty_notes().unwrap().is_empty());
+    }
+
+    /// The merge is a SEAL, so it obeys the same generation guard every other
+    /// seal does: a device whose cached entries stop at generation 2 while the
+    /// workspace has already rotated to 3 must not move its notes onto the
+    /// key that rotation retired. Refused before the first note.
+    #[test]
+    fn merging_with_a_ring_behind_the_workspace_is_refused_and_writes_nothing() {
+        let (s, _entries, ring, local_dek) = conflicted_store();
+        crate::migrate::set_meta_i64(&s.conn, "vault_generation", 3).unwrap();
+
+        let err = err_of(resolve_conflict(&s, &ring, &local_dek, ConflictMode::Merge));
+        assert!(
+            err.contains("key generation outdated"),
+            "unexpected error: {err}"
+        );
+
+        // Not one note moved, and nothing queued for the server.
+        let mut vault = VaultState::default();
+        vault.unlock(1, local_dek.clone());
+        for id in ["a", "b", "c"] {
+            assert!(s.note_protected(id).unwrap());
+            assert_eq!(s.note_key_gen(id).unwrap(), Some(1));
+            assert_eq!(
+                open_note_content(&s, &vault, id).unwrap(),
+                format!("<p>{id}</p>")
+            );
+        }
+        assert!(s.load_dirty_notes().unwrap().is_empty());
+
+        // Unprotecting is refused too — a note under a locked folder takes the
+        // merge path, so the same retired key would be in play.
+        assert!(err_of(resolve_conflict(
+            &s,
+            &ring,
+            &local_dek,
+            ConflictMode::Unprotect
+        ))
+        .contains("key generation outdated"));
+    }
+
+    /// A cache that never held a generation-1 entry for this caller (they
+    /// joined after a rotation, so their own wrap starts at 2) has nothing to
+    /// mirror into a local record. The placeholder keeps the row empty rather
+    /// than inventing one, and `vault_exists` stays true off the cache alone.
+    #[test]
+    fn finishing_without_a_generation_one_entry_leaves_an_empty_placeholder() {
+        let (s, mut entries, _ring, _local_dek) = conflicted_store();
+        entries.mine.retain(|e| e.generation != 1);
+        s.set_vault_entries(&entries.to_json()).unwrap();
+
+        finish_conflict_resolution(&s, &entries).unwrap();
+
+        assert_eq!(s.vault_record().unwrap(), None, "no record is invented");
+        assert!(
+            vault_exists(&s).unwrap(),
+            "the cached entries alone keep the vault present"
+        );
+        assert!(crate::migrate::get_meta_i64_opt(&s.conn, "vault_conflict")
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            crate::migrate::get_meta_i64_opt(&s.conn, "vault_migrated").unwrap(),
+            Some(1)
+        );
     }
 
     #[test]

@@ -224,7 +224,9 @@ pub fn is_enrolled(context_id: &str) -> bool {
 }
 
 /// Whether a refresh should write anything: only an enrolled context with a
-/// non-empty ring. Pulled out so the decision is testable without a keychain.
+/// non-empty ring. Pulled out so the decision is testable without a keychain
+/// — [`refresh_if_enrolled`] short-circuits on the ring BEFORE it asks the
+/// keychain, so the two conditions are stated once here and ordered there.
 fn should_refresh(enrolled: bool, ring: &[(u32, Dek)]) -> bool {
     enrolled && !ring.is_empty()
 }
@@ -233,7 +235,10 @@ fn should_refresh(enrolled: bool, ring: &[(u32, Dek)]) -> bool {
 /// keychain hiccup must never fail the unlock or rotation that caused it,
 /// and nothing here can leak key material (the error carries none).
 pub fn refresh_if_enrolled(context_id: &str, ring: &[(u32, Dek)]) {
-    if !should_refresh(is_enrolled(context_id), ring) {
+    // The cheap half of the decision first: an empty ring writes nothing
+    // either way, and `is_enrolled` is a keychain read. Called on every lock
+    // and every context switch, where the ring is exactly empty.
+    if ring.is_empty() || !should_refresh(is_enrolled(context_id), ring) {
         return;
     }
     if let Err(e) = store_ring(context_id, ring) {

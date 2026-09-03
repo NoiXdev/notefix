@@ -74,7 +74,10 @@ invite code to the server — only wraps.
 Two rules the whole feature rests on:
 
 - A device that holds **two vaults' keys at once** (meta `vault_conflict`)
-  re-seals nothing and merges nothing. Merging is a follow-up.
+  re-seals nothing on its own. The user resolves it from the Security page:
+  `vault_resolve_conflict` opens both vaults and either merges the device's
+  notes into the workspace vault (re-sealed under its newest generation) or
+  unprotects them — notes under a locked folder are merged either way.
 - A note whose generation the ring lacks is shown as a **read-only locked
   placeholder**, never as a blank editable document — the first keystroke
   would re-seal over ciphertext nobody could read back.

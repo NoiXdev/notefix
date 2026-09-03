@@ -760,9 +760,15 @@ pub async fn server_auth_complete(
 //
 // `swap_store_to` below is the one place VaultState is touched before the
 // Store — but it takes and DROPS that guard in its own block first, so the two
-// are never held simultaneously and the convention still holds. Everything
-// else that needs both simply scopes the first guard so it is released before
-// the second is taken.
+// are never held simultaneously and the convention still holds. The sync
+// epoch is bumped inside that same block, next to the ring clear: `SyncEpoch`
+// is an atomic, not a mutex, so nothing is nested — and a cycle can no longer
+// observe the window between the two, which used to be a cleared ring plus
+// the OLD epoch (a sync that had already passed its epoch check writing into
+// a context whose keys were gone).
+//
+// Everything else that needs both simply scopes the first guard so it is
+// released before the second is taken.
 fn swap_store_to(
     app: &AppHandle,
     store: &State<'_, Mutex<Store>>,
@@ -778,13 +784,15 @@ fn swap_store_to(
         let vs = app.state::<Mutex<crate::vault::state::VaultState>>();
         let mut guard = vs.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.lock();
+        // Invalidate every in-flight sync cycle in the same breath as the
+        // ring clear, and BEFORE the store changes under it: a cycle that
+        // already holds the store lock sees the new epoch the moment it
+        // re-checks, one still on the network sees it when it comes back, and
+        // none can catch a cleared ring while its epoch check still passes.
+        // `SyncEpoch` is an atomic, so this takes no second lock — the
+        // Store -> VaultState order is untouched.
+        app.state::<ops::SyncEpoch>().bump();
     }
-    // Invalidate every in-flight sync cycle BEFORE the store changes under
-    // it, and while this thread holds nothing but the (atomic) epoch — a
-    // cycle that already holds the store lock will see the new epoch the
-    // moment it re-checks, and one that is still on the network will see it
-    // when it comes back.
-    app.state::<ops::SyncEpoch>().bump();
     let mut s = store.lock().map_err(|e| e.to_string())?;
     let opened = Store::open(path).map_err(|e| e.to_string())?;
     s.conn = opened.conn;
@@ -2361,12 +2369,21 @@ pub async fn vault_recovery_followup(app: AppHandle, recovery_key: String) -> Re
     Ok(())
 }
 
-/// The device's own secret for a conflict resolution — `kind` is
-/// "passphrase" or "recovery".
+/// Which of the device's own secrets opens its local record. A closed set:
+/// anything else is rejected while deserializing the command's arguments,
+/// rather than silently falling back to one of them.
+#[derive(serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum LocalSecretKind {
+    Passphrase,
+    Recovery,
+}
+
+/// The device's own secret for a conflict resolution.
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalSecretArg {
-    pub kind: String,
+    pub kind: LocalSecretKind,
     pub value: String,
 }
 
@@ -2376,7 +2393,12 @@ pub struct LocalSecretArg {
 /// unprotected), then makes this a normal workspace device. Both secrets are
 /// checked before anything is written; the store writes re-check the sync
 /// epoch like every other vault command.
-#[tauri::command]
+///
+/// `async` only to get off the main thread: the body stays synchronous (no
+/// `.await`, so no guard is ever held across one), but two Argon2
+/// derivations plus a re-seal of every protected note would freeze the
+/// WebView if they ran on it.
+#[tauri::command(async)]
 pub fn vault_resolve_conflict(
     app: AppHandle,
     workspace_passphrase: String,
@@ -2400,9 +2422,9 @@ pub fn vault_resolve_conflict(
         let store = store_state.lock().map_err(|e| e.to_string())?;
         ops::load_conflict_inputs(&store)?
     };
-    let secret = match local_secret.kind.as_str() {
-        "recovery" => ops::VaultSecret::Recovery(&local_secret.value),
-        _ => ops::VaultSecret::Passphrase(&local_secret.value),
+    let secret = match local_secret.kind {
+        LocalSecretKind::Recovery => ops::VaultSecret::Recovery(&local_secret.value),
+        LocalSecretKind::Passphrase => ops::VaultSecret::Passphrase(&local_secret.value),
     };
     // Argon2 for both sides — no lock is held here.
     let (ring, local_dek) = ops::open_conflict_sides(&inputs, &workspace_passphrase, &secret)?;
