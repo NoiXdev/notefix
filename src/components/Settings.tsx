@@ -1134,6 +1134,20 @@ function ContextsPage() {
     canInvite(c) && c.vaultExists && !vault.status.unlocked;
 
   /**
+   * Maps a failed vault-mint attempt (share or re-code — both take the DEK
+   * out of the live ring and can only fail the same three ways) to the
+   * message to show next to the row. A locked vault and a stale context are
+   * the two failures with an obvious next step, so neither goes through the
+   * raw-text interpolation.
+   */
+  const shareErrorFor = (e: unknown) => {
+    const msg = e instanceof Error ? e.message : String(e ?? "");
+    return msg.includes("vault locked") ? t("vault.lockedHint")
+      : msg.includes("context changed during the request") ? t("common.contextChanged")
+      : t("vault.invite.shareFailed", { error: msg });
+  };
+
+  /**
    * Resolve whatever was pasted into an invitation id, then attach the key.
    * The two halves fail for unrelated reasons — a link nobody can resolve on
    * the one hand, and a closed invitation, a wrap already attached, a rotated
@@ -1155,14 +1169,7 @@ function ContextsPage() {
       try {
         setInviteCode(await api.contexts.vaultInviteShare(id));
       } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e ?? "");
-        // A locked vault is the one failure with an obvious next step, so it
-        // never goes through the raw-text interpolation.
-        setShareError(
-          msg.includes("vault locked") ? t("vault.lockedHint")
-          : msg.includes("context changed during the request") ? t("common.contextChanged")
-          : t("vault.invite.shareFailed", { error: msg }),
-        );
+        setShareError(shareErrorFor(e));
       }
     } finally {
       setSharing(false);
@@ -1172,7 +1179,7 @@ function ContextsPage() {
   /**
    * Mints a fresh code for every open invitation whose wrap a key rotation
    * retired — the same failure mapping as `shareVault`, since both mint a
-   * code from the live ring and can only fail the same two ways.
+   * code from the live ring and can only fail the same three ways.
    */
   const recode = async () => {
     setShareError(null);
@@ -1181,12 +1188,7 @@ function ContextsPage() {
       setInviteCodes(await api.vault.inviteRecode());
       setCtx(await api.contexts.list());
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e ?? "");
-      setShareError(
-        msg.includes("vault locked") ? t("vault.lockedHint")
-        : msg.includes("context changed during the request") ? t("common.contextChanged")
-        : t("vault.invite.shareFailed", { error: msg }),
-      );
+      setShareError(shareErrorFor(e));
     } finally {
       setSharing(false);
     }

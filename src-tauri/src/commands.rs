@@ -2063,6 +2063,8 @@ pub struct InviteCode {
 /// right away.
 #[tauri::command]
 pub async fn vault_invite_recode(app: AppHandle) -> Result<Vec<InviteCode>, String> {
+    // Captured before the target's registry read — see `run_sync_cycle`.
+    let epoch = app.state::<ops::SyncEpoch>().current();
     let (ctx, token) = vault_invite_target(&app)?;
     let store_state = app.state::<Mutex<Store>>();
     let vault_state = app.state::<Mutex<crate::vault::state::VaultState>>();
@@ -2097,6 +2099,7 @@ pub async fn vault_invite_recode(app: AppHandle) -> Result<Vec<InviteCode>, Stri
     }
     if !codes.is_empty() {
         let store = store_state.lock().map_err(|e| e.to_string())?;
+        check_epoch(&app, epoch)?;
         if let Some(json) =
             crate::migrate::get_meta(&store.conn, "vault_invites").map_err(|e| e.to_string())?
         {

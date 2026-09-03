@@ -1114,12 +1114,19 @@ describe("Settings — Contexts page", () => {
     expect(screen.queryByRole("button", { name: "Schlüssel jetzt wechseln" })).not.toBeInTheDocument();
   });
 
-  it("rotates the key and shows one one-time code per remaining member", async () => {
+  it("rotates the key and shows one one-time code per remaining member, named or not", async () => {
     mockVaultStatus.mockResolvedValue({
       exists: true, unlocked: true, biometric: false, conflict: false,
       recoveryHolder: false, rotationCode: false, recoveryMissing: false,
     });
     mockContextsList.mockResolvedValue(serverActive);
+    // One member with a name (label = the name) and one without (label falls
+    // back to "Mitglied {{id}}") — both branches of `VaultRotateDialog`'s
+    // `onSuccess` -> `VaultCodesDialog` label mapping in one render.
+    mockVaultRotate.mockResolvedValueOnce([
+      { userId: 7, name: "Anna", code: "AAAAA-BBBBB" },
+      { userId: 9, name: "", code: "CCCCC-DDDDD" },
+    ]);
     render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
     fireEvent.click(screen.getByText("Kontexte"));
     await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
@@ -1134,7 +1141,9 @@ describe("Settings — Contexts page", () => {
     await waitFor(() => expect(mockVaultRotate).toHaveBeenCalledWith("owner-pw", undefined));
     expect(await screen.findByText("AAAAA-BBBBB")).toBeInTheDocument();
     expect(screen.getByText("CCCCC-DDDDD")).toBeInTheDocument();
-    expect(screen.getByText("Mitglied 2")).toBeInTheDocument();
+    expect(screen.getByText("Anna")).toBeInTheDocument();
+    expect(screen.getByText("Mitglied 9")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Kopieren — Anna" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Fertig" }));
     await waitFor(() => expect(screen.queryByText("AAAAA-BBBBB")).not.toBeInTheDocument());
