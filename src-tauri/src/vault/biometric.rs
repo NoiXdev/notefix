@@ -223,6 +223,24 @@ pub fn is_enrolled(context_id: &str) -> bool {
     }
 }
 
+/// Whether a refresh should write anything: only an enrolled context with a
+/// non-empty ring. Pulled out so the decision is testable without a keychain.
+fn should_refresh(enrolled: bool, ring: &[(u32, Dek)]) -> bool {
+    enrolled && !ring.is_empty()
+}
+
+/// Rewrites the keychain ring after the live ring changed — silently: a
+/// keychain hiccup must never fail the unlock or rotation that caused it,
+/// and nothing here can leak key material (the error carries none).
+pub fn refresh_if_enrolled(context_id: &str, ring: &[(u32, Dek)]) {
+    if !should_refresh(is_enrolled(context_id), ring) {
+        return;
+    }
+    if let Err(e) = store_ring(context_id, ring) {
+        eprintln!("biometric: keychain ring refresh failed ({e})");
+    }
+}
+
 // --- platform-specific: availability + the Touch ID prompt ------------------
 
 #[cfg(target_os = "macos")]
@@ -431,6 +449,14 @@ mod tests {
     fn map_enrolled_result_true_on_found_false_on_error() {
         assert!(map_enrolled_result(Ok("dGVzdA==".to_string())));
         assert!(!map_enrolled_result(Err(keyring::Error::NoEntry)));
+    }
+
+    #[test]
+    fn refresh_only_touches_an_enrolled_context_with_a_ring() {
+        let ring = vec![(1u32, Dek::random())];
+        assert!(should_refresh(true, &ring));
+        assert!(!should_refresh(false, &ring));
+        assert!(!should_refresh(true, &[]));
     }
 
     // On any non-macOS target the biometric prompt is unsupported. (This does

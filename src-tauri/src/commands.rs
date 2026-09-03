@@ -1410,16 +1410,46 @@ fn active_context_id(reg: &State<'_, Mutex<crate::profiles::Registry>>) -> Resul
         .ok_or_else(|| "no active context".to_string())
 }
 
-/// Installs every unlocked `(generation, DEK)` into the ring.
+/// Installs `opened` into the ring and, when a context id is given and Touch
+/// ID is enrolled for it, rewrites the keychain item with the ring's full
+/// snapshot — so a passphrase unlock, an accepted invitation, a redeemed
+/// rotation code or a rotation keeps Touch ID able to open everything.
+/// Pass `None` for changes that add no DEK (a passphrase change).
 fn install_generations(
     vault: &VaultStateHandle<'_>,
     opened: &[(u32, crate::vault::aead::Dek)],
+    context_id: Option<&str>,
 ) -> Result<(), String> {
-    let mut v = vault.lock().map_err(|e| e.to_string())?;
-    for (generation, dek) in opened {
-        v.unlock(*generation, dek.clone());
+    install_generations_if(vault, opened, context_id, || true).map(|_| ())
+}
+
+/// Like [`install_generations`], but `precondition` is evaluated INSIDE the
+/// same VaultState-locked critical section as the install, and the install
+/// only happens when it holds. Without this, a check-then-install done as two
+/// separate locks (check, release, install) leaves a window where something
+/// else taking the VaultState lock in between — e.g. `swap_store_to` clearing
+/// the ring for an incoming context — can slip in, and the install then lands
+/// in the WRONG context's ring. Returns whether it installed.
+fn install_generations_if(
+    vault: &VaultStateHandle<'_>,
+    opened: &[(u32, crate::vault::aead::Dek)],
+    context_id: Option<&str>,
+    precondition: impl FnOnce() -> bool,
+) -> Result<bool, String> {
+    let snapshot = {
+        let mut v = vault.lock().map_err(|e| e.to_string())?;
+        if !precondition() {
+            return Ok(false);
+        }
+        for (generation, dek) in opened {
+            v.unlock(*generation, dek.clone());
+        }
+        context_id.map(|_| v.snapshot())
+    };
+    if let (Some(id), Some(ring)) = (context_id, snapshot) {
+        crate::vault::biometric::refresh_if_enrolled(id, &ring);
     }
-    Ok(())
+    Ok(true)
 }
 
 /// Where this context's vault keys live on the server, if they do: a bound
@@ -1698,12 +1728,14 @@ pub async fn vault_setup(app: AppHandle, passphrase: String) -> Result<Vec<Strin
 ///
 /// The store lock is held only for the reads and for the write-back — never
 /// across the KDF derivations, which would stall every other store consumer.
-/// Lock order stays Store -> VaultState.
+/// Lock order stays Registry -> Store -> VaultState.
 fn unlock_vault_with(
     store: &State<'_, Mutex<Store>>,
     vault: &VaultStateHandle<'_>,
+    reg: &State<'_, Mutex<crate::profiles::Registry>>,
     secret: ops::VaultSecret<'_>,
 ) -> Result<(), String> {
+    let context_id = active_context_id(reg)?;
     let inputs = {
         let store = store.lock().map_err(|e| e.to_string())?;
         ops::load_vault_unlock_inputs(&store)?
@@ -1716,7 +1748,7 @@ fn unlock_vault_with(
             .ok_or_else(|| "vault: not set up".to_string())?;
         let dek = secret.open(&record)?;
         let backfill_dek = dek.clone();
-        vault.lock().map_err(|e| e.to_string())?.unlock(1, dek);
+        install_generations(vault, &[(1, dek)], Some(&context_id))?;
         if let Ok(store) = store.lock() {
             ops::ensure_dek_check(&store, &record, &backfill_dek);
             // Store -> VaultState, per the lock-order convention near `swap_store_to`.
@@ -1728,7 +1760,7 @@ fn unlock_vault_with(
     };
 
     let plan = ops::plan_entry_unlock(inputs.record.as_ref(), &entries, &secret)?;
-    install_generations(vault, &plan.install)?;
+    install_generations(vault, &plan.install, Some(&context_id))?;
     if let Ok(store) = store.lock() {
         ops::apply_entry_unlock(&store, inputs.record.as_ref(), &entries, &plan, &secret)?;
         // Store -> VaultState, per the lock-order convention near `swap_store_to`.
@@ -1745,9 +1777,15 @@ fn unlock_vault_with(
 pub fn vault_unlock(
     store: State<'_, Mutex<Store>>,
     vault: VaultStateHandle<'_>,
+    reg: State<'_, Mutex<crate::profiles::Registry>>,
     passphrase: String,
 ) -> Result<(), String> {
-    unlock_vault_with(&store, &vault, ops::VaultSecret::Passphrase(&passphrase))
+    unlock_vault_with(
+        &store,
+        &vault,
+        &reg,
+        ops::VaultSecret::Passphrase(&passphrase),
+    )
 }
 
 /// [`vault_unlock`] via the one-time recovery key — the workspace's recovery
@@ -1756,9 +1794,10 @@ pub fn vault_unlock(
 pub fn vault_unlock_recovery(
     store: State<'_, Mutex<Store>>,
     vault: VaultStateHandle<'_>,
+    reg: State<'_, Mutex<crate::profiles::Registry>>,
     recovery: String,
 ) -> Result<(), String> {
-    unlock_vault_with(&store, &vault, ops::VaultSecret::Recovery(&recovery))
+    unlock_vault_with(&store, &vault, &reg, ops::VaultSecret::Recovery(&recovery))
 }
 
 #[tauri::command]
@@ -1870,7 +1909,7 @@ pub async fn vault_change_passphrase(
             .set_vault_entries(&rewrap.entries.to_json())
             .map_err(|e| e.to_string())?;
     }
-    install_generations(&vault_state, &rewrap.deks)
+    install_generations(&vault_state, &rewrap.deks, None)
 }
 
 /// The active server context's vault endpoint, or an error explaining why the
@@ -1987,10 +2026,7 @@ pub async fn vault_invite_accept(
     }
 
     let vault_state = app.state::<Mutex<crate::vault::state::VaultState>>();
-    vault_state
-        .lock()
-        .map_err(|e| e.to_string())?
-        .unlock(wrap.generation, dek);
+    install_generations(&vault_state, &[(wrap.generation, dek)], Some(&ctx.id))?;
     if let Ok(store) = store_state.lock() {
         // Store -> VaultState, per the lock-order convention near `swap_store_to`.
         if let Ok(v) = vault_state.lock() {
@@ -2181,15 +2217,23 @@ pub async fn vault_rotate(
     } else {
         // The ring belongs to the ACTIVE context; installing this workspace's
         // new DEK into another context's ring would let it seal that
-        // context's notes under a foreign key — so re-check under the ring's
-        // own lock as well.
-        let mut vault = vault_state.lock().map_err(|e| e.to_string())?;
-        if app.state::<ops::SyncEpoch>().changed_since(epoch) {
+        // context's notes under a foreign key — so the epoch is re-checked
+        // and the install happens INSIDE THE SAME VaultState lock
+        // (`install_generations_if`). Checking under one lock and installing
+        // under a second, later one would leave a window where a
+        // `swap_store_to` clears the ring for the incoming context between
+        // the two, and the install would then land in that OTHER context's
+        // ring.
+        let installed = install_generations_if(
+            &vault_state,
+            &[(new_generation, new_dek)],
+            Some(&ctx.id),
+            || !app.state::<ops::SyncEpoch>().changed_since(epoch),
+        )?;
+        if !installed {
             eprintln!(
                 "vault rotation: the active context changed before the new key was installed"
             );
-        } else {
-            vault.unlock(new_generation, new_dek);
         }
     }
     broadcast_context_changed(&app);
@@ -2239,6 +2283,7 @@ pub async fn vault_rotation_redeem(
     };
     ops::verify_newest_passphrase(&entries, &passphrase)?;
 
+    let mut redeemed: Vec<(u32, crate::vault::aead::Dek)> = Vec::new();
     for (generation, dek, entry) in ops::rotation_redeem_entries(&entries, &code, &passphrase)? {
         crate::sync::vault_put_my_key(&ctx.server_url, &token, &ctx.workspace_id, &entry)
             .await
@@ -2250,10 +2295,19 @@ pub async fn vault_rotation_redeem(
             // clears `vault_conflict`; see `ops::apply_rotation_redeem`.
             ops::apply_rotation_redeem(&store, entry)?;
         }
-        vault_state
-            .lock()
-            .map_err(|e| e.to_string())?
-            .unlock(generation, dek);
+        redeemed.push((generation, dek));
+    }
+    // Same atomic check-then-install as `vault_rotate`: the epoch is
+    // re-checked INSIDE the VaultState lock the install itself takes, so a
+    // context swap cannot land between the check and the install and file
+    // these DEKs under the wrong context's ring.
+    let installed = install_generations_if(&vault_state, &redeemed, Some(&ctx.id), || {
+        !app.state::<ops::SyncEpoch>().changed_since(epoch)
+    })?;
+    if !installed {
+        eprintln!(
+            "vault rotation redeem: the active context changed before the new keys were installed"
+        );
     }
     broadcast_context_changed(&app);
     Ok(())
