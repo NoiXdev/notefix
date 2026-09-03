@@ -25,6 +25,7 @@ import VaultRotateDialog from "./VaultRotateDialog";
 import VaultCodesDialog from "./VaultCodesDialog";
 import VaultRotationRedeemDialog from "./VaultRotationRedeemDialog";
 import VaultConflictDialog from "./VaultConflictDialog";
+import VaultRecoveryKeyDialog from "./VaultRecoveryKeyDialog";
 import WhatsNew from "./WhatsNew";
 import { runSystemChecks } from "../systemChecks";
 import { OSS_LIBS } from "../licenses";
@@ -267,10 +268,20 @@ function SecurityPage({ settings, onSetSetting }: {
   const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null);
   const [showRotationRedeem, setShowRotationRedeem] = useState(false);
   const [showConflict, setShowConflict] = useState(false);
+  const [recoveryGroups, setRecoveryGroups] = useState<string[] | null>(null);
 
   useEffect(() => {
     api.vault.biometricAvailable().then(setBiometricAvailable);
   }, []);
+
+  const createRecovery = async () => {
+    try {
+      setRecoveryGroups(await vault.recoveryCreate());
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e ?? "");
+      setRecoveryNotice(t("vault.recovery.failed", { error: msg }));
+    }
+  };
 
   // The vault this page manages is always the ACTIVE context's — name it
   // explicitly, since every other context's vault now lives under Contexts.
@@ -387,6 +398,17 @@ function SecurityPage({ settings, onSetSetting }: {
           ) : (
             <span className="text-xs">{t("vault.lockedHint")}</span>
           )}
+        </div>
+      )}
+
+      {/* This owner holds no recovery key of their own yet — offer to mint
+          one, wrapping every ring generation the vault currently holds. */}
+      {vault.status.recoveryEligible && (
+        <div role="status" className="mb-6 rounded border px-3 py-2 text-sm flex flex-wrap items-center gap-3" style={{ borderColor: "var(--line-muted)", background: "var(--paper-raised)" }}>
+          <span>{t("vault.recovery.none")}</span>
+          <button onClick={() => void createRecovery()} className="px-3 py-1 rounded text-xs font-medium border" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>
+            {t("vault.recovery.create")}
+          </button>
         </div>
       )}
       {recoveryNotice && (
@@ -532,6 +554,9 @@ function SecurityPage({ settings, onSetSetting }: {
           }}
           onCancel={() => setShowRecoveryFollowup(false)}
         />
+      )}
+      {recoveryGroups && (
+        <VaultRecoveryKeyDialog groups={recoveryGroups} onClose={() => setRecoveryGroups(null)} />
       )}
     </div>
   );

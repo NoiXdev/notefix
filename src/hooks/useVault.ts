@@ -3,7 +3,7 @@ import { api } from '../api';
 import type { VaultStatus } from '../types';
 
 export function useVault() {
-  const [status, setStatus] = useState<VaultStatus>({ exists: false, unlocked: false, biometric: false, conflict: false, recoveryHolder: true, rotationCode: false, recoveryMissing: false, sealOutdated: false });
+  const [status, setStatus] = useState<VaultStatus>({ exists: false, unlocked: false, biometric: false, conflict: false, recoveryHolder: true, rotationCode: false, recoveryMissing: false, sealOutdated: false, recoveryEligible: false });
 
   const refresh = useCallback(async () => {
     try {
@@ -86,6 +86,13 @@ export function useVault() {
     [refresh],
   );
 
+  /** Owner-only: create this owner's own recovery key. Returns its groups, shown exactly once. */
+  const recoveryCreate = useCallback(async () => {
+    const groups = await api.vault.recoveryCreate();
+    await refresh();
+    return groups;
+  }, [refresh]);
+
   /** Resolve a local-vs-workspace vault conflict (both secrets verified backend-side). */
   const resolveConflict = useCallback(
     async (workspacePassphrase: string, localSecret: { kind: 'passphrase' | 'recovery'; value: string }, mode: 'merge' | 'unprotect') => {
@@ -96,5 +103,5 @@ export function useVault() {
     [refresh],
   );
 
-  return { status, refresh, setup, unlock, unlockRecovery, unlockBiometric, lock, changePassphrase, redeemRotation, recoveryFollowup, resolveConflict };
+  return { status, refresh, setup, unlock, unlockRecovery, unlockBiometric, lock, changePassphrase, redeemRotation, recoveryFollowup, recoveryCreate, resolveConflict };
 }

@@ -1533,6 +1533,12 @@ pub fn vault_status(
             flags.conflict,
             flags.ring_is_workspace,
         ),
+        recovery_eligible: ops::recovery_eligible(
+            is_server,
+            &flags.role,
+            flags.recovery_holder,
+            unlocked,
+        ),
         // Biometric unlock is offered only when the device can evaluate Touch
         // ID (`is_available`) AND the user has enrolled a wrapped DEK
         // (`is_enrolled`). `is_enrolled` reads the keychain without prompting.
@@ -2435,6 +2441,54 @@ pub async fn vault_recovery_followup(app: AppHandle, recovery_key: String) -> Re
     }
     broadcast_context_changed(&app);
     Ok(())
+}
+
+/// Creates this owner's own recovery key for the workspace vault: wraps every
+/// generation in the ring under a fresh key, uploads the wraps (one per
+/// generation; a 409 means it already holds that one), caches them, and
+/// returns the key's dash-separated groups exactly once.
+#[tauri::command]
+pub async fn vault_recovery_create(app: AppHandle) -> Result<Vec<String>, String> {
+    // Captured before the target's registry read — see `run_sync_cycle`.
+    let epoch = app.state::<ops::SyncEpoch>().current();
+    let (ctx, token) = vault_rotation_target(&app)?;
+    let store_state = app.state::<Mutex<Store>>();
+    let vault_state = app.state::<Mutex<crate::vault::state::VaultState>>();
+    let deks: Vec<(u32, crate::vault::aead::Dek)> = {
+        let v = vault_state.lock().map_err(|e| e.to_string())?;
+        if !v.is_unlocked() {
+            return Err("vault locked".to_string());
+        }
+        v.snapshot()
+    };
+    {
+        let store = store_state.lock().map_err(|e| e.to_string())?;
+        let flags = ops::vault_status_flags(&store, true, None)?;
+        if !ops::recovery_eligible(true, &flags.role, flags.recovery_holder, true) {
+            return Err("vault: only an owner without a recovery key can create one".to_string());
+        }
+    }
+    let key = crate::vault::recovery::RecoveryKey::generate();
+    let payloads = ops::recovery_create_payloads(&deks, key.as_str())?;
+    for (generation, payload) in &payloads {
+        crate::sync::vault_post_recovery(
+            &ctx.server_url,
+            &token,
+            &ctx.workspace_id,
+            *generation,
+            payload,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        let store = store_state.lock().map_err(|e| e.to_string())?;
+        check_epoch(&app, epoch)?;
+        let cached = ops::cached_vault_entries(&store)?.unwrap_or_default();
+        store
+            .set_vault_entries(&ops::merge_recovery_entry(&cached, *generation, payload)?.to_json())
+            .map_err(|e| e.to_string())?;
+    }
+    broadcast_context_changed(&app);
+    Ok(key.as_str().split('-').map(String::from).collect())
 }
 
 /// Which of the device's own secrets opens its local record. A closed set:

@@ -601,6 +601,15 @@ describe('api.vault', () => {
     );
   });
 
+  it('recoveryCreate() calls vault_recovery_create with no args', async () => {
+    await expectInvoke(
+      () => api.vault.recoveryCreate(),
+      'vault_recovery_create',
+      undefined,
+      ['AAAAA', 'BBBBB', 'CCCCC'],
+    );
+  });
+
   it('vault.resolveConflict passes both secrets and the mode to vault_resolve_conflict', async () => {
     await expectInvoke(
       () => api.vault.resolveConflict('ws', { kind: 'recovery', value: 'KEY' }, 'unprotect'),

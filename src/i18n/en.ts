@@ -643,6 +643,11 @@ export const en = {
       submit: 'Add recovery key',
       added: 'Recovery key updated',
       failed: 'Could not add the recovery key: {{error}}',
+      none: 'You do not have a recovery key for this workspace yet.',
+      create: 'Create key',
+      createdTitle: 'Your recovery key',
+      savedCheckbox: 'I have stored the key in a safe place',
+      savedIt: 'I have saved the key',
     },
     conflict: {
       hint: 'This workspace already had a vault with a different key. Notes you protected on this device before joining stay sealed under this device\u2019s own key.',

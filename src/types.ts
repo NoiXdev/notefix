@@ -92,6 +92,12 @@ export interface VaultStatus {
    * to be rejected would lose the edit.
    */
   sealOutdated: boolean;
+  /**
+   * Whether the Security page offers "create a recovery key": a server
+   * workspace, this user is its owner, they hold no recovery key of their own
+   * yet, and the vault is unlocked (the wraps are made from the live keys).
+   */
+  recoveryEligible: boolean;
 }
 
 /**

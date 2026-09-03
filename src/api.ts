@@ -142,6 +142,11 @@ export const api = {
     /** Creator-only: add the recovery wrap for a generation someone else rotated. */
     recoveryFollowup: (recoveryKey: string): Promise<void> =>
       invoke("vault_recovery_followup", { recoveryKey }),
+    /**
+     * Owner-only: create this owner's own recovery key for the workspace
+     * vault. Returns the key's dash-separated groups exactly once.
+     */
+    recoveryCreate: (): Promise<string[]> => invoke("vault_recovery_create"),
     /** Resolve a local-vs-workspace vault conflict; both secrets are verified before anything is written. */
     resolveConflict: (
       workspacePassphrase: string,

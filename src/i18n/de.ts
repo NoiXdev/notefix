@@ -643,6 +643,11 @@ export const de = {
       submit: 'Wiederherstellungsschlüssel ergänzen',
       added: 'Wiederherstellungsschlüssel aktualisiert',
       failed: 'Wiederherstellungsschlüssel konnte nicht ergänzt werden: {{error}}',
+      none: 'Du hast noch keinen Wiederherstellungs-Schlüssel für diesen Arbeitsbereich.',
+      create: 'Schlüssel erzeugen',
+      createdTitle: 'Dein Wiederherstellungs-Schlüssel',
+      savedCheckbox: 'Ich habe den Schlüssel an einem sicheren Ort gespeichert',
+      savedIt: 'Ich habe den Schlüssel gesichert',
     },
     conflict: {
       hint: 'Dieser Arbeitsbereich hatte bereits einen Tresor mit einem anderen Schlüssel. Notizen, die du auf diesem Gerät vor dem Beitritt geschützt hast, bleiben mit dem Schlüssel dieses Geräts verschlossen.',

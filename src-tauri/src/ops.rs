@@ -151,6 +151,10 @@ pub struct VaultStatus {
     /// The UI shows protected notes read-only while this is true rather than
     /// letting the user type into a note whose save cannot land.
     pub seal_outdated: bool,
+    /// Whether the Security page offers "create a recovery key": this caller
+    /// is a server-workspace owner who holds none yet and the vault is
+    /// unlocked — see [`recovery_eligible`].
+    pub recovery_eligible: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -2412,6 +2416,18 @@ fn recovery_payload_for(dek: &Dek, recovery_key: &str) -> Result<RecoveryPayload
     })
 }
 
+/// One recovery wrap per ring generation under a freshly generated recovery
+/// key — the body of "create my own recovery key". Nothing is verified
+/// against the cache: this owner holds no recovery entries yet.
+pub fn recovery_create_payloads(
+    deks: &[(u32, Dek)],
+    recovery_key: &str,
+) -> Result<Vec<(u32, RecoveryPayload)>, String> {
+    deks.iter()
+        .map(|(g, dek)| recovery_payload_for(dek, recovery_key).map(|p| (*g, p)))
+        .collect()
+}
+
 /// Generations the workspace wrapped for this caller under a one-time
 /// rotation code and that they hold no own wrap for yet — ascending. Backs
 /// `vault_status.rotation_code` and drives [`rotation_redeem_entries`].
@@ -2676,6 +2692,18 @@ pub fn vault_recovery_holder(
         || record.is_some_and(|r| !r.dek_wrapped_recovery.is_empty())
 }
 
+/// Whether the Security page offers "create a recovery key": a server
+/// context, an owner, no recovery set of their own yet, and an unlocked ring
+/// (the wraps are made from the live DEKs).
+pub fn recovery_eligible(
+    is_server_context: bool,
+    role: &str,
+    recovery_holder: bool,
+    unlocked: bool,
+) -> bool {
+    is_server_context && role == "owner" && !recovery_holder && unlocked
+}
+
 /// The store-derived halves of `vault_status`, read under one lock: whether a
 /// vault exists for this context, whether the workspace migration hit a
 /// conflict, and whether the recovery paths apply to this user.
@@ -2699,6 +2727,10 @@ pub struct VaultStatusFlags {
     /// newest generation. `false` for a locked vault. Only meaningful
     /// alongside `conflict`; see [`seal_outdated`].
     pub ring_is_workspace: bool,
+    /// This user's role in the workspace as of the last pull (meta
+    /// `workspace_role`); empty for a local context or before the first pull.
+    /// Feeds [`recovery_eligible`], which only an "owner" ever satisfies.
+    pub role: String,
 }
 
 /// `ring` is the ring's newest `(generation, DEK)`, or `None` while the vault
@@ -2742,6 +2774,9 @@ pub fn vault_status_flags(
             && entries.as_ref().is_some_and(|e| {
                 !e.recovery.is_empty() && !generations_missing_recovery(e).is_empty()
             }),
+        role: crate::migrate::get_meta(&store.conn, "workspace_role")
+            .map_err(|e| e.to_string())?
+            .unwrap_or_default(),
     })
 }
 
@@ -8060,6 +8095,36 @@ mod vault_rotation_tests {
             vec![1, 2]
         );
         assert_eq!(opened[1].1.expose(), d2.expose());
+    }
+
+    #[test]
+    fn recovery_create_payloads_cover_every_generation_and_open_with_the_key() {
+        let (d1, d2) = (Dek::random(), Dek::random());
+        let key = crate::vault::recovery::RecoveryKey::generate();
+        let payloads =
+            recovery_create_payloads(&[(1, d1.clone()), (2, d2.clone())], key.as_str()).unwrap();
+        assert_eq!(
+            payloads.iter().map(|(g, _)| *g).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        // Merged the way the command caches them, they open with the key.
+        let mut entries = VaultEntries::default();
+        for (g, p) in &payloads {
+            entries = merge_recovery_entry(&entries, *g, p).unwrap();
+        }
+        let mut opened = unlock_entries_with_recovery(&entries, key.as_str()).unwrap();
+        opened.sort_by_key(|(g, _)| *g);
+        assert_eq!(opened[0].1.expose(), d1.expose());
+        assert_eq!(opened[1].1.expose(), d2.expose());
+    }
+
+    #[test]
+    fn recovery_eligible_needs_an_unlocked_owner_without_a_set() {
+        assert!(recovery_eligible(true, "owner", false, true));
+        assert!(!recovery_eligible(true, "owner", true, true));
+        assert!(!recovery_eligible(true, "editor", false, true));
+        assert!(!recovery_eligible(true, "owner", false, false));
+        assert!(!recovery_eligible(false, "owner", false, true));
     }
 
     #[test]

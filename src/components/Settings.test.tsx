@@ -19,6 +19,7 @@ const {
   mockVaultRotate,
   mockRotationRedeem,
   mockRecoveryFollowup,
+  mockRecoveryCreate,
   mockResolveConflict,
   mockBiometricAvailable,
   mockBiometricEnable,
@@ -58,6 +59,7 @@ const {
     Promise.resolve([{ userId: 2, name: "", code: "AAAAA-BBBBB" }, { userId: 3, name: "", code: "CCCCC-DDDDD" }])),
   mockRotationRedeem: vi.fn((_code: string, _passphrase: string) => Promise.resolve()),
   mockRecoveryFollowup: vi.fn((_recoveryKey: string) => Promise.resolve()),
+  mockRecoveryCreate: vi.fn(() => Promise.resolve(["AAAAA", "BBBBB", "CCCCC"])),
   mockResolveConflict: vi.fn(() => Promise.resolve({ changed: 0, skipped: 0 })),
   mockBiometricAvailable: vi.fn(() => Promise.resolve(false)),
   mockBiometricEnable: vi.fn(() => Promise.resolve()),
@@ -106,6 +108,7 @@ vi.mock("../api", () => ({
       rotate: mockVaultRotate,
       rotationRedeem: mockRotationRedeem,
       recoveryFollowup: mockRecoveryFollowup,
+      recoveryCreate: mockRecoveryCreate,
       resolveConflict: mockResolveConflict,
       biometricAvailable: mockBiometricAvailable,
       biometricEnable: mockBiometricEnable,
@@ -153,6 +156,7 @@ import type { VaultStatus } from "../types";
 const vaultStatus = (overrides: Partial<VaultStatus> = {}): VaultStatus => ({
   exists: false, unlocked: false, biometric: false, conflict: false,
   recoveryHolder: true, rotationCode: false, recoveryMissing: false, sealOutdated: false,
+  recoveryEligible: false,
   ...overrides,
 });
 
@@ -516,6 +520,30 @@ describe("Settings — Security", () => {
     fireEvent.click(screen.getByText("Sicherheit"));
     await waitFor(() => expect(screen.getByText("Entsperrt")).toBeInTheDocument());
     expect(screen.queryByText(/fehlt noch die Hinterlegung/)).not.toBeInTheDocument();
+  });
+
+  it("offers an owner without a recovery key the chance to create one", async () => {
+    mockVaultStatus.mockResolvedValue(unlockedVault({ recoveryHolder: false, recoveryEligible: true }));
+    render(<Settings onClose={vi.fn()} settings={full} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Sicherheit"));
+    await waitFor(() =>
+      expect(
+        screen.getByText("Du hast noch keinen Wiederherstellungs-Schlüssel für diesen Arbeitsbereich."),
+      ).toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Schlüssel erzeugen" }));
+    await waitFor(() => expect(mockRecoveryCreate).toHaveBeenCalledOnce());
+    expect(await screen.findByText("AAAAA-BBBBB-CCCCC")).toBeInTheDocument();
+  });
+
+  it("shows no recovery-key-creation hint when the caller is not an eligible owner", async () => {
+    mockVaultStatus.mockResolvedValue(unlockedVault({ recoveryHolder: true, recoveryEligible: false }));
+    render(<Settings onClose={vi.fn()} settings={full} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Sicherheit"));
+    await waitFor(() => expect(screen.getByText("Entsperrt")).toBeInTheDocument());
+    expect(screen.queryByText(/keinen Wiederherstellungs-Schlüssel/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Schlüssel erzeugen" })).not.toBeInTheDocument();
   });
 
   it("offers the recovery key only to a recovery holder", async () => {

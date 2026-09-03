@@ -643,6 +643,11 @@ export const fr = {
       submit: 'Ajouter la clé de récupération',
       added: 'Clé de récupération mise à jour',
       failed: 'Impossible d\u2019ajouter la clé de récupération : {{error}}',
+      none: 'Vous n\u2019avez pas encore de clé de récupération pour cet espace de travail.',
+      create: 'Créer la clé',
+      createdTitle: 'Votre clé de récupération',
+      savedCheckbox: 'J\u2019ai enregistré la clé dans un endroit sûr',
+      savedIt: 'J\u2019ai enregistré la clé',
     },
     conflict: {
       hint: 'Cet espace de travail avait déjà un coffre avec une autre clé. Les notes protégées sur cet appareil avant votre arrivée restent scellées avec la clé de cet appareil.',
