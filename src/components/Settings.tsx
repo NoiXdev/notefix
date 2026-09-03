@@ -7,7 +7,7 @@ import { faAndroid, faApple, faGooglePlay } from "@fortawesome/free-brands-svg-i
 import { api, type AppInfo, type UpdateInfo, type ReleaseInfo } from "../api";
 import type { ContextInfo } from "../contexts";
 import { startServerAuth } from "../serverAuth";
-import type { Stats, RotationCode } from "../types";
+import type { Stats, RotationCode, InviteCode } from "../types";
 import type { DateFormat } from "../dates";
 import type { AppSettings } from "../hooks/useSettings";
 import { useVault } from "../hooks/useVault";
@@ -22,7 +22,7 @@ import VaultUnlock from "./VaultUnlock";
 import VaultInviteCodeDialog from "./VaultInviteCodeDialog";
 import VaultAcceptInviteDialog from "./VaultAcceptInviteDialog";
 import VaultRotateDialog from "./VaultRotateDialog";
-import VaultRotationCodesDialog from "./VaultRotationCodesDialog";
+import VaultCodesDialog from "./VaultCodesDialog";
 import VaultRotationRedeemDialog from "./VaultRotationRedeemDialog";
 import VaultConflictDialog from "./VaultConflictDialog";
 import WhatsNew from "./WhatsNew";
@@ -1101,6 +1101,7 @@ function ContextsPage() {
   const [error, setError] = useState<string | null>(null);
   const [inviteCode, setInviteCode] = useState<string | null>(null);
   const [rotationCodes, setRotationCodes] = useState<RotationCode[] | null>(null);
+  const [inviteCodes, setInviteCodes] = useState<InviteCode[] | null>(null);
   const [sharing, setSharing] = useState(false);
   // Kept apart from `error` (the add-a-context flow's, shown at the bottom):
   // a failed share belongs next to the row whose button started it.
@@ -1168,6 +1169,29 @@ function ContextsPage() {
     }
   };
 
+  /**
+   * Mints a fresh code for every open invitation whose wrap a key rotation
+   * retired — the same failure mapping as `shareVault`, since both mint a
+   * code from the live ring and can only fail the same two ways.
+   */
+  const recode = async () => {
+    setShareError(null);
+    setSharing(true);
+    try {
+      setInviteCodes(await api.vault.inviteRecode());
+      setCtx(await api.contexts.list());
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e ?? "");
+      setShareError(
+        msg.includes("vault locked") ? t("vault.lockedHint")
+        : msg.includes("context changed during the request") ? t("common.contextChanged")
+        : t("vault.invite.shareFailed", { error: msg }),
+      );
+    } finally {
+      setSharing(false);
+    }
+  };
+
   useEffect(() => {
     void api.contexts.list().then(setCtx);
     // A completed server auth emits context-changed; refresh + clear pending.
@@ -1230,6 +1254,11 @@ function ContextsPage() {
                     {t("contexts.vault.rotationPending")}
                   </span>
                 )}
+                {c.invitesNeedingCode > 0 && (
+                  <span className="rounded px-1.5 py-0.5 text-[10px] font-medium" style={{ background: "#fef3c7", color: "#7c2d12" }}>
+                    {t("contexts.vault.invitesNeedCode", { count: c.invitesNeedingCode })}
+                  </span>
+                )}
               </div>
             </div>
             {/* Every row action lives in one menu: six buttons never fit a
@@ -1262,6 +1291,7 @@ function ContextsPage() {
                     // so both are hidden while the vault is locked — with the hint
                     // below saying why, rather than an item the backend refuses.
                     ...(canShare(c) ? [{ label: t("vault.invite.share"), onClick: () => { setShareError(null); setDialog({ mode: "inviteShare", c }); } }] : []),
+                    ...(canShare(c) && c.invitesNeedingCode > 0 ? [{ label: t("vault.invite.recode"), onClick: () => void recode() }] : []),
                     ...(canRotate(c) ? [{ label: t("vault.rotation.run"), onClick: () => { setError(null); setDialog({ mode: "rotate", c }); } }] : []),
                     ...(canInvite(c) ? [{ label: t("vault.invite.enter"), onClick: () => { setError(null); setDialog({ mode: "inviteAccept", c }); } }] : []),
                     { label: t("contexts.remove"), disabled: c.active, onClick: () => setDialog({ mode: "remove", c }) },
@@ -1330,7 +1360,20 @@ function ContextsPage() {
         />
       )}
       {rotationCodes && (
-        <VaultRotationCodesDialog codes={rotationCodes} onClose={() => setRotationCodes(null)} />
+        <VaultCodesDialog
+          title={t("vault.rotation.codesTitle")}
+          hint={t("vault.rotation.codesHint")}
+          entries={rotationCodes.map(c => ({ id: `member-${c.userId}`, label: c.name.trim() ? c.name : t("vault.rotation.codeFor", { id: c.userId }), code: c.code }))}
+          onClose={() => setRotationCodes(null)}
+        />
+      )}
+      {inviteCodes && (
+        <VaultCodesDialog
+          title={t("vault.invite.recodeTitle")}
+          hint={t("vault.invite.shareHintDetail")}
+          entries={inviteCodes.map(c => ({ id: `inv-${c.invitationId}`, label: t("vault.invite.codeForInvitation", { id: c.invitationId }), code: c.code }))}
+          onClose={() => setInviteCodes(null)}
+        />
       )}
       {dialog?.mode === "inviteAccept" && (
         <VaultAcceptInviteDialog

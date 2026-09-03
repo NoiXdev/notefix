@@ -155,6 +155,8 @@ export const api = {
     protectNote: (id: string, isProtected: boolean): Promise<void> =>
       invoke("note_set_protected", { id, protected: isProtected }),
     lockFolder: (id: string, locked: boolean): Promise<void> => invoke("folder_set_locked", { id, locked }),
+    /** Mint a fresh code for every open invitation whose wrap a rotation retired. */
+    inviteRecode: (): Promise<import("./types").InviteCode[]> => invoke("vault_invite_recode"),
   },
 
   saveImage: (noteId: string, name: string, bytes: number[]): Promise<string> => invoke("save_image", { noteId, name, bytes }),

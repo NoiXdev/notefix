@@ -34,6 +34,7 @@ const {
   mockInviteResolve,
   mockInviteShare,
   mockInviteAccept,
+  mockInviteRecode,
   mockServerAuthBegin,
   mockOnContextChanged,
   mockOpenExternal,
@@ -72,6 +73,7 @@ const {
   mockInviteResolve: vi.fn((_reference: string) => Promise.resolve(7)),
   mockInviteShare: vi.fn((_id: number) => Promise.resolve("ABCDE-FGHJK-MNPQR")),
   mockInviteAccept: vi.fn((_id: number, _code: string, _passphrase: string) => Promise.resolve()),
+  mockInviteRecode: vi.fn(() => Promise.resolve([])),
   mockServerAuthBegin: vi.fn(() => Promise.resolve("https://server.example.com/authorize")),
   mockOnContextChanged: vi.fn(() => () => {}),
   mockOpenExternal: vi.fn(),
@@ -108,6 +110,7 @@ vi.mock("../api", () => ({
       biometricAvailable: mockBiometricAvailable,
       biometricEnable: mockBiometricEnable,
       biometricDisable: mockBiometricDisable,
+      inviteRecode: mockInviteRecode,
     },
     contexts: {
       list: mockContextsList,
@@ -1319,6 +1322,21 @@ describe("Settings — Contexts page", () => {
     expect(screen.queryByText("Einladung nicht gefunden")).not.toBeInTheDocument();
     // No code was minted, so no code dialog.
     expect(screen.queryByText("Einmal-Code")).not.toBeInTheDocument();
+  });
+
+  it("shows how many invitations need a new code and mints them from the menu", async () => {
+    mockVaultStatus.mockResolvedValue(unlockedVault());
+    mockContextsList.mockResolvedValue(serverActive.map(c => c.kind === "server" ? { ...c, invitesNeedingCode: 2 } : c));
+    mockInviteRecode.mockResolvedValueOnce([{ invitationId: 5, code: "AAAA-1111" }, { invitationId: 6, code: "BBBB-2222" }]);
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Kontexte"));
+    await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+    expect(screen.getByText("2 Einladungen brauchen einen neuen Code")).toBeInTheDocument();
+    openActions("c-server");
+    fireEvent.click(screen.getByRole("button", { name: "Neue Codes erzeugen" }));
+    await waitFor(() => expect(mockInviteRecode).toHaveBeenCalledOnce());
+    expect(await screen.findByText("Einladung 5")).toBeInTheDocument();
+    expect(screen.getByText("BBBB-2222")).toBeInTheDocument();
   });
 
   it("redeems an invite code with a new passphrase", async () => {

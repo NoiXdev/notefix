@@ -524,6 +524,8 @@ export const fr = {
       changePassphrase: 'Changer le mot de passe du coffre',
       generation: 'Clé {{n}}',
       rotationPending: 'Changement de clé en attente',
+      invitesNeedCode_one: '{{count}} invitation a besoin d’un nouveau code',
+      invitesNeedCode_other: '{{count}} invitations ont besoin d’un nouveau code',
     },
   },
   sync: {
@@ -606,6 +608,9 @@ export const fr = {
       accepted: 'Coffre débloqué',
       submit: 'Débloquer',
       done: 'Terminé',
+      recode: 'Créer de nouveaux codes',
+      recodeTitle: 'Nouveaux codes d’invitation',
+      codeForInvitation: 'Invitation {{id}}',
     },
     imagesUnencryptedHint: 'Les images de cette note restent non chiffrées. Le texte est protégé, mais les fichiers image restent lisibles sur cet appareil.',
     imagesUnencryptedHintFolder: 'Les images de ce dossier restent non chiffrées. Le texte des notes est protégé, mais les fichiers image restent lisibles sur cet appareil.',

@@ -365,6 +365,7 @@ pub fn run() {
             commands::vault_invite_resolve,
             commands::vault_invite_share,
             commands::vault_invite_accept,
+            commands::vault_invite_recode,
             commands::vault_rotate,
             commands::vault_rotation_redeem,
             commands::vault_recovery_followup,

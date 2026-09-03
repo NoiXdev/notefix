@@ -524,6 +524,8 @@ export const en = {
       changePassphrase: 'Change vault passphrase',
       generation: 'Key {{n}}',
       rotationPending: 'Key change pending',
+      invitesNeedCode_one: '1 invitation needs a new code',
+      invitesNeedCode_other: '{{count}} invitations need a new code',
     },
   },
   sync: {
@@ -606,6 +608,9 @@ export const en = {
       accepted: 'Vault unlocked for you',
       submit: 'Unlock',
       done: 'Done',
+      recode: 'Create new codes',
+      recodeTitle: 'New invitation codes',
+      codeForInvitation: 'Invitation {{id}}',
     },
     imagesUnencryptedHint: 'Images in this note stay unencrypted. The text is protected, but the image files remain readable on this device.',
     imagesUnencryptedHintFolder: 'Images in this folder stay unencrypted. The text of the notes is protected, but the image files remain readable on this device.',

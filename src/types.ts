@@ -112,3 +112,13 @@ export interface ConflictOutcome {
   changed: number;
   skipped: number;
 }
+
+/**
+ * One invitation re-coded after a key rotation retired its wrap, and the
+ * fresh one-time code that opens it. Shown once, to be handed over out of
+ * band — never stored.
+ */
+export interface InviteCode {
+  invitationId: number;
+  code: string;
+}

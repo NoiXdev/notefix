@@ -2048,6 +2048,71 @@ pub async fn vault_invite_accept(
     Ok(())
 }
 
+/// One re-coded invitation and its fresh one-time code.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InviteCode {
+    pub invitation_id: u64,
+    pub code: String,
+}
+
+/// Mints a fresh vault code for every open invitation whose wrap a rotation
+/// retired: one attach per invitation under the ring's newest generation
+/// (the server replaces the stale wrap). The codes are returned once and
+/// stored nowhere; the cached invitation list is stamped so the badge clears
+/// right away.
+#[tauri::command]
+pub async fn vault_invite_recode(app: AppHandle) -> Result<Vec<InviteCode>, String> {
+    let (ctx, token) = vault_invite_target(&app)?;
+    let store_state = app.state::<Mutex<Store>>();
+    let vault_state = app.state::<Mutex<crate::vault::state::VaultState>>();
+    let (dek, generation) = {
+        let v = vault_state.lock().map_err(|e| e.to_string())?;
+        let dek = v.dek().ok_or_else(|| "vault locked".to_string())?.clone();
+        let generation = v
+            .newest_generation()
+            .ok_or_else(|| "vault locked".to_string())?;
+        (dek, generation)
+    };
+    let targets = {
+        let store = store_state.lock().map_err(|e| e.to_string())?;
+        ops::recode_targets(&store)?
+    };
+    let mut codes = Vec::with_capacity(targets.len());
+    for invitation_id in &targets {
+        let (code, wrap) = ops::make_invite_wrap(&dek, generation);
+        crate::sync::vault_attach_invite(
+            &ctx.server_url,
+            &token,
+            &ctx.workspace_id,
+            *invitation_id,
+            &wrap,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        codes.push(InviteCode {
+            invitation_id: *invitation_id,
+            code,
+        });
+    }
+    if !codes.is_empty() {
+        let store = store_state.lock().map_err(|e| e.to_string())?;
+        if let Some(json) =
+            crate::migrate::get_meta(&store.conn, "vault_invites").map_err(|e| e.to_string())?
+        {
+            let done: Vec<u64> = codes.iter().map(|c| c.invitation_id).collect();
+            crate::migrate::set_meta(
+                &store.conn,
+                "vault_invites",
+                &ops::mark_invites_recoded(&json, &done, generation),
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+    broadcast_context_changed(&app);
+    Ok(codes)
+}
+
 // ---------------------------------------------------------------------------
 // Vault key rotation
 //

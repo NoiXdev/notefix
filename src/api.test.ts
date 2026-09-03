@@ -651,6 +651,15 @@ describe('api.vault', () => {
       undefined,
     );
   });
+
+  it('inviteRecode() calls vault_invite_recode with no args and resolves the array', async () => {
+    await expectInvoke(
+      () => api.vault.inviteRecode(),
+      'vault_invite_recode',
+      undefined,
+      [{ invitationId: 5, code: 'AAAA-1111' }, { invitationId: 6, code: 'BBBB-2222' }],
+    );
+  });
 });
 
 describe('api top-level wrappers', () => {

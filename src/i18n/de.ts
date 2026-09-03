@@ -524,6 +524,8 @@ export const de = {
       changePassphrase: 'Tresor-Passwort ändern',
       generation: 'Schlüssel {{n}}',
       rotationPending: 'Schlüsselwechsel offen',
+      invitesNeedCode_one: '1 Einladung braucht einen neuen Code',
+      invitesNeedCode_other: '{{count}} Einladungen brauchen einen neuen Code',
     },
   },
   sync: {
@@ -606,6 +608,9 @@ export const de = {
       accepted: 'Tresor freigeschaltet',
       submit: 'Freischalten',
       done: 'Fertig',
+      recode: 'Neue Codes erzeugen',
+      recodeTitle: 'Neue Einladungs-Codes',
+      codeForInvitation: 'Einladung {{id}}',
     },
     imagesUnencryptedHint: 'Bilder in dieser Notiz bleiben unverschlüsselt. Der Text wird geschützt, die Bilddateien liegen weiter offen auf diesem Gerät.',
     imagesUnencryptedHintFolder: 'Bilder in diesem Ordner bleiben unverschlüsselt. Der Text der Notizen wird geschützt, die Bilddateien liegen weiter offen auf diesem Gerät.',

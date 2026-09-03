@@ -3390,6 +3390,40 @@ pub fn invites_needing_code(invites_json: &str, generation: u32) -> Vec<u64> {
         .collect()
 }
 
+/// The open invitations (owner's cache, see `apply_vault_keys`) whose wrap
+/// is missing or predates the current generation.
+pub fn recode_targets(store: &Store) -> Result<Vec<u64>, String> {
+    let generation = u32::try_from(crate::migrate::get_meta_i64(
+        &store.conn,
+        "vault_generation",
+        0,
+    ))
+    .unwrap_or(0);
+    Ok(crate::migrate::get_meta(&store.conn, "vault_invites")
+        .map_err(|e| e.to_string())?
+        .map(|json| invites_needing_code(&json, generation))
+        .unwrap_or_default())
+}
+
+/// The cached invitation list with `ids` now carrying `generation` — so the
+/// badge clears immediately instead of waiting for the next pull.
+pub fn mark_invites_recoded(invites_json: &str, ids: &[u64], generation: u32) -> String {
+    let Ok(serde_json::Value::Array(mut items)) =
+        serde_json::from_str::<serde_json::Value>(invites_json)
+    else {
+        return invites_json.to_string();
+    };
+    for item in items.iter_mut() {
+        if item["invitationId"]
+            .as_u64()
+            .is_some_and(|id| ids.contains(&id))
+        {
+            item["generation"] = serde_json::Value::from(generation);
+        }
+    }
+    serde_json::Value::Array(items).to_string()
+}
+
 /// Of the image paths a context references, the subset that actually exists in
 /// its images folder. A path that fails `safe_subpath` validation counts as
 /// absent, so a malicious relpath can never make the image phase read outside
@@ -10061,6 +10095,34 @@ mod sync_cycle_tests {
         assert_eq!(invites_needing_code(json, 2), vec![5, 6]);
         assert_eq!(invites_needing_code(json, 1), vec![6]);
         assert!(invites_needing_code("not json", 2).is_empty());
+    }
+
+    #[test]
+    fn recode_targets_and_marking_follow_the_cached_invites() {
+        let s = Store::open_in_memory().unwrap();
+        crate::migrate::run_migrations(&s.conn).unwrap();
+        crate::migrate::set_meta_i64(&s.conn, "vault_generation", 2).unwrap();
+        crate::migrate::set_meta(
+            &s.conn,
+            "vault_invites",
+            r#"[{"invitationId":5,"generation":1},{"invitationId":6,"generation":2}]"#,
+        )
+        .unwrap();
+        assert_eq!(recode_targets(&s).unwrap(), vec![5]);
+        let updated = mark_invites_recoded(
+            &crate::migrate::get_meta(&s.conn, "vault_invites")
+                .unwrap()
+                .unwrap(),
+            &[5],
+            2,
+        );
+        assert!(invites_needing_code(&updated, 2).is_empty());
+        let fresh = Store::open_in_memory().unwrap();
+        crate::migrate::run_migrations(&fresh.conn).unwrap();
+        assert!(
+            recode_targets(&fresh).unwrap().is_empty(),
+            "no cached invites → nothing to re-code"
+        );
     }
 
     #[test]
