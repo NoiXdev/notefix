@@ -63,7 +63,11 @@ item is deleted once at startup; users re-enable Touch ID per context.
 
 For a **server context** the vault belongs to the workspace: the server keeps
 one wrapped copy of each key generation per member (`workspace_vault_keys`),
-the recovery wrap for the vault's creator, and pending invite/rotation wraps.
+the recovery wraps of its owners, and pending invite/rotation wraps.
+Every owner may hold their own recovery set (`workspace_vault_recovery` is
+unique per workspace, generation and holder); a rotation retires only the
+invite wraps of invitations still open, and the pull tells an owner which
+open invitations need a fresh code (`vaultInvites`).
 `VaultState` is a ring `generation → DEK`; new content is sealed with the
 newest generation, notes remember theirs in `notes.key_gen`, and an unlocked
 client re-seals lagging notes in small batches. A server without the vault
