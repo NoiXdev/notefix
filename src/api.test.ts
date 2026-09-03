@@ -606,7 +606,7 @@ describe('api.vault', () => {
       () => api.vault.recoveryCreate(),
       'vault_recovery_create',
       undefined,
-      ['AAAAA', 'BBBBB', 'CCCCC'],
+      { groups: ['AAAAA', 'BBBBB', 'CCCCC'], incomplete: false },
     );
   });
 

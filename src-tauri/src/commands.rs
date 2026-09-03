@@ -2430,6 +2430,7 @@ pub async fn vault_recovery_followup(app: AppHandle, recovery_key: String) -> Re
             &ctx.workspace_id,
             generation,
             &payload,
+            crate::sync::RecoveryConflict::AlreadyDone,
         )
         .await
         .map_err(|e| e.to_string())?;
@@ -2443,12 +2444,36 @@ pub async fn vault_recovery_followup(app: AppHandle, recovery_key: String) -> Re
     Ok(())
 }
 
+/// What `vault_recovery_create` hands back: the freshly minted key's groups
+/// (shown exactly once) and whether every ring generation actually got a
+/// wrap uploaded under it. `incomplete` is true only when at least one
+/// generation landed before a later one failed — the key IS already real for
+/// the generations that landed, so it must reach the user; the existing
+/// `recoveryMissing` banner and its "add recovery key" follow-up then let
+/// them finish the rest with this SAME key.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryCreated {
+    pub groups: Vec<String>,
+    pub incomplete: bool,
+}
+
 /// Creates this owner's own recovery key for the workspace vault: wraps every
-/// generation in the ring under a fresh key, uploads the wraps (one per
-/// generation; a 409 means it already holds that one), caches them, and
-/// returns the key's dash-separated groups exactly once.
+/// generation in the ring under a fresh key and uploads the wraps one
+/// generation at a time, caching each as it lands.
+///
+/// The key is brand new, so — unlike [`vault_recovery_followup`], which
+/// resubmits an EXISTING key — a 409 here means the workspace already holds
+/// a DIFFERENT wrap for this (workspace, generation, caller) and is rejected
+/// rather than treated as done (see [`crate::sync::RecoveryConflict`]).
+///
+/// A failure before anything landed refuses outright: nothing is cached, the
+/// button on the Security page stays. A failure AFTER at least one
+/// generation landed and was cached stops the loop but still returns the
+/// key — with `incomplete: true` — rather than silently dropping a key that
+/// already opens real, uploaded wraps. Never logged.
 #[tauri::command]
-pub async fn vault_recovery_create(app: AppHandle) -> Result<Vec<String>, String> {
+pub async fn vault_recovery_create(app: AppHandle) -> Result<RecoveryCreated, String> {
     // Captured before the target's registry read — see `run_sync_cycle`.
     let epoch = app.state::<ops::SyncEpoch>().current();
     let (ctx, token) = vault_rotation_target(&app)?;
@@ -2470,25 +2495,39 @@ pub async fn vault_recovery_create(app: AppHandle) -> Result<Vec<String>, String
     }
     let key = crate::vault::recovery::RecoveryKey::generate();
     let payloads = ops::recovery_create_payloads(&deks, key.as_str())?;
+    let mut landed = 0usize;
     for (generation, payload) in &payloads {
-        crate::sync::vault_post_recovery(
+        let uploaded = crate::sync::vault_post_recovery(
             &ctx.server_url,
             &token,
             &ctx.workspace_id,
             *generation,
             payload,
+            crate::sync::RecoveryConflict::Reject,
         )
-        .await
-        .map_err(|e| e.to_string())?;
+        .await;
+        if let Err(e) = uploaded {
+            if landed == 0 {
+                return Err(e.to_string());
+            }
+            // Some earlier generation's wrap is already on the server (and
+            // cached below) — the key is genuinely usable for that much, so
+            // stop here and still hand it over rather than discarding it.
+            break;
+        }
         let store = store_state.lock().map_err(|e| e.to_string())?;
         check_epoch(&app, epoch)?;
         let cached = ops::cached_vault_entries(&store)?.unwrap_or_default();
         store
             .set_vault_entries(&ops::merge_recovery_entry(&cached, *generation, payload)?.to_json())
             .map_err(|e| e.to_string())?;
+        landed += 1;
     }
     broadcast_context_changed(&app);
-    Ok(key.as_str().split('-').map(String::from).collect())
+    Ok(RecoveryCreated {
+        groups: key.as_str().split('-').map(String::from).collect(),
+        incomplete: landed < payloads.len(),
+    })
 }
 
 /// Which of the device's own secrets opens its local record. A closed set:

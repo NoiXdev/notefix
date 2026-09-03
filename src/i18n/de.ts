@@ -648,6 +648,7 @@ export const de = {
       createdTitle: 'Dein Wiederherstellungs-Schlüssel',
       savedCheckbox: 'Ich habe den Schlüssel an einem sicheren Ort gespeichert',
       savedIt: 'Ich habe den Schlüssel gesichert',
+      createdIncomplete: 'Nicht alle Schlüsselstände konnten hinterlegt werden. Ergänze den fehlenden Stand unter „Wiederherstellungsschlüssel ergänzen“ mit diesem Schlüssel.',
     },
     conflict: {
       hint: 'Dieser Arbeitsbereich hatte bereits einen Tresor mit einem anderen Schlüssel. Notizen, die du auf diesem Gerät vor dem Beitritt geschützt hast, bleiben mit dem Schlüssel dieses Geräts verschlossen.',

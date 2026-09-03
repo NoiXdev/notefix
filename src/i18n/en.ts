@@ -648,6 +648,7 @@ export const en = {
       createdTitle: 'Your recovery key',
       savedCheckbox: 'I have stored the key in a safe place',
       savedIt: 'I have saved the key',
+      createdIncomplete: 'Not every key generation could be stored. Add the missing one under “Add recovery key” using this key.',
     },
     conflict: {
       hint: 'This workspace already had a vault with a different key. Notes you protected on this device before joining stay sealed under this device\u2019s own key.',

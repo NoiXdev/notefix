@@ -14,4 +14,18 @@ describe('VaultRecoveryKeyDialog', () => {
     fireEvent.click(done);
     expect(onClose).toHaveBeenCalledOnce();
   });
+
+  it('warns when the upload stopped partway through and stays quiet otherwise', () => {
+    const { rerender } = render(
+      <VaultRecoveryKeyDialog groups={['AAAA', 'BBBB', 'CCCC']} onClose={vi.fn()} />,
+    );
+    expect(
+      screen.queryByText(/Nicht alle Schlüsselstände konnten hinterlegt werden/),
+    ).not.toBeInTheDocument();
+
+    rerender(<VaultRecoveryKeyDialog groups={['AAAA', 'BBBB', 'CCCC']} onClose={vi.fn()} incomplete />);
+    expect(
+      screen.getByText(/Nicht alle Schlüsselstände konnten hinterlegt werden/),
+    ).toBeInTheDocument();
+  });
 });

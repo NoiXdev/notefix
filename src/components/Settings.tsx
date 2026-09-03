@@ -7,7 +7,7 @@ import { faAndroid, faApple, faGooglePlay } from "@fortawesome/free-brands-svg-i
 import { api, type AppInfo, type UpdateInfo, type ReleaseInfo } from "../api";
 import type { ContextInfo } from "../contexts";
 import { startServerAuth } from "../serverAuth";
-import type { Stats, RotationCode, InviteCode } from "../types";
+import type { Stats, RotationCode, InviteCode, RecoveryCreated } from "../types";
 import type { DateFormat } from "../dates";
 import type { AppSettings } from "../hooks/useSettings";
 import { useVault } from "../hooks/useVault";
@@ -268,18 +268,23 @@ function SecurityPage({ settings, onSetSetting }: {
   const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null);
   const [showRotationRedeem, setShowRotationRedeem] = useState(false);
   const [showConflict, setShowConflict] = useState(false);
-  const [recoveryGroups, setRecoveryGroups] = useState<string[] | null>(null);
+  const [recoveryCreated, setRecoveryCreated] = useState<RecoveryCreated | null>(null);
+  const [recoveryBusy, setRecoveryBusy] = useState(false);
 
   useEffect(() => {
     api.vault.biometricAvailable().then(setBiometricAvailable);
   }, []);
 
   const createRecovery = async () => {
+    if (recoveryBusy) return;
+    setRecoveryBusy(true);
     try {
-      setRecoveryGroups(await vault.recoveryCreate());
+      setRecoveryCreated(await vault.recoveryCreate());
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e ?? "");
       setRecoveryNotice(t("vault.recovery.failed", { error: msg }));
+    } finally {
+      setRecoveryBusy(false);
     }
   };
 
@@ -406,7 +411,7 @@ function SecurityPage({ settings, onSetSetting }: {
       {vault.status.recoveryEligible && (
         <div role="status" className="mb-6 rounded border px-3 py-2 text-sm flex flex-wrap items-center gap-3" style={{ borderColor: "var(--line-muted)", background: "var(--paper-raised)" }}>
           <span>{t("vault.recovery.none")}</span>
-          <button onClick={() => void createRecovery()} className="px-3 py-1 rounded text-xs font-medium border" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>
+          <button onClick={() => void createRecovery()} disabled={recoveryBusy} className="px-3 py-1 rounded text-xs font-medium border disabled:opacity-40" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>
             {t("vault.recovery.create")}
           </button>
         </div>
@@ -555,8 +560,12 @@ function SecurityPage({ settings, onSetSetting }: {
           onCancel={() => setShowRecoveryFollowup(false)}
         />
       )}
-      {recoveryGroups && (
-        <VaultRecoveryKeyDialog groups={recoveryGroups} onClose={() => setRecoveryGroups(null)} />
+      {recoveryCreated && (
+        <VaultRecoveryKeyDialog
+          groups={recoveryCreated.groups}
+          incomplete={recoveryCreated.incomplete}
+          onClose={() => setRecoveryCreated(null)}
+        />
       )}
     </div>
   );

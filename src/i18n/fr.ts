@@ -648,6 +648,7 @@ export const fr = {
       createdTitle: 'Votre clé de récupération',
       savedCheckbox: 'J\u2019ai enregistré la clé dans un endroit sûr',
       savedIt: 'J\u2019ai enregistré la clé',
+      createdIncomplete: 'Toutes les générations de clé n\u2019ont pas pu être enregistrées. Ajoutez celle qui manque sous « Ajouter la clé de récupération » avec cette clé.',
     },
     conflict: {
       hint: 'Cet espace de travail avait déjà un coffre avec une autre clé. Les notes protégées sur cet appareil avant votre arrivée restent scellées avec la clé de cet appareil.',

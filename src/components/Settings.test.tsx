@@ -59,7 +59,7 @@ const {
     Promise.resolve([{ userId: 2, name: "", code: "AAAAA-BBBBB" }, { userId: 3, name: "", code: "CCCCC-DDDDD" }])),
   mockRotationRedeem: vi.fn((_code: string, _passphrase: string) => Promise.resolve()),
   mockRecoveryFollowup: vi.fn((_recoveryKey: string) => Promise.resolve()),
-  mockRecoveryCreate: vi.fn(() => Promise.resolve(["AAAAA", "BBBBB", "CCCCC"])),
+  mockRecoveryCreate: vi.fn(() => Promise.resolve({ groups: ["AAAAA", "BBBBB", "CCCCC"], incomplete: false })),
   mockResolveConflict: vi.fn(() => Promise.resolve({ changed: 0, skipped: 0 })),
   mockBiometricAvailable: vi.fn(() => Promise.resolve(false)),
   mockBiometricEnable: vi.fn(() => Promise.resolve()),
@@ -535,6 +535,28 @@ describe("Settings — Security", () => {
     fireEvent.click(screen.getByRole("button", { name: "Schlüssel erzeugen" }));
     await waitFor(() => expect(mockRecoveryCreate).toHaveBeenCalledOnce());
     expect(await screen.findByText("AAAAA-BBBBB-CCCCC")).toBeInTheDocument();
+  });
+
+  it("ignores a second click on the create-recovery-key button while the first is still in flight", async () => {
+    mockVaultStatus.mockResolvedValue(unlockedVault({ recoveryHolder: false, recoveryEligible: true }));
+    let release: (value: { groups: string[]; incomplete: boolean }) => void = () => {};
+    mockRecoveryCreate.mockImplementationOnce(
+      () => new Promise(resolve => { release = resolve; }),
+    );
+    render(<Settings onClose={vi.fn()} settings={full} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Sicherheit"));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Schlüssel erzeugen" })).toBeInTheDocument(),
+    );
+
+    const button = screen.getByRole("button", { name: "Schlüssel erzeugen" });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(mockRecoveryCreate).toHaveBeenCalledOnce();
+
+    release({ groups: ["AAAAA", "BBBBB", "CCCCC"], incomplete: false });
+    expect(await screen.findByText("AAAAA-BBBBB-CCCCC")).toBeInTheDocument();
+    expect(mockRecoveryCreate).toHaveBeenCalledOnce();
   });
 
   it("shows no recovery-key-creation hint when the caller is not an eligible owner", async () => {

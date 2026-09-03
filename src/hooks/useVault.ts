@@ -86,11 +86,11 @@ export function useVault() {
     [refresh],
   );
 
-  /** Owner-only: create this owner's own recovery key. Returns its groups, shown exactly once. */
+  /** Owner-only: create this owner's own recovery key. Returns its groups (shown exactly once) and whether every generation got a wrap out of it. */
   const recoveryCreate = useCallback(async () => {
-    const groups = await api.vault.recoveryCreate();
+    const created = await api.vault.recoveryCreate();
     await refresh();
-    return groups;
+    return created;
   }, [refresh]);
 
   /** Resolve a local-vs-workspace vault conflict (both secrets verified backend-side). */

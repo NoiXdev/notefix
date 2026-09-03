@@ -101,6 +101,18 @@ export interface VaultStatus {
 }
 
 /**
+ * What creating an owner's own recovery key produced: its dash-separated
+ * groups, shown exactly once. `incomplete` is true when an upload failed
+ * partway through — at least one key generation already got a wrap out of
+ * this key (so it must still be shown), but not every generation did. The
+ * existing "add recovery key" follow-up completes the set with this same key.
+ */
+export interface RecoveryCreated {
+  groups: string[];
+  incomplete: boolean;
+}
+
+/**
  * One remaining member and the one-time code that opens their new wrap after
  * a key rotation. Shown once, to be handed over out of band — never stored.
  */

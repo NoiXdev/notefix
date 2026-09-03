@@ -673,15 +673,51 @@ fn parse_vault_generation(body: &Value) -> Option<u32> {
     body["vaultGeneration"].as_u64().map(|g| g as u32)
 }
 
-/// POST …/vault/recovery — the creator adding the recovery wrap for a
-/// generation somebody else rotated. A 409 means the wrap is already there,
-/// which is exactly the state the caller wanted, so it is reported as `Ok`.
+/// How a 409 on `POST …/vault/recovery` should be read. The creator's
+/// follow-up resubmits the wrap it just derived from the vault's EXISTING
+/// recovery key for a generation somebody else rotated — a 409 there means
+/// the wrap is already there under that same key, exactly the state the
+/// caller wanted, so `AlreadyDone` reports it as `Ok`. Minting a BRAND NEW
+/// key (`vault_recovery_create`) is different: a 409 there means the
+/// workspace already holds a wrap for (workspace, generation, this user)
+/// under a DIFFERENT key, and reporting that as success would hand the user
+/// a key that opens nothing for that generation — `Reject` turns it into an
+/// error instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecoveryConflict {
+    AlreadyDone,
+    Reject,
+}
+
+/// 409 branches on `on_conflict` (see [`RecoveryConflict`]); everything else
+/// goes through the usual [`classify_status`] rules. Pulled out so the
+/// mapping is testable without a network call — mirrors
+/// [`classify_vault_create`].
+fn classify_vault_recovery(
+    status: reqwest::StatusCode,
+    on_conflict: RecoveryConflict,
+) -> Result<(), SyncError> {
+    if status == reqwest::StatusCode::CONFLICT {
+        return match on_conflict {
+            RecoveryConflict::AlreadyDone => Ok(()),
+            RecoveryConflict::Reject => Err(SyncError::Fatal(
+                "vault: the workspace already holds a recovery key from you — sync first"
+                    .to_string(),
+            )),
+        };
+    }
+    classify_status(status, "vault recovery")
+}
+
+/// POST …/vault/recovery — attach one generation's recovery wrap.
+/// `on_conflict` says how to read a 409; see [`RecoveryConflict`].
 pub async fn vault_post_recovery(
     server_url: &str,
     token: &str,
     ws: &str,
     generation: u32,
     payload: &crate::ops::RecoveryPayload,
+    on_conflict: RecoveryConflict,
 ) -> Result<(), SyncError> {
     let body = serde_json::json!({
         "generation": generation,
@@ -697,10 +733,7 @@ pub async fn vault_post_recovery(
         .send()
         .await
         .map_err(offline)?;
-    if resp.status() == reqwest::StatusCode::CONFLICT {
-        return Ok(());
-    }
-    classify_status(resp.status(), "vault recovery")
+    classify_vault_recovery(resp.status(), on_conflict)
 }
 
 #[cfg(test)]
@@ -1206,6 +1239,28 @@ mod tests {
             VaultCreateOutcome::AlreadyExists
         ));
         assert!(classify_vault_create(reqwest::StatusCode::FORBIDDEN).is_err());
+    }
+
+    #[test]
+    fn vault_recovery_conflict_reads_by_mode() {
+        // The follow-up resubmits the SAME key: 409 is the state it wanted.
+        assert!(matches!(
+            classify_vault_recovery(reqwest::StatusCode::CREATED, RecoveryConflict::AlreadyDone),
+            Ok(())
+        ));
+        assert!(matches!(
+            classify_vault_recovery(reqwest::StatusCode::CONFLICT, RecoveryConflict::AlreadyDone),
+            Ok(())
+        ));
+        // A brand new key: 409 means a DIFFERENT wrap already sits there.
+        assert!(matches!(
+            classify_vault_recovery(reqwest::StatusCode::CONFLICT, RecoveryConflict::Reject),
+            Err(SyncError::Fatal(m)) if m == "vault: the workspace already holds a recovery key from you — sync first"
+        ));
+        assert!(
+            classify_vault_recovery(reqwest::StatusCode::FORBIDDEN, RecoveryConflict::Reject)
+                .is_err()
+        );
     }
 
     #[test]

@@ -144,9 +144,10 @@ export const api = {
       invoke("vault_recovery_followup", { recoveryKey }),
     /**
      * Owner-only: create this owner's own recovery key for the workspace
-     * vault. Returns the key's dash-separated groups exactly once.
+     * vault. Returns the key's dash-separated groups exactly once, and
+     * whether every key generation actually got a wrap out of it.
      */
-    recoveryCreate: (): Promise<string[]> => invoke("vault_recovery_create"),
+    recoveryCreate: (): Promise<import("./types").RecoveryCreated> => invoke("vault_recovery_create"),
     /** Resolve a local-vs-workspace vault conflict; both secrets are verified before anything is written. */
     resolveConflict: (
       workspacePassphrase: string,
