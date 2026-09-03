@@ -134,7 +134,7 @@ import type { VaultStatus } from "./types";
  */
 const vaultStatus = (overrides: Partial<VaultStatus> = {}): VaultStatus => ({
   exists: false, unlocked: false, biometric: false, conflict: false,
-  recoveryHolder: true, rotationCode: false, recoveryMissing: false, sealOutdated: false,
+  recoveryHolder: true, rotationCode: false, recoveryMissing: false, sealOutdated: false, recoveryEligible: false, ringIsWorkspace: false,
   ...overrides,
 });
 
