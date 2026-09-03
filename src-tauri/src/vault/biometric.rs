@@ -9,14 +9,18 @@
 //!
 //! The unlock flow is two independent steps:
 //!   1. A Touch ID prompt via `LAContext.evaluatePolicy` ([`authenticate`]).
-//!   2. Reading the wrapped DEK back out of the keychain ([`load_dek`]).
+//!   2. Reading the wrapped ring back out of the keychain ([`load_ring`]).
 //!
-//! The DEK is stored base64-encoded under the keychain account `vault-dek`
-//! (service `dev.noix.notefix`, shared with the auth-token storage in
-//! `auth.rs`). Note that the keychain entry itself carries no biometric ACL —
-//! the Touch ID gate is our explicit [`authenticate`] call, a separate step
-//! from reading the entry. The DEK is never logged, and every transient
-//! base64/byte buffer is zeroized after use.
+//! The keychain item carries the WHOLE key ring, not just one generation: a
+//! rotated workspace needs every generation still in play to open its older
+//! notes, and a single-generation item left every note sealed under another
+//! generation unreadable after a Touch ID unlock. The ring is stored
+//! base64-encoded under the keychain account `vault-dek` (service
+//! `dev.noix.notefix`, shared with the auth-token storage in `auth.rs`). Note
+//! that the keychain entry itself carries no biometric ACL — the Touch ID
+//! gate is our explicit [`authenticate`] call, a separate step from reading
+//! the entry. The DEKs are never logged, and every transient base64/byte
+//! buffer is zeroized after use.
 
 use crate::vault::aead::Dek;
 use crate::vault::VaultError;
@@ -54,93 +58,126 @@ pub fn clear_legacy() -> Result<(), VaultError> {
     map_clear_result(entry.delete_credential())
 }
 
-/// Base64-encode a key generation + DEK for keychain storage: four big-endian
-/// generation bytes followed by the 32 key bytes. The returned `String` holds
-/// key material — callers must zeroize it once written.
-///
-/// The generation travels WITH the key because the ring is keyed by it: an
-/// item enrolled after a rotation carries a DEK that generation 1 can neither
-/// verify nor open, and installing it as generation 1 (as this module did
-/// before) made biometric unlock fail permanently with "belongs to a
-/// different context".
-fn encode_dek(generation: u32, dek: &Dek) -> String {
-    let mut bytes = Vec::with_capacity(36);
-    bytes.extend_from_slice(&generation.to_be_bytes());
-    bytes.extend_from_slice(dek.expose());
+/// Payload version byte for a whole-ring keychain item.
+const RING_FORMAT_V2: u8 = 2;
+const ENTRY_LEN: usize = 36;
+
+/// Base64 of `0x02`, the generation count, then per generation four
+/// big-endian generation bytes and the 32 key bytes. The ring travels whole
+/// because a rotated workspace needs every generation to open its older
+/// notes; a single-generation item (as this module stored before) left every
+/// note sealed under another generation unreadable after a Touch ID unlock.
+/// Callers zeroize the returned string once written.
+fn encode_ring(ring: &[(u32, Dek)]) -> String {
+    let mut bytes = Vec::with_capacity(2 + ring.len() * ENTRY_LEN);
+    bytes.push(RING_FORMAT_V2);
+    bytes.push(ring.len() as u8);
+    for (generation, dek) in ring {
+        bytes.extend_from_slice(&generation.to_be_bytes());
+        bytes.extend_from_slice(dek.expose());
+    }
     let b64 = STANDARD.encode(&bytes);
     bytes.zeroize();
     b64
 }
 
-/// Decode a base64 keychain payload, zeroizing transient byte buffers on
-/// every path. 36 bytes is a generation-tagged item; a bare 32-byte item
-/// predates the tag and is generation 1 (the only generation that existed
-/// then). Any other length ⇒ [`VaultError::Corrupt`]; invalid base64 ⇒
-/// [`VaultError::Crypto`].
-fn decode_dek(b64: &str) -> Result<(u32, Dek), VaultError> {
+/// `encode_ring` with the invariants the decoder enforces: 1..=255
+/// generations, strictly ascending.
+fn encode_ring_checked(ring: &[(u32, Dek)]) -> Result<String, VaultError> {
+    if ring.is_empty() || ring.len() > u8::MAX as usize {
+        return Err(VaultError::Corrupt);
+    }
+    if ring.windows(2).any(|w| w[0].0 >= w[1].0) {
+        return Err(VaultError::Corrupt);
+    }
+    Ok(encode_ring(ring))
+}
+
+fn dek_from(key: &[u8]) -> Result<Dek, VaultError> {
+    let mut arr: [u8; 32] = key.try_into().map_err(|_| VaultError::Corrupt)?;
+    let dek = Dek::from_bytes(arr);
+    arr.zeroize();
+    Ok(dek)
+}
+
+/// Decodes a keychain payload: v2 rings, plus the two legacy shapes — a bare
+/// 32-byte DEK (generation 1) and a 36-byte generation-tagged DEK.
+fn decode_ring_bytes(bytes: &[u8]) -> Result<Vec<(u32, Dek)>, VaultError> {
+    match bytes.len() {
+        32 => Ok(vec![(1, dek_from(bytes)?)]),
+        36 => {
+            let generation = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+            Ok(vec![(generation, dek_from(&bytes[4..])?)])
+        }
+        n if n >= 2 && bytes[0] == RING_FORMAT_V2 => {
+            let count = bytes[1] as usize;
+            if count == 0 || n != 2 + count * ENTRY_LEN {
+                return Err(VaultError::Corrupt);
+            }
+            let mut ring: Vec<(u32, Dek)> = Vec::with_capacity(count);
+            for i in 0..count {
+                let off = 2 + i * ENTRY_LEN;
+                let generation = u32::from_be_bytes([
+                    bytes[off],
+                    bytes[off + 1],
+                    bytes[off + 2],
+                    bytes[off + 3],
+                ]);
+                if ring.last().is_some_and(|(g, _)| *g >= generation) {
+                    return Err(VaultError::Corrupt);
+                }
+                ring.push((generation, dek_from(&bytes[off + 4..off + ENTRY_LEN])?));
+            }
+            Ok(ring)
+        }
+        _ => Err(VaultError::Corrupt),
+    }
+}
+
+fn decode_ring(b64: &str) -> Result<Vec<(u32, Dek)>, VaultError> {
     let mut bytes = STANDARD
         .decode(b64)
         .map_err(|e| VaultError::Crypto(e.to_string()))?;
-    let (generation, key) = match bytes.len() {
-        32 => (1u32, &bytes[..]),
-        36 => (
-            u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
-            &bytes[4..],
-        ),
-        _ => {
-            bytes.zeroize();
-            return Err(VaultError::Corrupt);
-        }
-    };
-    let mut arr: [u8; 32] = match key.try_into() {
-        Ok(a) => a,
-        Err(_) => {
-            bytes.zeroize();
-            return Err(VaultError::Corrupt);
-        }
-    };
-    let dek = Dek::from_bytes(arr);
-    arr.zeroize();
+    let ring = decode_ring_bytes(&bytes);
     bytes.zeroize();
-    Ok((generation, dek))
+    ring
 }
 
 /// Map the result of a keychain `set_password` call to our domain error.
-/// Pulled out of [`store_dek`] so this bookkeeping is testable without a real
-/// keychain write.
+/// Pulled out of [`store_ring`] so this bookkeeping is testable without a
+/// real keychain write.
 fn map_store_result(res: Result<(), keyring::Error>) -> Result<(), VaultError> {
     res.map_err(|e| VaultError::Io(e.to_string()))
 }
 
-/// Writes the base64-encoded generation + DEK to the `vault-dek` keychain
-/// entry.
-pub fn store_dek(context_id: &str, generation: u32, dek: &Dek) -> Result<(), VaultError> {
+/// Writes the whole ring to the context's keychain item.
+pub fn store_ring(context_id: &str, ring: &[(u32, Dek)]) -> Result<(), VaultError> {
     let entry = biometric_entry(context_id)?;
-    let mut b64 = encode_dek(generation, dek);
+    let mut b64 = encode_ring_checked(ring)?;
     let res = map_store_result(entry.set_password(&b64));
     b64.zeroize();
     res
 }
 
-/// Map the result of a keychain `get_password` call to the `load_dek`
+/// Map the result of a keychain `get_password` call to the `load_ring`
 /// outcome: no entry ⇒ `Ok(None)`, other keychain error ⇒ `Err(Io)`, entry
-/// found ⇒ base64-decode it. Pulled out of [`load_dek`] so this mapping and
+/// found ⇒ base64-decode it. Pulled out of [`load_ring`] so this mapping and
 /// decoding logic is testable without a real keychain read.
-fn map_load_result(res: Result<String, keyring::Error>) -> Result<Option<(u32, Dek)>, VaultError> {
+fn map_load_result(
+    res: Result<String, keyring::Error>,
+) -> Result<Option<Vec<(u32, Dek)>>, VaultError> {
     let mut b64 = match res {
         Ok(s) => s,
         Err(keyring::Error::NoEntry) => return Ok(None),
         Err(e) => return Err(VaultError::Io(e.to_string())),
     };
-    let dek = decode_dek(&b64);
+    let ring = decode_ring(&b64);
     b64.zeroize();
-    dek.map(Some)
+    ring.map(Some)
 }
 
-/// Reads and base64-decodes the `vault-dek` keychain entry into the key
-/// generation it was enrolled at and its DEK. Returns `Ok(None)` when no
-/// entry exists (biometric unlock not enrolled).
-pub fn load_dek(context_id: &str) -> Result<Option<(u32, Dek)>, VaultError> {
+/// Reads the ring back. `Ok(None)` when biometric unlock is not enrolled.
+pub fn load_ring(context_id: &str) -> Result<Option<Vec<(u32, Dek)>>, VaultError> {
     let entry = biometric_entry(context_id)?;
     map_load_result(entry.get_password())
 }
@@ -278,41 +315,56 @@ mod tests {
     use super::*;
 
     #[test]
-    fn encode_decode_roundtrips_the_generation_and_the_key() {
-        let dek = Dek::random();
-        for generation in [1u32, 2, 7, u32::MAX] {
-            let encoded = encode_dek(generation, &dek);
-            let (g, decoded) = decode_dek(&encoded).unwrap();
-            assert_eq!(g, generation);
-            assert_eq!(dek.expose(), decoded.expose());
+    fn ring_round_trips_one_and_three_generations() {
+        let one = vec![(1u32, Dek::random())];
+        let back = decode_ring(&encode_ring(&one)).unwrap();
+        assert_eq!(back.len(), 1);
+        assert_eq!(back[0].0, 1);
+        assert_eq!(back[0].1.expose(), one[0].1.expose());
+
+        let three = vec![
+            (1u32, Dek::random()),
+            (2, Dek::random()),
+            (5, Dek::random()),
+        ];
+        let back = decode_ring(&encode_ring(&three)).unwrap();
+        assert_eq!(
+            back.iter().map(|(g, _)| *g).collect::<Vec<_>>(),
+            vec![1, 2, 5]
+        );
+        for (a, b) in three.iter().zip(back.iter()) {
+            assert_eq!(a.1.expose(), b.1.expose());
         }
     }
 
-    /// R2: an item written before the generation tag existed is a bare
-    /// 32-byte key, and generation 1 is the only one that existed then.
     #[test]
-    fn a_legacy_untagged_item_reads_back_as_generation_one() {
+    fn legacy_items_still_decode() {
         let dek = Dek::random();
-        let legacy = STANDARD.encode(dek.expose());
-        let (generation, decoded) = decode_dek(&legacy).unwrap();
-        assert_eq!(generation, 1);
-        assert_eq!(decoded.expose(), dek.expose());
+        let bare = STANDARD.encode(dek.expose());
+        let back = decode_ring(&bare).unwrap();
+        assert_eq!(back.len(), 1);
+        assert_eq!(back[0].0, 1);
+        assert_eq!(back[0].1.expose(), dek.expose());
+
+        let mut tagged = 3u32.to_be_bytes().to_vec();
+        tagged.extend_from_slice(dek.expose());
+        let back = decode_ring(&STANDARD.encode(&tagged)).unwrap();
+        assert_eq!(back[0].0, 3);
     }
 
     #[test]
-    fn decode_rejects_wrong_length() {
-        // `Dek` has no `Debug`/`PartialEq` by design (key material), so match
-        // on the error rather than `assert_eq!`-ing the whole `Result`.
-        let short = STANDARD.encode([0u8; 16]);
-        assert!(matches!(decode_dek(&short), Err(VaultError::Corrupt)));
-    }
-
-    #[test]
-    fn decode_rejects_invalid_base64() {
-        assert!(matches!(
-            decode_dek("not valid base64 !!!"),
-            Err(VaultError::Crypto(_))
-        ));
+    fn malformed_rings_are_rejected_not_panicked() {
+        assert!(decode_ring("not base64!").is_err());
+        assert!(decode_ring(&STANDARD.encode([2u8, 0])).is_err()); // count 0
+        assert!(decode_ring(&STANDARD.encode([2u8, 1, 0, 0])).is_err()); // truncated
+        assert!(decode_ring(&STANDARD.encode([9u8, 1])).is_err()); // unknown version
+        let mut dup = vec![2u8, 2];
+        for _ in 0..2 {
+            dup.extend_from_slice(&1u32.to_be_bytes());
+            dup.extend_from_slice(Dek::random().expose());
+        }
+        assert!(decode_ring(&STANDARD.encode(&dup)).is_err()); // not ascending
+        assert!(encode_ring_checked(&[]).is_err());
     }
 
     #[test]
@@ -327,10 +379,11 @@ mod tests {
     #[test]
     fn map_load_result_decodes_the_found_entry() {
         let dek = Dek::random();
-        let encoded = encode_dek(3, &dek);
-        let (generation, out) = map_load_result(Ok(encoded)).unwrap().unwrap();
-        assert_eq!(generation, 3);
-        assert_eq!(out.expose(), dek.expose());
+        let encoded = encode_ring(&[(3, dek.clone())]);
+        let ring = map_load_result(Ok(encoded)).unwrap().unwrap();
+        assert_eq!(ring.len(), 1);
+        assert_eq!(ring[0].0, 3);
+        assert_eq!(ring[0].1.expose(), dek.expose());
     }
 
     #[test]

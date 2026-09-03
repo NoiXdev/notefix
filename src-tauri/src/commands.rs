@@ -1510,15 +1510,21 @@ pub fn vault_biometric_available() -> bool {
     crate::vault::biometric::is_available()
 }
 
-/// Enrolls biometric unlock: stores the currently-unlocked DEK — TOGETHER
-/// WITH the key generation it belongs to — in the keychain, so it can later be
-/// released after a Touch ID prompt. Requires the vault to be unlocked: the
-/// DEK is taken from the live `VaultState`, never re-derived.
+/// Enrolls biometric unlock: stores the unlocked ring's VERIFIED generations
+/// in the keychain, so they can later be released after a Touch ID prompt.
+/// Requires the vault to be unlocked: the ring is taken from the live
+/// `VaultState`, never re-derived.
 ///
-/// Refused when nothing in this store could verify that DEK again on the way
-/// back in (`ops::verify_dek_for_store`). Enrolling anyway would mint an item
-/// that every later unlock rejects — the permanent "belongs to a different
-/// context" dead end — and the user would have no way to tell why.
+/// Nothing unverified is ever written to the keychain (`ops::verify_ring_for_store`
+/// partitions the ring first). An older generation that fails verification —
+/// e.g. the cache doesn't (yet) carry it — is simply left out and logged by
+/// number and error text; that gap does not stop enrollment, since biometric
+/// unlock for the newest generation is what matters day to day and the older
+/// note is still reachable via the passphrase. But the newest generation
+/// unverifiable, or nothing in the ring verifying at all, fails the whole
+/// call: writing an item that can never seal a NEW note would be silently
+/// useless, and the permanent "belongs to a different context" dead end on
+/// every later unlock would leave the user with no way to tell why.
 #[tauri::command]
 pub fn vault_biometric_enable(
     store: State<'_, Mutex<Store>>,
@@ -1528,22 +1534,29 @@ pub fn vault_biometric_enable(
     let context_id = active_context_id(&reg)?;
     // Clone out of the ring so the VaultState lock is not held across the
     // Store lock below — lock order is Store -> VaultState, never the reverse.
-    let (dek, generation) = {
+    let ring = {
         let vault = vault.lock().map_err(|e| e.to_string())?;
-        let dek = vault
-            .dek()
-            .ok_or_else(|| "vault locked".to_string())?
-            .clone();
-        let generation = vault
-            .newest_generation()
-            .ok_or_else(|| "vault locked".to_string())?;
-        (dek, generation)
+        vault.snapshot()
     };
-    {
-        let store = store.lock().map_err(|e| e.to_string())?;
-        ops::verify_dek_for_store(&store, generation, &dek)?;
+    if ring.is_empty() {
+        return Err("vault locked".to_string());
     }
-    crate::vault::biometric::store_dek(&context_id, generation, &dek).map_err(String::from)
+    let newest = ring.last().map(|(g, _)| *g).expect("ring is non-empty");
+    let (verified, rejected) = {
+        let store = store.lock().map_err(|e| e.to_string())?;
+        ops::verify_ring_for_store(&store, &ring)
+    };
+    for (generation, err) in &rejected {
+        eprintln!("biometric enable: generation {generation} not stored ({err})");
+    }
+    let newest_rejected = rejected.iter().find(|(g, _)| *g == newest);
+    if verified.is_empty() || newest_rejected.is_some() {
+        return Err(newest_rejected
+            .or_else(|| rejected.first())
+            .map(|(_, e)| e.clone())
+            .unwrap_or_else(|| "vault locked".to_string()));
+    }
+    crate::vault::biometric::store_ring(&context_id, &verified).map_err(String::from)
 }
 
 /// Disables biometric unlock by deleting the keychain-stored DEK. Idempotent.
@@ -1556,9 +1569,13 @@ pub fn vault_biometric_disable(
 }
 
 /// Unlocks the vault via biometrics: prompt Touch ID, then release the
-/// keychain-wrapped DEK into `VaultState`. Async so the blocking Touch ID
-/// prompt runs off the main thread (`spawn_blocking`) — otherwise the main run
-/// loop would be blocked and could not present the system dialog.
+/// keychain-wrapped ring — every generation it holds, each verified against
+/// this context's vault before being installed — into `VaultState`. A
+/// generation that fails verification is skipped rather than failing the
+/// whole unlock; only an entirely unverifiable ring is an error. Async so the
+/// blocking Touch ID prompt runs off the main thread (`spawn_blocking`) —
+/// otherwise the main run loop would be blocked and could not present the
+/// system dialog.
 #[tauri::command]
 pub async fn vault_unlock_biometric(
     store: State<'_, Mutex<Store>>,
@@ -1572,23 +1589,31 @@ pub async fn vault_unlock_biometric(
     .await
     .map_err(|e| e.to_string())?
     .map_err(String::from)?;
-    let (generation, dek) = crate::vault::biometric::load_dek(&context_id)
+    let ring = crate::vault::biometric::load_ring(&context_id)
         .map_err(String::from)?
         .ok_or_else(|| "vault: biometric unlock is not set up".to_string())?;
-    // The keychain item carries no proof of ownership: prove the DEK opens
-    // THIS context's vault, at the generation it was enrolled at, before it
-    // can seal anything (see `ops::verify_dek_for_store`).
-    {
+    // Every stored generation must prove it belongs to THIS context's vault
+    // before it can seal anything; one that cannot is skipped, not installed.
+    let (verified, rejected) = {
         let store = store.lock().map_err(|e| e.to_string())?;
-        ops::verify_dek_for_store(&store, generation, &dek)?;
+        ops::verify_ring_for_store(&store, &ring)
+    };
+    for (generation, err) in &rejected {
+        eprintln!("biometric unlock: generation {generation} skipped ({err})");
     }
-    // Installed at ITS OWN generation. Forcing it to 1 (as this did before)
-    // made every post-rotation enrolment unopenable, and would have let the
-    // ring seal new notes with a key stamped as another generation's.
-    vault
-        .lock()
-        .map_err(|e| e.to_string())?
-        .unlock(generation, dek);
+    if verified.is_empty() {
+        return Err(rejected
+            .into_iter()
+            .max_by_key(|(g, _)| *g)
+            .map(|(_, e)| e)
+            .unwrap_or_else(|| "vault: biometric key belongs to a different context".to_string()));
+    }
+    {
+        let mut v = vault.lock().map_err(|e| e.to_string())?;
+        for (generation, dek) in verified {
+            v.unlock(generation, dek);
+        }
+    }
     if let Ok(store) = store.lock() {
         // Store -> VaultState, per the lock-order convention near `swap_store_to`.
         if let Ok(v) = vault.lock() {

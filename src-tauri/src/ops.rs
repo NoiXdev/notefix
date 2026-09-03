@@ -996,6 +996,32 @@ pub fn verify_dek_for_store(store: &Store, generation: u32, dek: &Dek) -> Result
     }
 }
 
+/// Runs [`verify_dek_for_store`] over a whole biometric-unlock ring,
+/// partitioning it into the generations that actually open this vault and
+/// the ones that don't (with their error text). Preserves `ring`'s order —
+/// callers pass it ascending (`VaultState::snapshot`, `biometric::load_ring`),
+/// so the verified half comes back ascending too.
+///
+/// Shared by both biometric commands: `vault_biometric_enable` writes only
+/// the verified half to the keychain (nothing unverified is ever stored),
+/// and `vault_unlock_biometric` installs only the verified half into
+/// `VaultState`, logging the rest instead of failing the whole unlock.
+#[allow(clippy::type_complexity)]
+pub fn verify_ring_for_store(
+    store: &Store,
+    ring: &[(u32, Dek)],
+) -> (Vec<(u32, Dek)>, Vec<(u32, String)>) {
+    let mut verified = Vec::new();
+    let mut rejected = Vec::new();
+    for (generation, dek) in ring {
+        match verify_dek_for_store(store, *generation, dek) {
+            Ok(()) => verified.push((*generation, dek.clone())),
+            Err(e) => rejected.push((*generation, e)),
+        }
+    }
+    (verified, rejected)
+}
+
 pub fn vault_change_passphrase(store: &Store, current: &str, next: &str) -> Result<Dek, String> {
     let record = load_vault_record(store)?;
     let dek = crate::vault::unlock_passphrase(&record, current).map_err(String::from)?;
@@ -5578,6 +5604,72 @@ mod vault_entries_tests {
         checkless.dek_check = None;
         s.set_vault_record(&checkless.to_json()).unwrap();
         assert!(err_of(verify_dek_for_store(&s, 1, &dek)).contains("unlock with your passphrase"));
+    }
+
+    /// A store with a local generation-1 record and a cached generation-2
+    /// `mine` entry — the shape `verify_ring_for_store`'s ring tests share.
+    fn store_with_gen1_and_gen2(d1: &Dek, d2: &Dek) -> Store {
+        let s = store();
+        let (rec1, _rk, _dek) = crate::vault::setup("pw").unwrap();
+        // `crate::vault::setup` mints its own random DEK; rewrap the record
+        // under the caller's `d1` so generation 1 verifies against exactly
+        // that key, matching the fixture the other biometric-gate tests use.
+        let rec1 = crate::vault::rewrap_passphrase(&rec1, d1, "pw");
+        s.set_vault_record(&rec1.to_json()).unwrap();
+        let entries = VaultEntries {
+            mine: vec![MyEntry::try_from(my_entry_for(d2, 2, "pw")).unwrap()],
+            recovery: vec![],
+            rotation: vec![],
+        };
+        s.set_vault_entries(&entries.to_json()).unwrap();
+        s
+    }
+
+    /// R3: `verify_ring_for_store` partitions the ring instead of failing it
+    /// whole — a generation with no source that covers it is rejected with
+    /// "different context" (a foreign key against a real, checked record),
+    /// while a generation that does verify is kept.
+    #[test]
+    fn verify_ring_for_store_partitions_verified_from_rejected() {
+        let (d1, d2) = (Dek::random(), Dek::random());
+        let s = store_with_gen1_and_gen2(&d1, &d2);
+        let foreign = Dek::random();
+        let (verified, rejected) = verify_ring_for_store(&s, &[(1, foreign), (2, d2.clone())]);
+        assert_eq!(
+            verified.iter().map(|(g, _)| *g).collect::<Vec<_>>(),
+            vec![2]
+        );
+        assert_eq!(verified[0].1.expose(), d2.expose());
+        assert_eq!(rejected.len(), 1);
+        assert_eq!(rejected[0].0, 1);
+        assert!(rejected[0].1.contains("different context"));
+    }
+
+    #[test]
+    fn verify_ring_for_store_keeps_everything_when_every_generation_verifies() {
+        let (d1, d2) = (Dek::random(), Dek::random());
+        let s = store_with_gen1_and_gen2(&d1, &d2);
+        let (verified, rejected) = verify_ring_for_store(&s, &[(1, d1.clone()), (2, d2.clone())]);
+        assert_eq!(
+            verified.iter().map(|(g, _)| *g).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        assert_eq!(verified[0].1.expose(), d1.expose());
+        assert_eq!(verified[1].1.expose(), d2.expose());
+        assert!(rejected.is_empty());
+    }
+
+    #[test]
+    fn verify_ring_for_store_rejects_every_generation_when_none_verify() {
+        let (d1, d2) = (Dek::random(), Dek::random());
+        let s = store_with_gen1_and_gen2(&d1, &d2);
+        let (verified, rejected) =
+            verify_ring_for_store(&s, &[(1, Dek::random()), (2, Dek::random())]);
+        assert!(verified.is_empty());
+        assert_eq!(
+            rejected.iter().map(|(g, _)| *g).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
     }
 
     #[test]

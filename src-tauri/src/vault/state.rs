@@ -74,6 +74,13 @@ impl VaultState {
     pub fn touch(&mut self, now: i64) {
         self.last_active = Some(now);
     }
+
+    /// Every generation with a clone of its DEK, ascending — the keychain
+    /// snapshot for biometric unlock. Clones live only as long as the caller
+    /// keeps them (`Dek` zeroizes on drop).
+    pub fn snapshot(&self) -> Vec<(u32, Dek)> {
+        self.ring.iter().map(|(g, d)| (*g, d.clone())).collect()
+    }
 }
 
 #[cfg(test)]
@@ -111,5 +118,18 @@ mod tests {
         assert_eq!(s.generations(), vec![1, 2]);
         s.lock();
         assert!(!s.is_unlocked());
+    }
+
+    #[test]
+    fn snapshot_lists_every_generation_ascending_with_its_key() {
+        let mut s = VaultState::default();
+        let (d1, d3) = (Dek::random(), Dek::random());
+        s.unlock(3, d3.clone());
+        s.unlock(1, d1.clone());
+        let snap = s.snapshot();
+        assert_eq!(snap.iter().map(|(g, _)| *g).collect::<Vec<_>>(), vec![1, 3]);
+        assert_eq!(snap[0].1.expose(), d1.expose());
+        assert_eq!(snap[1].1.expose(), d3.expose());
+        assert!(VaultState::default().snapshot().is_empty());
     }
 }
