@@ -48,13 +48,18 @@ part (see above).
 
 The biometric keychain item is **per context** (`vault-dek:<context id>`) —
 every context is its own vault with its own DEK, so an app-wide item would
-hand one context another's key. The item stores the key generation alongside
-the DEK, so an enrolment made after a rotation installs itself at the right
-generation. The `VaultRecord` carries a `dek_check` (magic sealed under the
-DEK); every unlock path verifies a candidate DEK against it before installing
-it, and records that predate the check gain it on their next
-passphrase/recovery unlock. The pre-per-context item is deleted once at
-startup; users re-enable Touch ID per context.
+hand one context another's key. The biometric keychain item holds the whole
+key ring (every generation, format v2: version byte, count, then generation +
+key per entry; the older single-key items still load) and is rewritten
+silently whenever the ring gains a verified generation. A device whose
+local-only vault met an existing workspace vault (`vault_conflict`) resolves
+it from the Security page: `vault_resolve_conflict` opens both vaults,
+re-seals the device's notes under the workspace key (or unprotects them) and
+turns the device into a normal workspace device. The `VaultRecord` carries a
+`dek_check` (magic sealed under the DEK); every unlock path verifies a
+candidate DEK against it before installing it, and records that predate the
+check gain it on their next passphrase/recovery unlock. The pre-per-context
+item is deleted once at startup; users re-enable Touch ID per context.
 
 For a **server context** the vault belongs to the workspace: the server keeps
 one wrapped copy of each key generation per member (`workspace_vault_keys`),
