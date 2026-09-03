@@ -113,7 +113,6 @@ vi.mock("../api", () => ({
       biometricAvailable: mockBiometricAvailable,
       biometricEnable: mockBiometricEnable,
       biometricDisable: mockBiometricDisable,
-      inviteRecode: mockInviteRecode,
     },
     contexts: {
       list: mockContextsList,
@@ -124,6 +123,7 @@ vi.mock("../api", () => ({
       vaultInviteResolve: mockInviteResolve,
       vaultInviteShare: mockInviteShare,
       vaultInviteAccept: mockInviteAccept,
+      vaultInviteRecode: mockInviteRecode,
       serverAuthBegin: mockServerAuthBegin,
     },
   },
@@ -528,7 +528,7 @@ describe("Settings — Security", () => {
     fireEvent.click(screen.getByText("Sicherheit"));
     await waitFor(() =>
       expect(
-        screen.getByText("Du hast noch keinen Wiederherstellungs-Schlüssel für diesen Arbeitsbereich."),
+        screen.getByText("Du hast noch keinen Wiederherstellungsschlüssel für diesen Arbeitsbereich."),
       ).toBeInTheDocument(),
     );
 
@@ -1456,6 +1456,19 @@ describe("Settings — Contexts page", () => {
     await waitFor(() => expect(mockInviteRecode).toHaveBeenCalledOnce());
     expect(await screen.findByText("Einladung 5")).toBeInTheDocument();
     expect(screen.getByText("BBBB-2222")).toBeInTheDocument();
+  });
+
+  it("when backend returns no re-codes, shows the appropriate empty message", async () => {
+    mockVaultStatus.mockResolvedValue(unlockedVault());
+    mockContextsList.mockResolvedValue(serverActive.map(c => c.kind === "server" ? { ...c, invitesNeedingCode: 1 } : c));
+    mockInviteRecode.mockResolvedValueOnce([]);
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Kontexte"));
+    await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+    openActions("c-server");
+    fireEvent.click(screen.getByRole("button", { name: "Neue Codes erzeugen" }));
+    await waitFor(() => expect(mockInviteRecode).toHaveBeenCalledOnce());
+    expect(await screen.findByText("Keine Einladung braucht gerade einen neuen Code.")).toBeInTheDocument();
   });
 
   it("ignores a second click on re-code while the first is still in flight", async () => {

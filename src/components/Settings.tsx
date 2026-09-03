@@ -7,7 +7,7 @@ import { faAndroid, faApple, faGooglePlay } from "@fortawesome/free-brands-svg-i
 import { api, type AppInfo, type UpdateInfo, type ReleaseInfo } from "../api";
 import type { ContextInfo } from "../contexts";
 import { startServerAuth } from "../serverAuth";
-import type { Stats, RotationCode, InviteCode, RecoveryCreated } from "../types";
+import type { Stats, RotationCode, RecodedInvite, RecoveryCreated } from "../types";
 import type { DateFormat } from "../dates";
 import type { AppSettings } from "../hooks/useSettings";
 import { useVault } from "../hooks/useVault";
@@ -1136,7 +1136,7 @@ function ContextsPage() {
   const [error, setError] = useState<string | null>(null);
   const [inviteCode, setInviteCode] = useState<string | null>(null);
   const [rotationCodes, setRotationCodes] = useState<RotationCode[] | null>(null);
-  const [inviteCodes, setInviteCodes] = useState<InviteCode[] | null>(null);
+  const [inviteCodes, setInviteCodes] = useState<RecodedInvite[] | null>(null);
   const [sharing, setSharing] = useState(false);
   // Kept apart from `error` (the add-a-context flow's, shown at the bottom):
   // a failed share belongs next to the row whose button started it.
@@ -1232,7 +1232,7 @@ function ContextsPage() {
     setShareError(null);
     setSharing(true);
     try {
-      setInviteCodes(await api.vault.inviteRecode());
+      setInviteCodes(await api.contexts.vaultInviteRecode());
       setCtx(await api.contexts.list());
     } catch (e) {
       setShareError(shareErrorFor(e));
@@ -1412,6 +1412,7 @@ function ContextsPage() {
         <VaultCodesDialog
           title={t("vault.rotation.codesTitle")}
           hint={t("vault.rotation.codesHint")}
+          emptyText={t("vault.rotation.done")}
           entries={rotationCodes.map(c => ({ id: `member-${c.userId}`, label: c.name.trim() ? c.name : t("vault.rotation.codeFor", { id: c.userId }), code: c.code }))}
           onClose={() => setRotationCodes(null)}
         />
@@ -1420,6 +1421,7 @@ function ContextsPage() {
         <VaultCodesDialog
           title={t("vault.invite.recodeTitle")}
           hint={t("vault.invite.recodeHint")}
+          emptyText={t("vault.invite.recodeNone")}
           entries={inviteCodes.map(c => ({ id: `inv-${c.invitationId}`, label: t("vault.invite.codeForInvitation", { id: c.invitationId }), code: c.code }))}
           onClose={() => setInviteCodes(null)}
         />

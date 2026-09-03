@@ -10,6 +10,7 @@ interface CodeEntry {
 interface Props {
   title: string;
   hint: string;
+  emptyText: string;
   entries: CodeEntry[];
   onClose: () => void;
 }
@@ -24,7 +25,7 @@ interface Props {
  * closing this dialog is the last time they exist in the app. Losing one
  * needs another rotation or re-code.
  */
-export default function VaultCodesDialog({ title, hint, entries, onClose }: Props) {
+export default function VaultCodesDialog({ title, hint, emptyText, entries, onClose }: Props) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState<string | null>(null);
   // Which entry's copy failed, if any — see `VaultInviteCodeDialog`: a code
@@ -70,7 +71,7 @@ export default function VaultCodesDialog({ title, hint, entries, onClose }: Prop
               )}
             </div>
           ))}
-          {entries.length === 0 && <p className="text-gray-400 text-sm">{t('vault.rotation.done')}</p>}
+          {entries.length === 0 && <p className="text-gray-400 text-sm">{emptyText}</p>}
         </div>
         <div className="flex justify-end">
           <button

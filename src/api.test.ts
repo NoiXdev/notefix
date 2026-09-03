@@ -512,6 +512,15 @@ describe('api.contexts', () => {
       undefined,
     );
   });
+
+  it('vaultInviteRecode() calls vault_invite_recode with no args and resolves the array', async () => {
+    await expectInvoke(
+      () => api.contexts.vaultInviteRecode(),
+      'vault_invite_recode',
+      undefined,
+      [{ invitationId: 5, code: 'AAAA-1111' }, { invitationId: 6, code: 'BBBB-2222' }],
+    );
+  });
 });
 
 describe('api.vault', () => {
@@ -658,15 +667,6 @@ describe('api.vault', () => {
       'folder_set_locked',
       { id: 'f1', locked: true },
       undefined,
-    );
-  });
-
-  it('inviteRecode() calls vault_invite_recode with no args and resolves the array', async () => {
-    await expectInvoke(
-      () => api.vault.inviteRecode(),
-      'vault_invite_recode',
-      undefined,
-      [{ invitationId: 5, code: 'AAAA-1111' }, { invitationId: 6, code: 'BBBB-2222' }],
     );
   });
 });

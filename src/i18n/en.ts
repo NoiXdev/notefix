@@ -611,6 +611,7 @@ export const en = {
       recode: 'Create new codes',
       recodeTitle: 'New invitation codes',
       recodeHint: 'Hand each invitee their code separately from the invitation link. The codes are shown only once.',
+      recodeNone: 'No invitation needs a new code right now.',
       codeForInvitation: 'Invitation {{id}}',
       conflictHint: 'Resolve the vault conflict under Security first.',
       outdatedHint: 'Redeem the rotation code first — this device still holds the old key.',

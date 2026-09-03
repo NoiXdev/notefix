@@ -132,11 +132,10 @@ export interface ConflictOutcome {
 }
 
 /**
- * One invitation re-coded after a key rotation retired its wrap, and the
- * fresh one-time code that opens it. Shown once, to be handed over out of
- * band — never stored.
+ * One re-coded invitation and its fresh one-time code.
+ * Shown once, to be handed over out of band — never stored.
  */
-export interface InviteCode {
+export interface RecodedInvite {
   invitationId: number;
   code: string;
 }
