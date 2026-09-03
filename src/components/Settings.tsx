@@ -1370,7 +1370,7 @@ function ContextsPage() {
       {inviteCodes && (
         <VaultCodesDialog
           title={t("vault.invite.recodeTitle")}
-          hint={t("vault.invite.shareHintDetail")}
+          hint={t("vault.invite.recodeHint")}
           entries={inviteCodes.map(c => ({ id: `inv-${c.invitationId}`, label: t("vault.invite.codeForInvitation", { id: c.invitationId }), code: c.code }))}
           onClose={() => setInviteCodes(null)}
         />

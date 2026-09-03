@@ -610,6 +610,7 @@ export const de = {
       done: 'Fertig',
       recode: 'Neue Codes erzeugen',
       recodeTitle: 'Neue Einladungs-Codes',
+      recodeHint: 'Gib jeder eingeladenen Person ihren Code getrennt vom Einladungslink weiter. Die Codes werden nur einmal angezeigt.',
       codeForInvitation: 'Einladung {{id}}',
     },
     imagesUnencryptedHint: 'Bilder in dieser Notiz bleiben unverschlüsselt. Der Text wird geschützt, die Bilddateien liegen weiter offen auf diesem Gerät.',

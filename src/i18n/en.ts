@@ -610,6 +610,7 @@ export const en = {
       done: 'Done',
       recode: 'Create new codes',
       recodeTitle: 'New invitation codes',
+      recodeHint: 'Hand each invitee their code separately from the invitation link. The codes are shown only once.',
       codeForInvitation: 'Invitation {{id}}',
     },
     imagesUnencryptedHint: 'Images in this note stay unencrypted. The text is protected, but the image files remain readable on this device.',
