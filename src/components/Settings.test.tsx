@@ -19,6 +19,7 @@ const {
   mockVaultRotate,
   mockRotationRedeem,
   mockRecoveryFollowup,
+  mockResolveConflict,
   mockBiometricAvailable,
   mockBiometricEnable,
   mockBiometricDisable,
@@ -56,6 +57,7 @@ const {
     Promise.resolve([{ userId: 2, name: "", code: "AAAAA-BBBBB" }, { userId: 3, name: "", code: "CCCCC-DDDDD" }])),
   mockRotationRedeem: vi.fn((_code: string, _passphrase: string) => Promise.resolve()),
   mockRecoveryFollowup: vi.fn((_recoveryKey: string) => Promise.resolve()),
+  mockResolveConflict: vi.fn(() => Promise.resolve({ changed: 0, skipped: 0 })),
   mockBiometricAvailable: vi.fn(() => Promise.resolve(false)),
   mockBiometricEnable: vi.fn(() => Promise.resolve()),
   mockBiometricDisable: vi.fn(() => Promise.resolve()),
@@ -102,6 +104,7 @@ vi.mock("../api", () => ({
       rotate: mockVaultRotate,
       rotationRedeem: mockRotationRedeem,
       recoveryFollowup: mockRecoveryFollowup,
+      resolveConflict: mockResolveConflict,
       biometricAvailable: mockBiometricAvailable,
       biometricEnable: mockBiometricEnable,
       biometricDisable: mockBiometricDisable,
@@ -400,6 +403,14 @@ describe("Settings — Security", () => {
     await waitFor(() => expect(screen.getByText(/hatte bereits einen Tresor mit einem anderen Schlüssel/)).toBeInTheDocument());
     // Purely informational: the usual actions stay available.
     expect(screen.getByText("Jetzt sperren")).toBeInTheDocument();
+  });
+
+  it("opens the conflict dialog from the banner", async () => {
+    mockVaultStatus.mockResolvedValue({ exists: true, unlocked: false, biometric: false, conflict: true, recoveryHolder: true, rotationCode: false, recoveryMissing: false, sealOutdated: false });
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Sicherheit"));
+    fireEvent.click(await screen.findByRole("button", { name: "Konflikt lösen…" }));
+    expect(screen.getByPlaceholderText("Passwort des Arbeitsbereichs")).toBeInTheDocument();
   });
 
   it("shows no conflict warning when the workspace and this device hold one vault", async () => {

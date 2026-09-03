@@ -86,5 +86,15 @@ export function useVault() {
     [refresh],
   );
 
-  return { status, refresh, setup, unlock, unlockRecovery, unlockBiometric, lock, changePassphrase, redeemRotation, recoveryFollowup };
+  /** Resolve a local-vs-workspace vault conflict (both secrets verified backend-side). */
+  const resolveConflict = useCallback(
+    async (workspacePassphrase: string, localSecret: { kind: 'passphrase' | 'recovery'; value: string }, mode: 'merge' | 'unprotect') => {
+      const outcome = await api.vault.resolveConflict(workspacePassphrase, localSecret, mode);
+      await refresh();
+      return outcome;
+    },
+    [refresh],
+  );
+
+  return { status, refresh, setup, unlock, unlockRecovery, unlockBiometric, lock, changePassphrase, redeemRotation, recoveryFollowup, resolveConflict };
 }

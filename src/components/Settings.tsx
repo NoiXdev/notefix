@@ -24,6 +24,7 @@ import VaultAcceptInviteDialog from "./VaultAcceptInviteDialog";
 import VaultRotateDialog from "./VaultRotateDialog";
 import VaultRotationCodesDialog from "./VaultRotationCodesDialog";
 import VaultRotationRedeemDialog from "./VaultRotationRedeemDialog";
+import VaultConflictDialog from "./VaultConflictDialog";
 import WhatsNew from "./WhatsNew";
 import { runSystemChecks } from "../systemChecks";
 import { OSS_LIBS } from "../licenses";
@@ -265,6 +266,7 @@ function SecurityPage({ settings, onSetSetting }: {
   const [showRecoveryFollowup, setShowRecoveryFollowup] = useState(false);
   const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null);
   const [showRotationRedeem, setShowRotationRedeem] = useState(false);
+  const [showConflict, setShowConflict] = useState(false);
 
   useEffect(() => {
     api.vault.biometricAvailable().then(setBiometricAvailable);
@@ -322,7 +324,14 @@ function SecurityPage({ settings, onSetSetting }: {
           className="mb-6 rounded border px-3 py-2 text-sm"
           style={{ borderColor: "#d97706", background: "#fffbeb", color: "#7c2d12" }}
         >
-          {t("vault.conflict.hint")}
+          <span>{t("vault.conflict.hint")}</span>
+          <button
+            onClick={() => setShowConflict(true)}
+            className="ml-3 px-3 py-1 rounded text-xs font-medium border"
+            style={{ borderColor: "#d97706", color: "#7c2d12" }}
+          >
+            {t("vault.conflict.resolve")}
+          </button>
         </div>
       )}
 
@@ -496,6 +505,9 @@ function SecurityPage({ settings, onSetSetting }: {
           onSuccess={() => setShowRotationRedeem(false)}
           onCancel={() => setShowRotationRedeem(false)}
         />
+      )}
+      {showConflict && (
+        <VaultConflictDialog resolve={vault.resolveConflict} onClose={() => setShowConflict(false)} />
       )}
       {showRecoveryFollowup && (
         <PromptDialog
