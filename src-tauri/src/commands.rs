@@ -1540,6 +1540,7 @@ pub fn vault_status(
             unlocked,
             flags.conflict,
         ),
+        ring_is_workspace: flags.ring_is_workspace,
         // Biometric unlock is offered only when the device can evaluate Touch
         // ID (`is_available`) AND the user has enrolled a wrapped DEK
         // (`is_enrolled`). `is_enrolled` reads the keychain without prompting.
@@ -2089,8 +2090,9 @@ fn stamp_recoded(store: &Store, codes: &[RecodedInvite], generation: u32) -> Res
 /// Mints a fresh vault code for every open invitation whose wrap a rotation
 /// retired: one attach per invitation under the ring's newest generation
 /// (the server replaces the stale wrap). The codes are returned once and
-/// stored nowhere; the cached invitation list is stamped so the badge clears
-/// right away.
+/// stored nowhere; the cached invitation list is stamped (best effort — a
+/// failed stamp only leaves the badge until the next pull; the codes are
+/// always returned).
 ///
 /// An invitation can expire between the pull that listed it and this attach
 /// — the server answers 410 (`SyncError::Gone`), read here as "skip it": no

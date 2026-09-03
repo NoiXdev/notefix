@@ -50,11 +50,6 @@ describe('VaultCodesDialog', () => {
     expect(screen.getByText('Nichts zu tun')).toBeInTheDocument();
   });
 
-  it('says the empty state when there is nothing left to show', () => {
-    render(<VaultCodesDialog title="T" hint="H" emptyText="Schlüssel gewechselt" entries={[]} onClose={vi.fn()} />);
-    expect(screen.getByText('Schlüssel gewechselt')).toBeInTheDocument();
-  });
-
   it('labels entries with the given label and names the copy button after it', () => {
     render(<VaultCodesDialog title="T" hint="H" emptyText="Nichts mehr" entries={[{ id: 'inv-5', label: 'Einladung 5', code: 'AAAA-BBBB' }]} onClose={vi.fn()} />);
     expect(screen.getByText('Einladung 5')).toBeInTheDocument();

@@ -3,7 +3,7 @@ import { api } from '../api';
 import type { VaultStatus } from '../types';
 
 export function useVault() {
-  const [status, setStatus] = useState<VaultStatus>({ exists: false, unlocked: false, biometric: false, conflict: false, recoveryHolder: true, rotationCode: false, recoveryMissing: false, sealOutdated: false, recoveryEligible: false });
+  const [status, setStatus] = useState<VaultStatus>({ exists: false, unlocked: false, biometric: false, conflict: false, recoveryHolder: true, rotationCode: false, recoveryMissing: false, sealOutdated: false, recoveryEligible: false, ringIsWorkspace: false });
 
   const refresh = useCallback(async () => {
     try {

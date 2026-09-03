@@ -155,6 +155,13 @@ pub struct VaultStatus {
     /// is a server-workspace owner who holds none yet and the vault is
     /// unlocked — see [`recovery_eligible`].
     pub recovery_eligible: bool,
+    /// Whether the key the ring would seal with is the WORKSPACE's rather
+    /// than this device's own. `false` on a conflicted device still sealing
+    /// with its own vault's key, and `false` for a locked vault. Mirrors
+    /// [`VaultStatusFlags::ring_is_workspace`] — see [`invite_wrap_allowed`]
+    /// for the rule it feeds: a conflict alone never blocks minting an
+    /// invite wrap, only a conflict paired with `!ring_is_workspace` does.
+    pub ring_is_workspace: bool,
 }
 
 // ---------------------------------------------------------------------------

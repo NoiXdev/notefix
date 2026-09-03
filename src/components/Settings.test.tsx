@@ -156,13 +156,13 @@ import type { VaultStatus } from "../types";
 const vaultStatus = (overrides: Partial<VaultStatus> = {}): VaultStatus => ({
   exists: false, unlocked: false, biometric: false, conflict: false,
   recoveryHolder: true, rotationCode: false, recoveryMissing: false, sealOutdated: false,
-  recoveryEligible: false,
+  recoveryEligible: false, ringIsWorkspace: false,
   ...overrides,
 });
 
 /** An unlocked vault on a workspace — what every vault ACTION needs. */
 const unlockedVault = (overrides: Partial<VaultStatus> = {}) =>
-  vaultStatus({ exists: true, unlocked: true, ...overrides });
+  vaultStatus({ exists: true, unlocked: true, ringIsWorkspace: true, ...overrides });
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -1255,7 +1255,7 @@ describe("Settings — Contexts page", () => {
   });
 
   it("withholds sharing and re-coding on a conflicted device and says why", async () => {
-    mockVaultStatus.mockResolvedValue(unlockedVault({ conflict: true }));
+    mockVaultStatus.mockResolvedValue(unlockedVault({ conflict: true, ringIsWorkspace: false }));
     mockContextsList.mockResolvedValue(serverActive.map(c => c.kind === "server" ? { ...c, invitesNeedingCode: 2 } : c));
     render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
     fireEvent.click(screen.getByText("Kontexte"));
@@ -1265,6 +1265,23 @@ describe("Settings — Contexts page", () => {
     openActions("c-server");
     expect(screen.queryByRole("button", { name: "Neue Codes erzeugen" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Tresor freigeben" })).not.toBeInTheDocument();
+  });
+
+  // A conflicted device whose ring already carries the workspace's newest
+  // key (post-join, unlocked with the workspace passphrase) is a reachable,
+  // harmless state — the backend's `invite_wrap_allowed` only refuses when
+  // `conflict` AND `!ringIsWorkspace` hold together, so `conflict` alone
+  // must not withhold share/re-code/rotate here.
+  it("offers sharing on a conflicted device whose ring already matches the workspace", async () => {
+    mockVaultStatus.mockResolvedValue(unlockedVault({ conflict: true, ringIsWorkspace: true }));
+    mockContextsList.mockResolvedValue(serverActive.map(c => c.kind === "server" ? { ...c, invitesNeedingCode: 2 } : c));
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Kontexte"));
+    await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+    expect(screen.queryByText("Löse zuerst den Tresor-Konflikt unter Sicherheit.")).not.toBeInTheDocument();
+    openActions("c-server");
+    expect(screen.getByRole("button", { name: "Tresor freigeben" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Neue Codes erzeugen" })).toBeInTheDocument();
   });
 
   it("withholds sharing on a device that has not redeemed the rotation", async () => {
@@ -1469,6 +1486,19 @@ describe("Settings — Contexts page", () => {
     fireEvent.click(screen.getByRole("button", { name: "Neue Codes erzeugen" }));
     await waitFor(() => expect(mockInviteRecode).toHaveBeenCalledOnce());
     expect(await screen.findByText("Keine Einladung braucht gerade einen neuen Code.")).toBeInTheDocument();
+  });
+
+  it("shows the outdated-seal hint when the backend refuses a re-code for an unredeemed rotation", async () => {
+    mockVaultStatus.mockResolvedValue(unlockedVault());
+    mockContextsList.mockResolvedValue(serverActive.map(c => c.kind === "server" ? { ...c, invitesNeedingCode: 1 } : c));
+    mockInviteRecode.mockRejectedValueOnce(new Error("vault: redeem the rotation code first"));
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Kontexte"));
+    await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+    openActions("c-server");
+    fireEvent.click(screen.getByRole("button", { name: "Neue Codes erzeugen" }));
+    await waitFor(() => expect(mockInviteRecode).toHaveBeenCalledOnce());
+    expect(await screen.findByText("Löse zuerst den Rotationscode ein — dieses Gerät hat noch den alten Schlüssel.")).toBeInTheDocument();
   });
 
   it("ignores a second click on re-code while the first is still in flight", async () => {

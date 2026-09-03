@@ -1151,14 +1151,18 @@ function ContextsPage() {
 
   /**
    * Sharing wraps the ring's newest DEK under a one-time code, so the vault
-   * has to be open AND that DEK has to be the workspace's current key: a
-   * conflicted device may still seal with its own vault's key, and a device
-   * that has not redeemed the latest rotation holds a retired one — the
-   * backend refuses both (`invite_wrap_allowed`), and by then the user has
-   * already pasted an invitation link.
+   * has to be open AND that DEK has to be the workspace's current key. The
+   * backend (`invite_wrap_allowed`) refuses only when the device is
+   * conflicted AND its ring is still sealing with its own vault's key —
+   * `conflict` alone is not enough, since a conflicted device whose ring
+   * already matches the workspace (post-join, unlocked with the workspace
+   * passphrase) is a reachable, harmless state. It also refuses separately
+   * when the device has not redeemed the latest rotation and so holds a
+   * retired key, and by then the user has already pasted an invitation link.
    */
   const canShare = (c: ContextInfo) =>
-    canInvite(c) && c.vaultExists && vault.status.unlocked && !vault.status.conflict && !vault.status.sealOutdated;
+    canInvite(c) && c.vaultExists && vault.status.unlocked &&
+    !(vault.status.conflict && !vault.status.ringIsWorkspace) && !vault.status.sealOutdated;
 
   /**
    * Rotating needs everything sharing needs, plus a workspace that is
@@ -1172,17 +1176,17 @@ function ContextsPage() {
   const shareBlockedHint = (c: ContextInfo): string | null => {
     if (!(canInvite(c) && c.vaultExists)) return null;
     if (!vault.status.unlocked) return t("vault.lockedHint");
-    if (vault.status.conflict) return t("vault.invite.conflictHint");
+    if (vault.status.conflict && !vault.status.ringIsWorkspace) return t("vault.invite.conflictHint");
     if (vault.status.sealOutdated) return t("vault.invite.outdatedHint");
     return null;
   };
 
   /**
    * Maps a failed vault-mint attempt (share or re-code — both take the DEK
-   * out of the live ring and can only fail the same three ways) to the
-   * message to show next to the row. A locked vault and a stale context are
-   * the two failures with an obvious next step, so neither goes through the
-   * raw-text interpolation.
+   * out of the live ring) to the message to show next to the row. A locked
+   * vault, a stale context, a vault conflict and an unredeemed rotation each
+   * have an obvious next step, so they get their own hint text rather than
+   * the raw-text interpolation the fallback uses.
    */
   const shareErrorFor = (e: unknown) => {
     const msg = e instanceof Error ? e.message : String(e ?? "");
@@ -1225,7 +1229,7 @@ function ContextsPage() {
   /**
    * Mints a fresh code for every open invitation whose wrap a key rotation
    * retired — the same failure mapping as `shareVault`, since both mint a
-   * code from the live ring and can only fail the same three ways.
+   * code from the live ring.
    */
   const recode = async () => {
     if (sharing) return;
@@ -1273,7 +1277,9 @@ function ContextsPage() {
       <h1 className="text-2xl font-bold text-gray-900 mb-1">{t("contexts.title")}</h1>
       <p className="text-sm text-gray-500 mb-6">{t("contexts.subtitle")}</p>
       <SettingsSection title={t("contexts.sections.manage")}>
-        {ctx.map(c => (
+        {ctx.map(c => {
+          const hint = shareBlockedHint(c);
+          return (
           <div key={c.id} data-testid={`context-row-${c.id}`} className="flex items-start justify-between gap-3 rounded border px-3 py-2" style={{ borderColor: "var(--line-muted)", background: "var(--paper-raised)" }}>
             <div className="min-w-0">
               <div className="flex items-center gap-2 text-sm font-medium text-gray-800">
@@ -1337,8 +1343,9 @@ function ContextsPage() {
                     { label: t("contexts.rename"), onClick: () => setDialog({ mode: "rename", c }) },
                     ...(c.vaultExists ? [{ label: t("contexts.vault.changePassphrase"), onClick: () => setDialog({ mode: "vault", c }) }] : []),
                     // Sharing and rotating both take the DEK out of the live ring,
-                    // so both are hidden while the vault is locked — with the hint
-                    // below saying why, rather than an item the backend refuses.
+                    // so both are hidden while the vault is locked, conflicted or
+                    // outdated — with the hint below saying why, rather than an
+                    // item the backend refuses.
                     ...(canShare(c) ? [{ label: t("vault.invite.share"), onClick: () => { setShareError(null); setDialog({ mode: "inviteShare", c }); } }] : []),
                     ...(canShare(c) && c.invitesNeedingCode > 0 ? [{ label: t("vault.invite.recode"), onClick: () => void recode() }] : []),
                     ...(canRotate(c) ? [{ label: t("vault.rotation.run"), onClick: () => { setError(null); setDialog({ mode: "rotate", c }); } }] : []),
@@ -1347,12 +1354,13 @@ function ContextsPage() {
                   ]}
                 />
               )}
-              {shareBlockedHint(c) && <span className="text-xs text-gray-500 text-right">{shareBlockedHint(c)}</span>}
+              {hint && <span className="text-xs text-gray-500 text-right">{hint}</span>}
               {sharing && c.active && <span className="text-xs text-gray-500">{t("contexts.connecting")}</span>}
               {shareError && c.active && <span className="text-xs text-red-600 text-right" role="alert">{shareError}</span>}
             </div>
           </div>
-        ))}
+          );
+        })}
         <div className="flex items-center gap-2">
           <button onClick={() => setDialog({ mode: "add" })} className="px-4 py-1.5 rounded text-sm font-medium" style={{ background: "var(--line)", color: "#1c1917" }}>{t("contexts.add")}</button>
           <button onClick={() => { setError(null); setDialog({ mode: "addServer" }); }} className="px-4 py-1.5 rounded text-sm font-medium border" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>{t("contexts.addServer")}</button>

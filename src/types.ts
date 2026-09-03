@@ -98,6 +98,11 @@ export interface VaultStatus {
    * yet, and the vault is unlocked (the wraps are made from the live keys).
    */
   recoveryEligible: boolean;
+  /**
+   * Whether the ring's newest key is the workspace's — false on a
+   * conflicted device still sealing with its own key.
+   */
+  ringIsWorkspace: boolean;
 }
 
 /**
