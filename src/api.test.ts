@@ -601,6 +601,15 @@ describe('api.vault', () => {
     );
   });
 
+  it('vault.resolveConflict passes both secrets and the mode to vault_resolve_conflict', async () => {
+    await expectInvoke(
+      () => api.vault.resolveConflict('ws', { kind: 'recovery', value: 'KEY' }, 'unprotect'),
+      'vault_resolve_conflict',
+      { workspacePassphrase: 'ws', localSecret: { kind: 'recovery', value: 'KEY' }, mode: 'unprotect' },
+      { changed: 1, skipped: 0 },
+    );
+  });
+
   it('biometricAvailable() calls vault_biometric_available with no args', async () => {
     await expectInvoke(() => api.vault.biometricAvailable(), 'vault_biometric_available', undefined, true);
   });

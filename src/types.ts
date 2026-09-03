@@ -103,3 +103,12 @@ export interface RotationCode {
   name: string;
   code: string;
 }
+
+/**
+ * What resolving a local-vs-workspace vault conflict did: how many notes left
+ * the device's own vault, and how many neither key could open.
+ */
+export interface ConflictOutcome {
+  changed: number;
+  skipped: number;
+}

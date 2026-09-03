@@ -142,6 +142,13 @@ export const api = {
     /** Creator-only: add the recovery wrap for a generation someone else rotated. */
     recoveryFollowup: (recoveryKey: string): Promise<void> =>
       invoke("vault_recovery_followup", { recoveryKey }),
+    /** Resolve a local-vs-workspace vault conflict; both secrets are verified before anything is written. */
+    resolveConflict: (
+      workspacePassphrase: string,
+      localSecret: { kind: 'passphrase' | 'recovery'; value: string },
+      mode: 'merge' | 'unprotect',
+    ): Promise<import("./types").ConflictOutcome> =>
+      invoke("vault_resolve_conflict", { workspacePassphrase, localSecret, mode }),
     biometricAvailable: (): Promise<boolean> => invoke("vault_biometric_available"),
     biometricEnable: (): Promise<void> => invoke("vault_biometric_enable"),
     biometricDisable: (): Promise<void> => invoke("vault_biometric_disable"),

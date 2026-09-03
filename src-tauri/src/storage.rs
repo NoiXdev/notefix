@@ -925,6 +925,22 @@ impl Store {
         let rows = stmt.query_map((gen, limit as i64), |r| r.get::<_, String>(0))?;
         rows.collect()
     }
+
+    /// Every protected note — the work list of a conflict resolution, which
+    /// must look at each one regardless of generation.
+    ///
+    /// TRASHED rows are included on purpose. A conflict resolution replaces
+    /// the device's local vault record — the only wrap of its own DEK — so a
+    /// protected note left behind in the trash would become permanently
+    /// unopenable the moment it was restored. Its ciphertext moves exactly
+    /// like a live note's.
+    pub fn protected_note_ids(&self) -> rusqlite::Result<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id FROM notes WHERE protected = 1 ORDER BY updated_at ASC")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        rows.collect()
+    }
 }
 
 /// Upsert a server note against an arbitrary connection (used inside a tx).

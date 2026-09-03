@@ -2361,6 +2361,80 @@ pub async fn vault_recovery_followup(app: AppHandle, recovery_key: String) -> Re
     Ok(())
 }
 
+/// The device's own secret for a conflict resolution — `kind` is
+/// "passphrase" or "recovery".
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalSecretArg {
+    pub kind: String,
+    pub value: String,
+}
+
+/// Resolves a vault conflict: opens the workspace vault with its passphrase
+/// and this device's own vault with its own secret, moves every locally
+/// sealed note out of the device vault (re-sealed for the workspace, or
+/// unprotected), then makes this a normal workspace device. Both secrets are
+/// checked before anything is written; the store writes re-check the sync
+/// epoch like every other vault command.
+#[tauri::command]
+pub fn vault_resolve_conflict(
+    app: AppHandle,
+    workspace_passphrase: String,
+    local_secret: LocalSecretArg,
+    mode: ops::ConflictMode,
+) -> Result<ops::ConflictOutcome, String> {
+    let reg_state = app.state::<Mutex<crate::profiles::Registry>>();
+    let store_state = app.state::<Mutex<Store>>();
+    let vault_state = app.state::<Mutex<crate::vault::state::VaultState>>();
+    let (epoch, ctx) = {
+        let r = reg_state.lock().map_err(|e| e.to_string())?;
+        (
+            app.state::<ops::SyncEpoch>().current(),
+            ops::active_server(&r),
+        )
+    };
+    let ctx = ctx
+        .filter(|c| !c.workspace_id.is_empty())
+        .ok_or_else(|| "vault: not a workspace context".to_string())?;
+    let inputs = {
+        let store = store_state.lock().map_err(|e| e.to_string())?;
+        ops::load_conflict_inputs(&store)?
+    };
+    let secret = match local_secret.kind.as_str() {
+        "recovery" => ops::VaultSecret::Recovery(&local_secret.value),
+        _ => ops::VaultSecret::Passphrase(&local_secret.value),
+    };
+    // Argon2 for both sides — no lock is held here.
+    let (ring, local_dek) = ops::open_conflict_sides(&inputs, &workspace_passphrase, &secret)?;
+    let outcome = {
+        let store = store_state.lock().map_err(|e| e.to_string())?;
+        check_epoch(&app, epoch)?;
+        let outcome = ops::resolve_conflict(&store, &ring, &local_dek, mode)?;
+        ops::finish_conflict_resolution(&store, &inputs.entries)?;
+        outcome
+    };
+    // The device's own key leaves the ring; the workspace ring replaces it.
+    // The clear and the install are two lock scopes, so the install re-checks
+    // the epoch INSIDE the VaultState lock it takes (same atomic
+    // check-then-install as `vault_rotate` / `vault_rotation_redeem`) — a
+    // `swap_store_to` landing in between must not file this workspace's ring,
+    // or its Touch ID refresh under `ctx.id`, in the incoming context.
+    vault_state.lock().map_err(|e| e.to_string())?.lock();
+    let installed = install_generations_if(&vault_state, &ring, Some(&ctx.id), || {
+        !app.state::<ops::SyncEpoch>().changed_since(epoch)
+    })?;
+    if !installed {
+        // The store writes above already passed their own epoch check, so the
+        // resolution stands and the outcome is reported; only the ring stays
+        // cleared, and the next unlock rebuilds it.
+        eprintln!(
+            "vault conflict resolution: the active context changed before the workspace keys were installed"
+        );
+    }
+    broadcast_context_changed(&app);
+    Ok(outcome)
+}
+
 /// Changes a context's vault passphrase from the Kontexte page, without
 /// switching into it first. For the ACTIVE context this is exactly
 /// `vault_change_passphrase` above (managed store + re-arming

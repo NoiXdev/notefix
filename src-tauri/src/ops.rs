@@ -2072,6 +2072,165 @@ pub fn apply_rotation_redeem(store: &Store, entry: MyEntryWire) -> Result<(), St
         .map_err(|e| e.to_string())
 }
 
+/// How a conflicted device's locally sealed notes leave its own vault.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ConflictMode {
+    /// Re-seal under the workspace's newest generation.
+    Merge,
+    /// Store as plaintext (`protected = 0`) — EXCEPT for a note that sits
+    /// inside a locked folder, which is merged instead. Folder locks are the
+    /// user's standing instruction and are never changed here, and
+    /// `protected = 0` under a locked ancestor is a state
+    /// `Store::set_note_protected` refuses outright: it would push plaintext
+    /// to the server and be silently re-sealed on the next edit.
+    Unprotect,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConflictOutcome {
+    pub changed: u32,
+    /// Notes neither the local nor a workspace key opened — left untouched.
+    pub skipped: u32,
+}
+
+/// What the resolve command reads under the store lock before opening anything.
+pub struct ConflictInputs {
+    pub entries: VaultEntries,
+    pub record: VaultRecord,
+}
+
+pub fn load_conflict_inputs(store: &Store) -> Result<ConflictInputs, String> {
+    if crate::migrate::get_meta_i64_opt(&store.conn, "vault_conflict")
+        .map_err(|e| e.to_string())?
+        .is_none()
+    {
+        return Err("vault: no conflict to resolve".to_string());
+    }
+    let entries =
+        cached_vault_entries(store)?.ok_or_else(|| "vault: no workspace keys".to_string())?;
+    let record = load_vault_record(store)?;
+    Ok(ConflictInputs { entries, record })
+}
+
+/// Opens both sides without touching the store: the workspace ring with its
+/// passphrase (every generation it opens) and the device's own record with
+/// its own secret. Argon2 runs here, so callers hold no lock.
+pub fn open_conflict_sides(
+    inputs: &ConflictInputs,
+    workspace_passphrase: &str,
+    local: &VaultSecret<'_>,
+) -> Result<(Vec<(u32, Dek)>, Dek), String> {
+    let ring = unlock_entries_with_passphrase(&inputs.entries, workspace_passphrase)?;
+    let local_dek = local
+        .open(&inputs.record)
+        .map_err(|_| "vault: local record does not open".to_string())?;
+    Ok((ring, local_dek))
+}
+
+/// Moves every note sealed under `local_dek` out of the device's own vault:
+/// re-sealed under the ring's newest generation (`Merge`) or written back as
+/// plaintext (`Unprotect`). Notes a workspace generation already opens stay
+/// as they are; notes nothing opens are counted and left alone. One
+/// transaction per note.
+///
+/// Folder locks are never changed here — which is why `Unprotect` is not
+/// unconditional: a note inside a locked folder is MERGED instead (sealed,
+/// stamped, dirty) and counted in `changed` all the same. Unprotecting it
+/// would leave `protected = 0` below a locked ancestor, exactly the state
+/// [`Store::set_note_protected`]'s "note is protected by its folder" refusal
+/// exists to prevent.
+///
+/// Trashed protected notes are in the work list too (see
+/// [`Store::protected_note_ids`]): the device's own record is replaced right
+/// after this, so anything left sealed under the local DEK could never be
+/// opened again.
+pub fn resolve_conflict(
+    store: &Store,
+    ring: &[(u32, Dek)],
+    local_dek: &Dek,
+    mode: ConflictMode,
+) -> Result<ConflictOutcome, String> {
+    let (newest, newest_dek) = ring
+        .iter()
+        .max_by_key(|(g, _)| *g)
+        .map(|(g, d)| (*g, d))
+        .ok_or_else(|| "vault: no workspace keys".to_string())?;
+    let mut outcome = ConflictOutcome::default();
+    if ring.iter().any(|(_, d)| d.expose() == local_dek.expose()) {
+        return Ok(outcome); // one vault on both sides — nothing to move
+    }
+    for id in store.protected_note_ids().map_err(|e| e.to_string())? {
+        let Some(stored) = store.load_note_content(&id).map_err(|e| e.to_string())? else {
+            continue;
+        };
+        if ring
+            .iter()
+            .any(|(_, d)| open_content(d, &id, &stored).is_ok())
+        {
+            continue; // already the workspace's
+        }
+        let Ok(plaintext) = open_content(local_dek, &id, &stored) else {
+            outcome.skipped += 1;
+            continue;
+        };
+        // A locked ancestor overrides `Unprotect` — see the note on
+        // [`ConflictMode::Unprotect`]. Asked per note rather than hoisted:
+        // the work list spans the whole tree.
+        let mode = match mode {
+            ConflictMode::Unprotect if has_locked_ancestor_folder(store, &id)? => {
+                ConflictMode::Merge
+            }
+            m => m,
+        };
+        let tx = store
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| e.to_string())?;
+        match mode {
+            ConflictMode::Merge => {
+                store
+                    .set_content_silent(&id, &seal_content(newest_dek, &id, &plaintext))
+                    .map_err(|e| e.to_string())?;
+                store
+                    .set_note_key_gen(&id, Some(newest))
+                    .map_err(|e| e.to_string())?;
+            }
+            ConflictMode::Unprotect => {
+                store
+                    .set_content_silent(&id, &plaintext)
+                    .map_err(|e| e.to_string())?;
+                store
+                    .set_note_protected(&id, false)
+                    .map_err(|e| e.to_string())?;
+                store
+                    .set_note_key_gen(&id, None)
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        store
+            .mark_note_dirty_if_syncing(&id)
+            .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
+        outcome.changed += 1;
+    }
+    Ok(outcome)
+}
+
+/// After the notes moved: the device's record becomes the mirrored workspace
+/// record (or an empty placeholder when the cache holds no generation-1
+/// entry — the cache alone keeps `vault_exists` true), the conflict flag
+/// goes, and the device counts as migrated.
+pub fn finish_conflict_resolution(store: &Store, entries: &VaultEntries) -> Result<(), String> {
+    let json = mirrored_record(entries)
+        .map(|r| r.to_json())
+        .unwrap_or_default();
+    store.set_vault_record(&json).map_err(|e| e.to_string())?;
+    crate::migrate::delete_meta(&store.conn, "vault_conflict").map_err(|e| e.to_string())?;
+    crate::migrate::set_meta_i64(&store.conn, "vault_migrated", 1).map_err(|e| e.to_string())
+}
+
 // ---------------------------------------------------------------------------
 // Key rotation
 //
@@ -6449,6 +6608,310 @@ mod vault_entries_tests {
             "unparsable cache falls back to the local record"
         );
         assert!(inputs.record.is_some());
+    }
+}
+
+/// Resolving a vault conflict: a device whose local-only vault met an
+/// existing workspace vault moves every note sealed under its own key out of
+/// that vault and becomes a normal workspace device.
+#[cfg(test)]
+mod conflict_resolution_tests {
+    use super::test_support::*;
+    use super::*;
+
+    /// A workspace with generations 1 and 2 (passphrase "ws-pw"), a local
+    /// record with its own DEK (passphrase "local-pw"), three notes sealed
+    /// locally, one sealed under workspace generation 2.
+    fn conflicted_store() -> (Store, VaultEntries, Vec<(u32, Dek)>, Dek) {
+        let mut s = Store::open_in_memory().unwrap();
+        crate::migrate::run_migrations(&s.conn).unwrap();
+        s.sync_enabled = true;
+        let (rec1, _rk, d1) = crate::vault::setup("ws-pw").unwrap();
+        let d2 = Dek::random();
+        let rec2 =
+            crate::vault::rewrap_passphrase(&crate::vault::setup("ws-pw").unwrap().0, &d2, "ws-pw");
+        let entries = VaultEntries {
+            mine: vec![
+                MyEntry {
+                    generation: 1,
+                    record: rec1,
+                },
+                MyEntry {
+                    generation: 2,
+                    record: rec2,
+                },
+            ],
+            recovery: vec![],
+            rotation: vec![],
+        };
+        let (local_rec, _lrk, local_dek) = crate::vault::setup("local-pw").unwrap();
+        s.set_vault_entries(&entries.to_json()).unwrap();
+        s.set_vault_record(&local_rec.to_json()).unwrap();
+        crate::migrate::set_meta_i64(&s.conn, "vault_conflict", 1).unwrap();
+        for id in ["a", "b", "c"] {
+            s.save_note(&Note {
+                id: id.into(),
+                content: format!("<p>{id}</p>"),
+                updated_at: 1,
+                ..Default::default()
+            })
+            .unwrap();
+            s.set_note_protected(id, true).unwrap();
+            encrypt_note_in_place(&s, id, &local_dek, 1).unwrap();
+        }
+        s.save_note(&Note {
+            id: "w".into(),
+            content: "<p>w</p>".into(),
+            updated_at: 1,
+            ..Default::default()
+        })
+        .unwrap();
+        s.set_note_protected("w", true).unwrap();
+        encrypt_note_in_place(&s, "w", &d2, 2).unwrap();
+        let dirty: Vec<_> = s
+            .load_dirty_notes()
+            .unwrap()
+            .iter()
+            .map(|n| (n.id.clone(), n.updated_at))
+            .collect();
+        s.clear_note_dirty(&dirty).unwrap();
+        (s, entries, vec![(1, d1), (2, d2)], local_dek)
+    }
+
+    #[test]
+    fn merging_reseals_the_local_notes_under_the_newest_workspace_key() {
+        let (s, entries, ring, local_dek) = conflicted_store();
+        let inputs = load_conflict_inputs(&s).unwrap();
+        let (opened, dek) =
+            open_conflict_sides(&inputs, "ws-pw", &VaultSecret::Passphrase("local-pw")).unwrap();
+        assert_eq!(
+            opened.iter().map(|(g, _)| *g).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        assert_eq!(dek.expose(), local_dek.expose());
+
+        let out = resolve_conflict(&s, &ring, &local_dek, ConflictMode::Merge).unwrap();
+        assert_eq!(
+            out,
+            ConflictOutcome {
+                changed: 3,
+                skipped: 0
+            }
+        );
+        let mut vault = VaultState::default();
+        for (g, d) in &ring {
+            vault.unlock(*g, d.clone());
+        }
+        for id in ["a", "b", "c"] {
+            assert_eq!(s.note_key_gen(id).unwrap(), Some(2));
+            assert_eq!(
+                open_note_content(&s, &vault, id).unwrap(),
+                format!("<p>{id}</p>")
+            );
+        }
+        assert_eq!(s.note_key_gen("w").unwrap(), Some(2));
+        assert_eq!(
+            s.load_dirty_notes().unwrap().len(),
+            3,
+            "only the re-sealed notes are pushed"
+        );
+
+        finish_conflict_resolution(&s, &entries).unwrap();
+        assert!(crate::migrate::get_meta_i64_opt(&s.conn, "vault_conflict")
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            crate::migrate::get_meta_i64_opt(&s.conn, "vault_migrated").unwrap(),
+            Some(1)
+        );
+        let rec = load_vault_record(&s).unwrap();
+        assert_eq!(
+            crate::vault::unlock_passphrase(&rec, "ws-pw")
+                .unwrap()
+                .expose(),
+            ring[0].1.expose(),
+            "the local record now mirrors generation 1"
+        );
+    }
+
+    #[test]
+    fn unprotecting_stores_the_local_notes_as_plaintext_and_keeps_folder_locks() {
+        let (s, _entries, ring, local_dek) = conflicted_store();
+        crate::folders::create_folder(&s.conn, "f", "F", None).unwrap();
+        s.set_folder_locked("f", true).unwrap();
+        let out = resolve_conflict(&s, &ring, &local_dek, ConflictMode::Unprotect).unwrap();
+        assert_eq!(
+            out,
+            ConflictOutcome {
+                changed: 3,
+                skipped: 0
+            }
+        );
+        for id in ["a", "b", "c"] {
+            assert!(!s.note_protected(id).unwrap());
+            assert_eq!(s.note_key_gen(id).unwrap(), None);
+            assert_eq!(
+                s.load_note_content(id).unwrap().unwrap(),
+                format!("<p>{id}</p>")
+            );
+        }
+        assert!(
+            s.note_protected("w").unwrap(),
+            "workspace-sealed notes are untouched"
+        );
+        assert!(
+            s.folder_locked("f").unwrap(),
+            "folder locks stay as they are"
+        );
+        assert_eq!(s.load_dirty_notes().unwrap().len(), 3);
+    }
+
+    /// A protected note in the TRASH is sealed under the local DEK just like a
+    /// live one, and the resolution replaces the only wrap of that DEK — so
+    /// leaving it behind would hand the user ciphertext nobody can open the
+    /// moment they restore it.
+    #[test]
+    fn a_trashed_note_moves_out_of_the_local_vault_with_the_rest() {
+        let (s, _entries, ring, local_dek) = conflicted_store();
+        s.trash_note("b", 500).unwrap();
+        let out = resolve_conflict(&s, &ring, &local_dek, ConflictMode::Merge).unwrap();
+        assert_eq!(
+            out,
+            ConflictOutcome {
+                changed: 3,
+                skipped: 0
+            },
+            "the trashed note is counted like any other"
+        );
+        let mut vault = VaultState::default();
+        for (g, d) in &ring {
+            vault.unlock(*g, d.clone());
+        }
+        assert_eq!(s.note_key_gen("b").unwrap(), Some(2));
+        s.restore_note("b").unwrap();
+        assert_eq!(open_note_content(&s, &vault, "b").unwrap(), "<p>b</p>");
+
+        // Same in the other mode: unprotected, not left sealed.
+        let (s, _entries, ring, local_dek) = conflicted_store();
+        s.trash_note("b", 500).unwrap();
+        let out = resolve_conflict(&s, &ring, &local_dek, ConflictMode::Unprotect).unwrap();
+        assert_eq!(
+            out,
+            ConflictOutcome {
+                changed: 3,
+                skipped: 0
+            }
+        );
+        assert!(!s.note_protected("b").unwrap());
+        assert_eq!(s.load_note_content("b").unwrap().unwrap(), "<p>b</p>");
+    }
+
+    /// Unprotecting a note under a locked folder would leave `protected = 0`
+    /// below a locked ancestor — the state `set_note_protected(false)`
+    /// refuses. It is merged instead, and the lock itself is never touched.
+    #[test]
+    fn unprotect_merges_a_note_inside_a_locked_folder_and_frees_only_the_rest() {
+        let (s, _entries, ring, local_dek) = conflicted_store();
+        crate::folders::create_folder(&s.conn, "f", "F", None).unwrap();
+        s.set_folder_locked("f", true).unwrap();
+        s.conn
+            .execute("UPDATE notes SET folder_id = 'f' WHERE id = 'a'", [])
+            .unwrap();
+
+        let out = resolve_conflict(&s, &ring, &local_dek, ConflictMode::Unprotect).unwrap();
+        assert_eq!(
+            out,
+            ConflictOutcome {
+                changed: 3,
+                skipped: 0
+            },
+            "the merged note counts as changed too"
+        );
+
+        let mut vault = VaultState::default();
+        for (g, d) in &ring {
+            vault.unlock(*g, d.clone());
+        }
+        assert!(
+            s.note_protected("a").unwrap(),
+            "a locked folder overrides unprotect"
+        );
+        assert_eq!(s.note_key_gen("a").unwrap(), Some(2));
+        assert_eq!(open_note_content(&s, &vault, "a").unwrap(), "<p>a</p>");
+        for id in ["b", "c"] {
+            assert!(!s.note_protected(id).unwrap(), "the siblings outside f");
+            assert_eq!(s.note_key_gen(id).unwrap(), None);
+            assert_eq!(
+                s.load_note_content(id).unwrap().unwrap(),
+                format!("<p>{id}</p>")
+            );
+        }
+        assert!(s.folder_locked("f").unwrap(), "the lock is never touched");
+        assert_eq!(s.load_dirty_notes().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn a_note_neither_key_opens_is_skipped_and_counted() {
+        let (s, _entries, ring, local_dek) = conflicted_store();
+        s.save_note(&Note {
+            id: "x".into(),
+            content: "<p>x</p>".into(),
+            updated_at: 1,
+            ..Default::default()
+        })
+        .unwrap();
+        s.set_note_protected("x", true).unwrap();
+        encrypt_note_in_place(&s, "x", &Dek::random(), 1).unwrap();
+        let out = resolve_conflict(&s, &ring, &local_dek, ConflictMode::Merge).unwrap();
+        assert_eq!(
+            out,
+            ConflictOutcome {
+                changed: 3,
+                skipped: 1
+            }
+        );
+        assert!(s.note_protected("x").unwrap());
+    }
+
+    #[test]
+    fn the_same_key_on_both_sides_changes_nothing() {
+        let (s, _entries, ring, _local_dek) = conflicted_store();
+        let out = resolve_conflict(&s, &ring, &ring[0].1, ConflictMode::Merge).unwrap();
+        assert_eq!(
+            out,
+            ConflictOutcome {
+                changed: 0,
+                skipped: 0
+            }
+        );
+        assert!(s.load_dirty_notes().unwrap().is_empty());
+    }
+
+    #[test]
+    fn wrong_secrets_are_named_and_write_nothing() {
+        let (s, _entries, _ring, _local_dek) = conflicted_store();
+        let inputs = load_conflict_inputs(&s).unwrap();
+        assert_eq!(
+            err_of(open_conflict_sides(
+                &inputs,
+                "nope",
+                &VaultSecret::Passphrase("local-pw")
+            )),
+            "wrong passphrase"
+        );
+        assert_eq!(
+            err_of(open_conflict_sides(
+                &inputs,
+                "ws-pw",
+                &VaultSecret::Passphrase("nope")
+            )),
+            "vault: local record does not open"
+        );
+        crate::migrate::delete_meta(&s.conn, "vault_conflict").unwrap();
+        assert_eq!(
+            err_of(load_conflict_inputs(&s)),
+            "vault: no conflict to resolve"
+        );
     }
 }
 

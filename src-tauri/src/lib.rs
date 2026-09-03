@@ -368,6 +368,7 @@ pub fn run() {
             commands::vault_rotate,
             commands::vault_rotation_redeem,
             commands::vault_recovery_followup,
+            commands::vault_resolve_conflict,
             commands::vault_biometric_available,
             commands::vault_biometric_enable,
             commands::vault_biometric_disable,
