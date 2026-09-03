@@ -70,10 +70,13 @@ invite wraps of invitations still open, and the pull tells an owner which
 open invitations need a fresh code (`vaultInvites`).
 `VaultState` is a ring `generation → DEK`; new content is sealed with the
 newest generation, notes remember theirs in `notes.key_gen`, and an unlocked
-client re-seals lagging notes in small batches. A server without the vault
-endpoints (`vaultKeys` missing on pull) is flagged `vault_server_legacy` and
-keeps the local-only vault. Never send a DEK, passphrase, recovery key or
-invite code to the server — only wraps.
+client re-seals lagging notes in small batches. Sharing the vault and re-coding
+invitations refuse on a device that is conflicted (ring still sealing with its
+own key) or has not redeemed the latest rotation (`invite_wrap_allowed`); the
+Contexts page hides both actions and says which step comes first. A server
+without the vault endpoints (`vaultKeys` missing on pull) is flagged
+`vault_server_legacy` and keeps the local-only vault. Never send a DEK,
+passphrase, recovery key or invite code to the server — only wraps.
 
 Two rules the whole feature rests on:
 
