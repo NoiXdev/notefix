@@ -23,6 +23,8 @@ export default function VaultRotationCodesDialog({ codes, onClose }: Props) {
   // is shown once, so a silent clipboard failure loses it for good.
   const [failed, setFailed] = useState<number | null>(null);
 
+  const label = (c: RotationCode) => (c.name.trim() ? c.name : t('vault.rotation.codeFor', { id: c.userId }));
+
   const copy = async (c: RotationCode) => {
     try {
       await navigator.clipboard.writeText(c.code);
@@ -45,10 +47,10 @@ export default function VaultRotationCodesDialog({ codes, onClose }: Props) {
           {codes.map(c => (
             <div key={c.userId} className="mb-3">
               <div className="flex items-center justify-between gap-2 mb-1">
-                <span className="text-xs text-gray-400">{t('vault.rotation.codeFor', { id: c.userId })}</span>
+                <span className="text-xs text-gray-400">{label(c)}</span>
                 <button
                   onClick={() => void copy(c)}
-                  aria-label={`${t('vault.invite.copy')} — ${t('vault.rotation.codeFor', { id: c.userId })}`}
+                  aria-label={`${t('vault.invite.copy')} — ${label(c)}`}
                   className="px-2 py-0.5 rounded text-xs text-gray-300 hover:bg-gray-800"
                 >
                   {copied === c.userId ? t('vault.invite.copied') : t('vault.invite.copy')}

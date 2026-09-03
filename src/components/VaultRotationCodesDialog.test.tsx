@@ -3,8 +3,8 @@ import { describe, it, expect, vi } from 'vitest';
 import VaultRotationCodesDialog from './VaultRotationCodesDialog';
 
 const codes = [
-  { userId: 2, code: 'AAAAA-BBBBB' },
-  { userId: 3, code: 'CCCCC-DDDDD' },
+  { userId: 2, name: '', code: 'AAAAA-BBBBB' },
+  { userId: 3, name: '', code: 'CCCCC-DDDDD' },
 ];
 
 describe('VaultRotationCodesDialog', () => {
@@ -48,6 +48,21 @@ describe('VaultRotationCodesDialog', () => {
   it('says the key changed when a lone member rotated for themselves', () => {
     render(<VaultRotationCodesDialog codes={[]} onClose={vi.fn()} />);
     expect(screen.getByText('Schlüssel gewechselt')).toBeInTheDocument();
+  });
+
+  it("labels each code with the member's name and falls back to the id", () => {
+    render(
+      <VaultRotationCodesDialog
+        codes={[
+          { userId: 7, name: "Anna", code: "AAAA-BBBB" },
+          { userId: 9, name: "", code: "CCCC-DDDD" },
+        ]}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("Anna")).toBeInTheDocument();
+    expect(screen.getByText("Mitglied 9")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Kopieren — Anna" })).toBeInTheDocument();
   });
 
   it('closes on the acknowledge button', () => {

@@ -2006,6 +2006,7 @@ fn vault_rotation_target(
 #[serde(rename_all = "camelCase")]
 pub struct RotationCode {
     pub user_id: u64,
+    pub name: String,
     pub code: String,
 }
 
@@ -2073,7 +2074,7 @@ pub async fn vault_rotate(
     let members = crate::sync::fetch_members(&ctx.server_url, &token, &ctx.workspace_id)
         .await
         .map_err(|e| e.to_string())?;
-    let member_ids: Vec<u64> = members.iter().map(|(id, _)| *id).collect();
+    let member_ids: Vec<u64> = members.iter().map(|m| m.user_id).collect();
     let ops::RotationPlan {
         new_generation,
         others,
@@ -2168,9 +2169,20 @@ pub async fn vault_rotate(
     }
     broadcast_context_changed(&app);
 
+    let name_of = |id: u64| {
+        members
+            .iter()
+            .find(|m| m.user_id == id)
+            .map(|m| m.name.clone())
+            .unwrap_or_default()
+    };
     Ok(codes
         .into_iter()
-        .map(|(user_id, code)| RotationCode { user_id, code })
+        .map(|(user_id, code)| RotationCode {
+            user_id,
+            name: name_of(user_id),
+            code,
+        })
         .collect())
 }
 

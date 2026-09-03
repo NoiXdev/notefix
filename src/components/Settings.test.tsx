@@ -53,7 +53,7 @@ const {
   mockVaultLock: vi.fn(() => Promise.resolve()),
   mockVaultChangePassphrase: vi.fn(() => Promise.resolve()),
   mockVaultRotate: vi.fn((_passphrase: string, _recoveryKey?: string) =>
-    Promise.resolve([{ userId: 2, code: "AAAAA-BBBBB" }, { userId: 3, code: "CCCCC-DDDDD" }])),
+    Promise.resolve([{ userId: 2, name: "", code: "AAAAA-BBBBB" }, { userId: 3, name: "", code: "CCCCC-DDDDD" }])),
   mockRotationRedeem: vi.fn((_code: string, _passphrase: string) => Promise.resolve()),
   mockRecoveryFollowup: vi.fn((_recoveryKey: string) => Promise.resolve()),
   mockBiometricAvailable: vi.fn(() => Promise.resolve(false)),

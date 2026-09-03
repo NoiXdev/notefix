@@ -564,17 +564,30 @@ fn parse_invitation_id(body: &Value) -> Result<u64, SyncError> {
         .ok_or_else(|| SyncError::Fatal("vault invite lookup: no invitation id".into()))
 }
 
-/// The `{"members": [{"userId": n, "role": "..."}]}` body of the members
-/// listing. Pulled out so the parsing is testable without a network call.
-fn parse_members_response(body: &Value) -> Vec<(u64, String)> {
+/// One row of the members listing. `name` is the display name the server
+/// knows (empty when the account has none) — used to label rotation codes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemberInfo {
+    pub user_id: u64,
+    pub role: String,
+    pub name: String,
+}
+
+/// The `{"members": [{"userId": n, "role": "...", "name": "..."}]}` body of
+/// the members listing. Pulled out so the parsing is testable without a
+/// network call.
+fn parse_members_response(body: &Value) -> Vec<MemberInfo> {
     body["members"]
         .as_array()
         .cloned()
         .unwrap_or_default()
         .iter()
         .filter_map(|m| {
-            let id = m["userId"].as_u64()?;
-            Some((id, m["role"].as_str().unwrap_or_default().to_string()))
+            Some(MemberInfo {
+                user_id: m["userId"].as_u64()?,
+                role: m["role"].as_str().unwrap_or_default().to_string(),
+                name: m["name"].as_str().unwrap_or_default().to_string(),
+            })
         })
         .collect()
 }
@@ -600,12 +613,12 @@ pub async fn fetch_me(server_url: &str, token: &str) -> Result<u64, SyncError> {
         .ok_or_else(|| SyncError::Fatal("user: no id".into()))
 }
 
-/// GET …/members — owner plus members of the workspace, as `(user id, role)`.
+/// GET …/members — owner plus members of the workspace.
 pub async fn fetch_members(
     server_url: &str,
     token: &str,
     ws: &str,
-) -> Result<Vec<(u64, String)>, SyncError> {
+) -> Result<Vec<MemberInfo>, SyncError> {
     let resp = client()?
         .get(members_url(server_url, ws))
         .bearer_auth(token)
@@ -1121,15 +1134,26 @@ mod tests {
     }
 
     #[test]
-    fn parse_members_response_reads_ids_and_roles() {
+    fn parse_members_response_reads_ids_roles_and_names() {
         let body = json!({"members": [
-            {"userId": 1, "role": "owner"},
+            {"userId": 1, "role": "owner", "name": "Anna"},
             {"userId": 2, "role": "editor"},
             {"role": "editor"},
         ]});
         assert_eq!(
             parse_members_response(&body),
-            vec![(1, "owner".to_string()), (2, "editor".to_string())]
+            vec![
+                MemberInfo {
+                    user_id: 1,
+                    role: "owner".into(),
+                    name: "Anna".into()
+                },
+                MemberInfo {
+                    user_id: 2,
+                    role: "editor".into(),
+                    name: String::new()
+                },
+            ]
         );
         assert!(parse_members_response(&json!({})).is_empty());
     }

@@ -6,7 +6,7 @@ import type { RotationCode } from '../types';
 function renderDialog(overrides: Partial<Parameters<typeof VaultRotateDialog>[0]> = {}) {
   const rotate = vi
     .fn<(passphrase: string, recoveryKey?: string) => Promise<RotationCode[]>>()
-    .mockResolvedValue([{ userId: 2, code: 'AAAAA-BBBBB' }]);
+    .mockResolvedValue([{ userId: 2, name: '', code: 'AAAAA-BBBBB' }]);
   const onSuccess = vi.fn();
   const onCancel = vi.fn();
   render(
@@ -28,7 +28,7 @@ describe('VaultRotateDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Schlüssel wechseln' }));
 
     await waitFor(() => expect(rotate).toHaveBeenCalledWith('owner-pw', undefined));
-    await waitFor(() => expect(onSuccess).toHaveBeenCalledWith([{ userId: 2, code: 'AAAAA-BBBBB' }]));
+    await waitFor(() => expect(onSuccess).toHaveBeenCalledWith([{ userId: 2, name: '', code: 'AAAAA-BBBBB' }]));
   });
 
   it('asks a recovery-key holder for the key and submits it', async () => {

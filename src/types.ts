@@ -100,5 +100,6 @@ export interface VaultStatus {
  */
 export interface RotationCode {
   userId: number;
+  name: string;
   code: string;
 }
