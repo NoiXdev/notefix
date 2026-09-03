@@ -612,6 +612,8 @@ export const en = {
       recodeTitle: 'New invitation codes',
       recodeHint: 'Hand each invitee their code separately from the invitation link. The codes are shown only once.',
       codeForInvitation: 'Invitation {{id}}',
+      conflictHint: 'Resolve the vault conflict under Security first.',
+      outdatedHint: 'Redeem the rotation code first — this device still holds the old key.',
     },
     imagesUnencryptedHint: 'Images in this note stay unencrypted. The text is protected, but the image files remain readable on this device.',
     imagesUnencryptedHintFolder: 'Images in this folder stay unencrypted. The text of the notes is protected, but the image files remain readable on this device.',

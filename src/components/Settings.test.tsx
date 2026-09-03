@@ -1254,6 +1254,30 @@ describe("Settings — Contexts page", () => {
     expect(screen.getByRole("button", { name: "Einladungs-Code eingeben" })).toBeInTheDocument();
   });
 
+  it("withholds sharing and re-coding on a conflicted device and says why", async () => {
+    mockVaultStatus.mockResolvedValue(unlockedVault({ conflict: true }));
+    mockContextsList.mockResolvedValue(serverActive.map(c => c.kind === "server" ? { ...c, invitesNeedingCode: 2 } : c));
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Kontexte"));
+    await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+    expect(screen.getByText("Löse zuerst den Tresor-Konflikt unter Sicherheit.")).toBeInTheDocument();
+    expect(screen.getByText("2 Einladungen brauchen einen neuen Code")).toBeInTheDocument();
+    openActions("c-server");
+    expect(screen.queryByRole("button", { name: "Neue Codes erzeugen" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Tresor freigeben" })).not.toBeInTheDocument();
+  });
+
+  it("withholds sharing on a device that has not redeemed the rotation", async () => {
+    mockVaultStatus.mockResolvedValue(unlockedVault({ sealOutdated: true }));
+    mockContextsList.mockResolvedValue(serverActive);
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Kontexte"));
+    await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+    expect(screen.getByText("Löse zuerst den Rotationscode ein — dieses Gerät hat noch den alten Schlüssel.")).toBeInTheDocument();
+    openActions("c-server");
+    expect(screen.queryByRole("button", { name: "Tresor freigeben" })).not.toBeInTheDocument();
+  });
+
   // F2: rotating is also pointless unless the workspace is asking for it.
   it("offers the key change only while a rotation is actually pending", async () => {
     mockVaultStatus.mockResolvedValue(unlockedVault());
@@ -1381,6 +1405,42 @@ describe("Settings — Contexts page", () => {
     expect(screen.queryByText("Einladung nicht gefunden")).not.toBeInTheDocument();
     // No code was minted, so no code dialog.
     expect(screen.queryByText("Einmal-Code")).not.toBeInTheDocument();
+  });
+
+  it("shows the conflict hint when the backend refuses a share for a conflicted vault", async () => {
+    mockVaultStatus.mockResolvedValue(unlockedVault());
+    mockContextsList.mockResolvedValueOnce(serverActive);
+    mockInviteShare.mockRejectedValueOnce(new Error("vault: resolve the vault conflict first"));
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Kontexte"));
+    await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+    openActions("c-server");
+
+    fireEvent.click(screen.getByRole("button", { name: "Tresor freigeben" }));
+    const input = screen.getByPlaceholderText("Einladungs-Link oder -Nummer");
+    fireEvent.change(input, { target: { value: "7" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => expect(mockInviteShare).toHaveBeenCalledWith(7));
+    expect(await screen.findByText("Löse zuerst den Tresor-Konflikt unter Sicherheit.")).toBeInTheDocument();
+  });
+
+  it("shows the outdated-seal hint when the backend refuses a share for an unredeemed rotation", async () => {
+    mockVaultStatus.mockResolvedValue(unlockedVault());
+    mockContextsList.mockResolvedValueOnce(serverActive);
+    mockInviteShare.mockRejectedValueOnce(new Error("vault: redeem the rotation code first"));
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Kontexte"));
+    await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+    openActions("c-server");
+
+    fireEvent.click(screen.getByRole("button", { name: "Tresor freigeben" }));
+    const input = screen.getByPlaceholderText("Einladungs-Link oder -Nummer");
+    fireEvent.change(input, { target: { value: "7" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => expect(mockInviteShare).toHaveBeenCalledWith(7));
+    expect(await screen.findByText("Löse zuerst den Rotationscode ein — dieses Gerät hat noch den alten Schlüssel.")).toBeInTheDocument();
   });
 
   it("shows how many invitations need a new code and mints them from the menu", async () => {

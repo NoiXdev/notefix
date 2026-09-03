@@ -612,6 +612,8 @@ export const fr = {
       recodeTitle: 'Nouveaux codes d’invitation',
       recodeHint: 'Transmettez à chaque personne invitée son code séparément du lien d’invitation. Les codes ne sont affichés qu’une seule fois.',
       codeForInvitation: 'Invitation {{id}}',
+      conflictHint: 'Résolvez d’abord le conflit du coffre sous Sécurité.',
+      outdatedHint: 'Saisissez d’abord le code de rotation — cet appareil détient encore l’ancienne clé.',
     },
     imagesUnencryptedHint: 'Les images de cette note restent non chiffrées. Le texte est protégé, mais les fichiers image restent lisibles sur cet appareil.',
     imagesUnencryptedHintFolder: 'Les images de ce dossier restent non chiffrées. Le texte des notes est protégé, mais les fichiers image restent lisibles sur cet appareil.',

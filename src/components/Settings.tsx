@@ -1151,10 +1151,14 @@ function ContextsPage() {
 
   /**
    * Sharing wraps the ring's newest DEK under a one-time code, so the vault
-   * has to be open — the backend refuses a locked one with "vault locked",
-   * and by then the user has already pasted an invitation link.
+   * has to be open AND that DEK has to be the workspace's current key: a
+   * conflicted device may still seal with its own vault's key, and a device
+   * that has not redeemed the latest rotation holds a retired one — the
+   * backend refuses both (`invite_wrap_allowed`), and by then the user has
+   * already pasted an invitation link.
    */
-  const canShare = (c: ContextInfo) => canInvite(c) && c.vaultExists && vault.status.unlocked;
+  const canShare = (c: ContextInfo) =>
+    canInvite(c) && c.vaultExists && vault.status.unlocked && !vault.status.conflict && !vault.status.sealOutdated;
 
   /**
    * Rotating needs everything sharing needs, plus a workspace that is
@@ -1164,9 +1168,14 @@ function ContextsPage() {
    */
   const canRotate = (c: ContextInfo) => canShare(c) && c.vaultRotationPending;
 
-  /** Whether a vault action is hidden purely because the vault is locked. */
-  const lockedOnly = (c: ContextInfo) =>
-    canInvite(c) && c.vaultExists && !vault.status.unlocked;
+  /** Why a vault action is withheld on this row, if it is — first reason wins. */
+  const shareBlockedHint = (c: ContextInfo): string | null => {
+    if (!(canInvite(c) && c.vaultExists)) return null;
+    if (!vault.status.unlocked) return t("vault.lockedHint");
+    if (vault.status.conflict) return t("vault.invite.conflictHint");
+    if (vault.status.sealOutdated) return t("vault.invite.outdatedHint");
+    return null;
+  };
 
   /**
    * Maps a failed vault-mint attempt (share or re-code — both take the DEK
@@ -1179,6 +1188,8 @@ function ContextsPage() {
     const msg = e instanceof Error ? e.message : String(e ?? "");
     return msg.includes("vault locked") ? t("vault.lockedHint")
       : msg.includes("context changed during the request") ? t("common.contextChanged")
+      : msg.includes("resolve the vault conflict first") ? t("vault.invite.conflictHint")
+      : msg.includes("redeem the rotation code first") ? t("vault.invite.outdatedHint")
       : t("vault.invite.shareFailed", { error: msg });
   };
 
@@ -1336,7 +1347,7 @@ function ContextsPage() {
                   ]}
                 />
               )}
-              {lockedOnly(c) && <span className="text-xs text-gray-500 text-right">{t("vault.lockedHint")}</span>}
+              {shareBlockedHint(c) && <span className="text-xs text-gray-500 text-right">{shareBlockedHint(c)}</span>}
               {sharing && c.active && <span className="text-xs text-gray-500">{t("contexts.connecting")}</span>}
               {shareError && c.active && <span className="text-xs text-red-600 text-right" role="alert">{shareError}</span>}
             </div>

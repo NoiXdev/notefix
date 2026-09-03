@@ -612,6 +612,8 @@ export const de = {
       recodeTitle: 'Neue Einladungs-Codes',
       recodeHint: 'Gib jeder eingeladenen Person ihren Code getrennt vom Einladungslink weiter. Die Codes werden nur einmal angezeigt.',
       codeForInvitation: 'Einladung {{id}}',
+      conflictHint: 'Löse zuerst den Tresor-Konflikt unter Sicherheit.',
+      outdatedHint: 'Löse zuerst den Rotationscode ein — dieses Gerät hat noch den alten Schlüssel.',
     },
     imagesUnencryptedHint: 'Bilder in dieser Notiz bleiben unverschlüsselt. Der Text wird geschützt, die Bilddateien liegen weiter offen auf diesem Gerät.',
     imagesUnencryptedHintFolder: 'Bilder in diesem Ordner bleiben unverschlüsselt. Der Text der Notizen wird geschützt, die Bilddateien liegen weiter offen auf diesem Gerät.',
