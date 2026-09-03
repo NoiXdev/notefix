@@ -1398,6 +1398,30 @@ describe("Settings — Contexts page", () => {
     expect(screen.getByText("BBBB-2222")).toBeInTheDocument();
   });
 
+  it("ignores a second click on re-code while the first is still in flight", async () => {
+    mockVaultStatus.mockResolvedValue(unlockedVault());
+    mockContextsList.mockResolvedValue(serverActive.map(c => c.kind === "server" ? { ...c, invitesNeedingCode: 2 } : c));
+    let release: (value: { invitationId: number; code: string }[]) => void = () => {};
+    mockInviteRecode.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Kontexte"));
+    await waitFor(() => expect(screen.getByText("Team")).toBeInTheDocument());
+
+    // The menu closes on every click (see ContextMenu), so a second click
+    // means reopening it and hitting the item again — exactly what a fast
+    // double-tap looks like while the first call is still pending and
+    // `invitesNeedingCode` hasn't updated yet.
+    openActions("c-server");
+    fireEvent.click(screen.getByRole("button", { name: "Neue Codes erzeugen" }));
+    openActions("c-server");
+    fireEvent.click(screen.getByRole("button", { name: "Neue Codes erzeugen" }));
+    expect(mockInviteRecode).toHaveBeenCalledOnce();
+
+    release([{ invitationId: 5, code: "AAAA-1111" }]);
+    expect(await screen.findByText("Einladung 5")).toBeInTheDocument();
+    expect(mockInviteRecode).toHaveBeenCalledOnce();
+  });
+
   it("redeems an invite code with a new passphrase", async () => {
     mockContextsList.mockResolvedValueOnce(serverActive);
     render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);

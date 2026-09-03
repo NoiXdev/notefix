@@ -279,6 +279,7 @@ function SecurityPage({ settings, onSetSetting }: {
     if (recoveryBusy) return;
     setRecoveryBusy(true);
     try {
+      setRecoveryNotice(null);
       setRecoveryCreated(await vault.recoveryCreate());
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e ?? "");
@@ -1216,6 +1217,7 @@ function ContextsPage() {
    * code from the live ring and can only fail the same three ways.
    */
   const recode = async () => {
+    if (sharing) return;
     setShareError(null);
     setSharing(true);
     try {
