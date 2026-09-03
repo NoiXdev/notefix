@@ -1538,6 +1538,7 @@ pub fn vault_status(
             &flags.role,
             flags.recovery_holder,
             unlocked,
+            flags.conflict,
         ),
         // Biometric unlock is offered only when the device can evaluate Touch
         // ID (`is_available`) AND the user has enrolled a wrapped DEK
@@ -2067,6 +2068,17 @@ pub struct InviteCode {
 /// (the server replaces the stale wrap). The codes are returned once and
 /// stored nowhere; the cached invitation list is stamped so the badge clears
 /// right away.
+///
+/// An invitation can expire between the pull that listed it and this attach
+/// — the server answers 410 (`SyncError::Gone`), read here as "skip it": no
+/// code is minted and it is left out of the stamped/done list, so it is NOT
+/// marked re-coded (the next pull drops it from the cache once the server
+/// agrees it is gone). Any other error follows the same rule as
+/// `vault_recovery_create`: before any code has been minted it aborts the
+/// whole call (`Err`, nothing attached that the caller doesn't know about);
+/// once at least one invitation's wrap is already attached on the server,
+/// the loop stops but still returns the codes minted so far rather than
+/// discarding attaches that already landed.
 #[tauri::command]
 pub async fn vault_invite_recode(app: AppHandle) -> Result<Vec<InviteCode>, String> {
     // Captured before the target's registry read — see `run_sync_cycle`.
@@ -2089,7 +2101,7 @@ pub async fn vault_invite_recode(app: AppHandle) -> Result<Vec<InviteCode>, Stri
     let mut codes = Vec::with_capacity(targets.len());
     for invitation_id in &targets {
         let (code, wrap) = ops::make_invite_wrap(&dek, generation);
-        crate::sync::vault_attach_invite(
+        match crate::sync::vault_attach_invite(
             &ctx.server_url,
             &token,
             &ctx.workspace_id,
@@ -2097,11 +2109,27 @@ pub async fn vault_invite_recode(app: AppHandle) -> Result<Vec<InviteCode>, Stri
             &wrap,
         )
         .await
-        .map_err(|e| e.to_string())?;
-        codes.push(InviteCode {
-            invitation_id: *invitation_id,
-            code,
-        });
+        {
+            Ok(()) => codes.push(InviteCode {
+                invitation_id: *invitation_id,
+                code,
+            }),
+            Err(crate::sync::SyncError::Gone(_)) => {
+                // Expired between the pull and this attach — skip it, don't
+                // stamp it re-coded, and keep going with the rest.
+                continue;
+            }
+            Err(e) => {
+                if codes.is_empty() {
+                    return Err(e.to_string());
+                }
+                // Mirrors `vault_recovery_create`: earlier invitations in
+                // this batch already got a fresh code and their wraps are
+                // already attached server-side — stop here and still hand
+                // those back rather than discarding attaches that landed.
+                break;
+            }
+        }
     }
     if !codes.is_empty() {
         let store = store_state.lock().map_err(|e| e.to_string())?;
@@ -2404,6 +2432,8 @@ pub async fn vault_rotation_redeem(
 /// generation-1 recovery wrap first.
 #[tauri::command]
 pub async fn vault_recovery_followup(app: AppHandle, recovery_key: String) -> Result<(), String> {
+    // Captured before the target's registry read — see `run_sync_cycle`.
+    let epoch = app.state::<ops::SyncEpoch>().current();
     let (ctx, token) = vault_rotation_target(&app)?;
     let store_state = app.state::<Mutex<Store>>();
     let vault_state = app.state::<Mutex<crate::vault::state::VaultState>>();
@@ -2435,6 +2465,7 @@ pub async fn vault_recovery_followup(app: AppHandle, recovery_key: String) -> Re
         .await
         .map_err(|e| e.to_string())?;
         let store = store_state.lock().map_err(|e| e.to_string())?;
+        check_epoch(&app, epoch)?;
         let cached = ops::cached_vault_entries(&store)?.unwrap_or_default();
         store
             .set_vault_entries(&ops::merge_recovery_entry(&cached, generation, &payload)?.to_json())
@@ -2467,11 +2498,22 @@ pub struct RecoveryCreated {
 /// a DIFFERENT wrap for this (workspace, generation, caller) and is rejected
 /// rather than treated as done (see [`crate::sync::RecoveryConflict`]).
 ///
+/// `landed` counts UPLOADS, not cache writes: it is bumped the moment the
+/// server accepts a generation's wrap, before the local cache is touched, so
+/// a cache-write failure right after (a context switch failing `check_epoch`,
+/// the store lock, `set_vault_entries`) can never make the loop forget the
+/// server already holds that wrap. Losing it here would strand the owner —
+/// `vault_recovery_create` still thinks no key exists (nothing landed in the
+/// cache) so they could never create another, and `vault_rotate` demands the
+/// recovery key from a holder, so rotation would be permanently stuck too.
+///
 /// A failure before anything landed refuses outright: nothing is cached, the
 /// button on the Security page stays. A failure AFTER at least one
-/// generation landed and was cached stops the loop but still returns the
-/// key — with `incomplete: true` — rather than silently dropping a key that
-/// already opens real, uploaded wraps. Never logged.
+/// generation landed — whether the upload itself or the cache write for a
+/// wrap that DID upload — stops the loop but still returns the key — with
+/// `incomplete: true` — rather than silently dropping a key that already
+/// opens real, uploaded wraps; the next pull rebuilds the local cache from
+/// the server anyway. Never logged.
 #[tauri::command]
 pub async fn vault_recovery_create(app: AppHandle) -> Result<RecoveryCreated, String> {
     // Captured before the target's registry read — see `run_sync_cycle`.
@@ -2489,7 +2531,13 @@ pub async fn vault_recovery_create(app: AppHandle) -> Result<RecoveryCreated, St
     {
         let store = store_state.lock().map_err(|e| e.to_string())?;
         let flags = ops::vault_status_flags(&store, true, None)?;
-        if !ops::recovery_eligible(true, &flags.role, flags.recovery_holder, true) {
+        if !ops::recovery_eligible(
+            true,
+            &flags.role,
+            flags.recovery_holder,
+            true,
+            flags.conflict,
+        ) {
             return Err("vault: only an owner without a recovery key can create one".to_string());
         }
     }
@@ -2515,13 +2563,27 @@ pub async fn vault_recovery_create(app: AppHandle) -> Result<RecoveryCreated, St
             // stop here and still hand it over rather than discarding it.
             break;
         }
-        let store = store_state.lock().map_err(|e| e.to_string())?;
-        check_epoch(&app, epoch)?;
-        let cached = ops::cached_vault_entries(&store)?.unwrap_or_default();
-        store
-            .set_vault_entries(&ops::merge_recovery_entry(&cached, *generation, payload)?.to_json())
-            .map_err(|e| e.to_string())?;
+        // UPLOADED: the server now holds this wrap under the fresh key no
+        // matter what happens next, so count it before touching the cache —
+        // see the doc comment above.
         landed += 1;
+        let cache_write = (|| -> Result<(), String> {
+            let store = store_state.lock().map_err(|e| e.to_string())?;
+            check_epoch(&app, epoch)?;
+            let cached = ops::cached_vault_entries(&store)?.unwrap_or_default();
+            store
+                .set_vault_entries(
+                    &ops::merge_recovery_entry(&cached, *generation, payload)?.to_json(),
+                )
+                .map_err(|e| e.to_string())
+        })();
+        if cache_write.is_err() {
+            // The upload landed but caching it locally failed (context
+            // switch, lock, I/O) — `landed` already counts it, so stop
+            // rather than erroring out and losing a key the server already
+            // holds; the next pull rebuilds the cache.
+            break;
+        }
     }
     broadcast_context_changed(&app);
     Ok(RecoveryCreated {

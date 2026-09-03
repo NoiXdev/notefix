@@ -2693,15 +2693,23 @@ pub fn vault_recovery_holder(
 }
 
 /// Whether the Security page offers "create a recovery key": a server
-/// context, an owner, no recovery set of their own yet, and an unlocked ring
-/// (the wraps are made from the live DEKs).
+/// context, an owner, no recovery set of their own yet, an unlocked ring
+/// (the wraps are made from the live DEKs), and no local/workspace conflict.
+///
+/// `conflict` (meta `vault_conflict`, surfaced as `VaultStatusFlags.conflict`
+/// / `VaultStatus.conflict`) rules out a device holding two vaults' keys at
+/// once: which key the live ring would wrap next is not provable there, and
+/// uploading a recovery wrap of what might be this device's LOCAL key under
+/// a workspace generation would hand out a "recovery" key that opens the
+/// wrong vault.
 pub fn recovery_eligible(
     is_server_context: bool,
     role: &str,
     recovery_holder: bool,
     unlocked: bool,
+    conflict: bool,
 ) -> bool {
-    is_server_context && role == "owner" && !recovery_holder && unlocked
+    is_server_context && role == "owner" && !recovery_holder && unlocked && !conflict
 }
 
 /// The store-derived halves of `vault_status`, read under one lock: whether a
@@ -3408,7 +3416,17 @@ pub fn apply_vault_keys(store: &Store, pull: &crate::sync::PullBody) -> Result<(
 
 /// Invitation ids whose vault wrap is missing or older than `generation` —
 /// the owner has to hand out a fresh code for each. Unparsable input → empty.
+///
+/// `generation == 0` also → empty: that's a context with no vault at all (a
+/// local context, or a server one that has never pulled `vaultGeneration`),
+/// and every invitation would otherwise look "stale" against it (an absent
+/// `generation` on an item passes the `< generation` check vacuously for any
+/// `generation`, generation 0 included) — a vaultless context must never
+/// claim invitations need codes.
 pub fn invites_needing_code(invites_json: &str, generation: u32) -> Vec<u64> {
+    if generation == 0 {
+        return Vec::new();
+    }
     let Ok(serde_json::Value::Array(items)) =
         serde_json::from_str::<serde_json::Value>(invites_json)
     else {
@@ -7620,6 +7638,17 @@ mod vault_invite_tests {
         );
     }
 
+    /// The status flags carry the role raw, exactly like `server_generation`
+    /// above — `""` before the first pull, whatever the last pull cached
+    /// (meta `workspace_role`) afterward.
+    #[test]
+    fn the_status_flags_carry_the_workspace_role() {
+        let s = store();
+        assert_eq!(vault_status_flags(&s, true, None).unwrap().role, "");
+        crate::migrate::set_meta(&s.conn, "workspace_role", "owner").unwrap();
+        assert_eq!(vault_status_flags(&s, true, None).unwrap().role, "owner");
+    }
+
     #[test]
     fn vault_status_flags_read_existence_the_conflict_and_the_recovery_question() {
         let s = store();
@@ -7725,6 +7754,30 @@ mod context_vault_info_tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("does-not-exist.db");
         assert_eq!(context_vault_info(&path), ContextVaultInfo::default());
+    }
+
+    #[test]
+    fn the_role_and_invites_needing_code_come_from_that_context_s_own_meta() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("c.db");
+        {
+            let s = Store::open(&path).unwrap();
+            crate::migrate::run_migrations(&s.conn).unwrap();
+            crate::migrate::set_meta_i64(&s.conn, "vault_generation", 2).unwrap();
+            crate::migrate::set_meta(&s.conn, "workspace_role", "owner").unwrap();
+            crate::migrate::set_meta(
+                &s.conn,
+                "vault_invites",
+                r#"[{"invitationId":5,"generation":1},{"invitationId":6,"generation":2}]"#,
+            )
+            .unwrap();
+        }
+
+        let info = context_vault_info(&path);
+        assert_eq!(info.role, "owner");
+        // Only invitation 5's wrap (generation 1) is stale against the
+        // context's own generation 2 — 6's is current.
+        assert_eq!(info.invites_needing_code, 1);
     }
 
     #[test]
@@ -8120,11 +8173,16 @@ mod vault_rotation_tests {
 
     #[test]
     fn recovery_eligible_needs_an_unlocked_owner_without_a_set() {
-        assert!(recovery_eligible(true, "owner", false, true));
-        assert!(!recovery_eligible(true, "owner", true, true));
-        assert!(!recovery_eligible(true, "editor", false, true));
-        assert!(!recovery_eligible(true, "owner", false, false));
-        assert!(!recovery_eligible(false, "owner", false, true));
+        assert!(recovery_eligible(true, "owner", false, true, false));
+        assert!(!recovery_eligible(true, "owner", true, true, false));
+        assert!(!recovery_eligible(true, "editor", false, true, false));
+        assert!(!recovery_eligible(true, "owner", false, false, false));
+        assert!(!recovery_eligible(false, "owner", false, true, false));
+        assert!(
+            !recovery_eligible(true, "owner", false, true, true),
+            "a device holding two vaults' keys must never upload a wrap of its \
+             local key under a workspace generation"
+        );
     }
 
     #[test]
@@ -10160,6 +10218,10 @@ mod sync_cycle_tests {
         assert_eq!(invites_needing_code(json, 2), vec![5, 6]);
         assert_eq!(invites_needing_code(json, 1), vec![6]);
         assert!(invites_needing_code("not json", 2).is_empty());
+        assert!(
+            invites_needing_code(json, 0).is_empty(),
+            "a vaultless context (generation 0) never counts invitations"
+        );
     }
 
     #[test]

@@ -156,17 +156,23 @@ pub struct WorkspaceInfo {
 }
 
 /// Sync failure kinds. `Offline` is retryable (network/timeout/connection/401);
-/// `Fatal` is a payload/server error that retrying won't fix.
+/// `Fatal` is a payload/server error that retrying won't fix. `Gone` is a
+/// narrower `Fatal`: the server answered 410 for a resource that simply no
+/// longer exists (e.g. an invitation that expired between the pull that
+/// listed it and a later action on it) — not retryable either, but callers
+/// that can sensibly skip just that one item rather than aborting the whole
+/// operation match on it explicitly (see `vault_invite_recode`).
 #[derive(Debug)]
 pub enum SyncError {
     Offline(String),
     Fatal(String),
+    Gone(String),
 }
 
 impl std::fmt::Display for SyncError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SyncError::Offline(m) | SyncError::Fatal(m) => write!(f, "{m}"),
+            SyncError::Offline(m) | SyncError::Fatal(m) | SyncError::Gone(m) => write!(f, "{m}"),
         }
     }
 }
@@ -476,6 +482,23 @@ pub async fn vault_put_my_key(
     classify_status(resp.status(), "vault key")
 }
 
+/// 410 becomes `SyncError::Gone`; everything else goes through the usual
+/// [`classify_status`] rules. Pulled out so the mapping is testable without a
+/// network call — mirrors [`classify_vault_create`]/[`classify_vault_recovery`].
+///
+/// The invitation can expire between the pull that listed it as open (or lost
+/// its wrap in a rotation) and this attach — the server then answers 410
+/// rather than 404, since the invitation id itself is well-formed and simply
+/// no longer accepts a wrap. `vault_invite_recode` reads that as "skip this
+/// one, the next pull will drop it from the cache" rather than aborting the
+/// whole re-code loop.
+fn classify_vault_attach(status: reqwest::StatusCode) -> Result<(), SyncError> {
+    if status == reqwest::StatusCode::GONE {
+        return Err(SyncError::Gone("vault invite HTTP 410".to_string()));
+    }
+    classify_status(status, "vault invite")
+}
+
 /// POST …/vault/invites/{id} — attach the newest DEK, wrapped under a
 /// one-time invite code, to an invitation the owner just created.
 pub async fn vault_attach_invite(
@@ -493,7 +516,7 @@ pub async fn vault_attach_invite(
         .send()
         .await
         .map_err(offline)?;
-    classify_status(resp.status(), "vault invite")
+    classify_vault_attach(resp.status())
 }
 
 /// GET …/vault/invites/{id} — the invite wrap waiting for this caller. Only
@@ -1239,6 +1262,26 @@ mod tests {
             VaultCreateOutcome::AlreadyExists
         ));
         assert!(classify_vault_create(reqwest::StatusCode::FORBIDDEN).is_err());
+    }
+
+    #[test]
+    fn vault_attach_maps_410_to_gone_and_leaves_everything_else_alone() {
+        assert!(matches!(
+            classify_vault_attach(reqwest::StatusCode::CREATED),
+            Ok(())
+        ));
+        assert!(matches!(
+            classify_vault_attach(reqwest::StatusCode::GONE),
+            Err(SyncError::Gone(m)) if m == "vault invite HTTP 410"
+        ));
+        assert!(matches!(
+            classify_vault_attach(reqwest::StatusCode::FORBIDDEN),
+            Err(SyncError::Fatal(_))
+        ));
+        assert!(matches!(
+            classify_vault_attach(reqwest::StatusCode::UNAUTHORIZED),
+            Err(SyncError::Offline(_))
+        ));
     }
 
     #[test]
