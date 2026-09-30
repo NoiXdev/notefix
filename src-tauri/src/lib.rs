@@ -96,14 +96,20 @@ pub fn run() {
     // Windows/Linux a `notefix://…` deep link arrives as an argv of the second
     // instance; forward it to the running window as an `auth-callback` event.
     // autostart is a boot-time desktop feature. Neither applies on mobile.
+    //
+    // Skipped for `tauri dev` on macOS: the lock is keyed on the bundle
+    // identifier, so a running installed app would swallow the dev instance.
+    // macOS delivers deep links as Apple events (`on_open_url`), not argv, so
+    // nothing is lost there; Windows/Linux dev builds need it for sign-in.
+    #[cfg(all(desktop, not(all(debug_assertions, target_os = "macos"))))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+        tray::show_main(app);
+        if let Some(url) = args.iter().find(|a| a.starts_with("notefix://")) {
+            dispatch_widget_url(app, url);
+        }
+    }));
     #[cfg(desktop)]
     let builder = builder
-        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            tray::show_main(app);
-            if let Some(url) = args.iter().find(|a| a.starts_with("notefix://")) {
-                dispatch_widget_url(app, url);
-            }
-        }))
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,

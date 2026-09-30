@@ -100,6 +100,13 @@ Two rules the whole feature rests on:
 
 ## Build / verify
 
+- Debug desktop builds (`tauri dev`) keep their data in a sibling directory
+  `<app data dir>.dev` (e.g. `~/Library/Application Support/dev.noix.notefix.dev`),
+  see `config::app_data` — they never touch the installed app's config,
+  profiles or databases. Mobile debug builds keep the normal path.
+  On macOS, debug builds also skip `tauri-plugin-single-instance` (its lock
+  is keyed on the bundle id, so the installed app would swallow the dev
+  instance); deep links still arrive via `on_open_url`. Windows/Linux keep it.
 - `npx tsc --noEmit` and `npx vitest run` must stay green (i18n de/en/fr key
   parity is enforced by a test).
 - Coverage: `npm run test:coverage` (frontend, v8; all `src/` files are
