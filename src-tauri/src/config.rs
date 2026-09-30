@@ -83,7 +83,9 @@ mod tests {
     #[test]
     fn dev_data_dir_is_a_suffixed_sibling() {
         assert_eq!(
-            dev_data_dir(Path::new("/Users/me/Library/Application Support/dev.noix.notefix")),
+            dev_data_dir(Path::new(
+                "/Users/me/Library/Application Support/dev.noix.notefix"
+            )),
             PathBuf::from("/Users/me/Library/Application Support/dev.noix.notefix.dev")
         );
     }
