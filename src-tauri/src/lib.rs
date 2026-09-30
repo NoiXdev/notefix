@@ -109,11 +109,10 @@ pub fn run() {
         }
     }));
     #[cfg(desktop)]
-    let builder = builder
-        .plugin(tauri_plugin_autostart::init(
-            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            None,
-        ));
+    let builder = builder.plugin(tauri_plugin_autostart::init(
+        tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+        None,
+    ));
 
     builder
         .setup(|app| {
