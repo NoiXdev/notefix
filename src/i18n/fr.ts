@@ -323,6 +323,7 @@ export const fr = {
       moveTo: 'Déplacer vers',
       delete: 'Supprimer',
       export: 'Exporter',
+      print: 'Imprimer',
       customize: 'Personnaliser…',
       sortBy: 'Tri',
       newSubfolder: 'Nouveau sous-dossier',
@@ -390,6 +391,7 @@ export const fr = {
     saveFailedReason: 'Non enregistrée : {{error}}',
     markdown: 'Markdown',
     openInWindow: 'Ouvrir dans une nouvelle fenêtre',
+    print: 'Imprimer',
     status: {
       md: 'Lgn {{ln}}, Col {{col}} | Longueur : {{length}} | Lignes : {{lines}}',
       rich: 'Mots : {{words}} | Caractères : {{chars}}',

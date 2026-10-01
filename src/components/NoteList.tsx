@@ -8,7 +8,8 @@ import type { PinnedScope, FolderColorStyle } from '../hooks/useSettings';
 import ContextMenu, { type ContextMenuItem } from './ContextMenu';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import type { IconDefinition } from '@fortawesome/fontawesome-svg-core';
-import { faThumbtack, faBoxArchive, faRightLong, faTrash, faTrashCan, faFileExport, faPalette, faArrowDownAZ, faCheck, faFolderPlus, faPen, faTableColumns, faNoteSticky, faGear, faFolder, faMagnifyingGlass, faLock, faLockOpen, faEyeSlash, faEye } from '@fortawesome/free-solid-svg-icons';
+import { faThumbtack, faBoxArchive, faRightLong, faTrash, faTrashCan, faFileExport, faPalette, faArrowDownAZ, faCheck, faFolderPlus, faPen, faTableColumns, faNoteSticky, faGear, faFolder, faMagnifyingGlass, faLock, faLockOpen, faEyeSlash, faEye, faPrint } from '@fortawesome/free-solid-svg-icons';
+import { isMobilePlatform } from '../platform';
 import ConfirmDialog from './ConfirmDialog';
 import FolderCustomizer from './FolderCustomizer';
 import Logo from './Logo';
@@ -55,6 +56,8 @@ interface Props {
   onPurge?: (id: string) => void;
   onEmptyTrash?: () => void;
   onExportNote: (note: NoteMeta) => void;
+  /** Print a note. Desktop only — hidden on mobile, where WebViews can't print. */
+  onPrintNote?: (note: NoteMeta) => void;
   onOpenContexts?: () => void;
   onProtectNote?: (id: string, next: boolean) => void;
   onLockFolder?: (id: string, next: boolean) => void;
@@ -86,7 +89,7 @@ export default function NoteList(props: Props) {
     onReorderNotes, onReorderFolders, onSetFolderIcon, onSetFolderColor, onSetFolderSort,
     dateFormat = 'auto', pinnedScope = 'perFolder', folderColorStyle = 'icon',
     compactTree = false, treeProgress = true,
-    trashed = [], trashEnabled = true, onRestore, onPurge, onEmptyTrash, onExportNote,
+    trashed = [], trashEnabled = true, onRestore, onPurge, onEmptyTrash, onExportNote, onPrintNote,
     onOpenContexts, onProtectNote, onLockFolder, onSetNoteMcpHidden, onSetFolderMcpHidden,
     vaultExists, vaultUnlocked, onLockVault,
   } = props;
@@ -373,6 +376,8 @@ export default function NoteList(props: Props) {
             ...(onMoveNote ? [{ label: t('noteList.menu.moveTo'), icon: fa(faRightLong), submenu: moveSubmenu(menu.note) }] : []),
             { label: t('noteList.menu.delete'), icon: fa(faTrash), onClick: () => setPendingDelete(menu.note.id) },
             { label: t('noteList.menu.export'), icon: fa(faFileExport), onClick: () => onExportNote(menu.note) },
+            // A protected note can't be opened while the vault is locked.
+            ...(onPrintNote && !isMobilePlatform && !(menu.note.protected && !vaultUnlocked) ? [{ label: t('noteList.menu.print'), icon: fa(faPrint), onClick: () => onPrintNote(menu.note) }] : []),
             ...(onProtectNote ? [{ label: menu.note.protected ? t('vault.unlockNote') : t('vault.lockNote'), icon: fa(menu.note.protected ? faLockOpen : faLock), onClick: () => onProtectNote(menu.note.id, !menu.note.protected) }] : []),
             ...(onSetNoteMcpHidden ? [{ label: menu.note.mcpHidden ? t('vault.showToMcp') : t('vault.hideFromMcp'), icon: fa(menu.note.mcpHidden ? faEye : faEyeSlash), onClick: () => onSetNoteMcpHidden(menu.note.id, !menu.note.mcpHidden) }] : []),
           ]}

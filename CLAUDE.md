@@ -22,8 +22,9 @@ on mobile.** Gate it with `isMobilePlatform` from `src/platform.ts`.
 
 Already gated (keep this list current): update check (About), autostart /
 start-minimized / close-behavior / storage-location (System), the autostart +
-window diagnostics checks, and the MCP nav item (the MCP server targets local
-desktop AI clients, not phones).
+window diagnostics checks, printing a note (note context menu + editor
+toolbar — Android/iOS WebViews have no `window.print`), and the MCP nav
+item (the MCP server targets local desktop AI clients, not phones).
 
 The vault's biometric unlock (`vault_biometric_available` / `_enable` /
 `_disable`, `vault_unlock_biometric`) is macOS-desktop-only: it's backed by

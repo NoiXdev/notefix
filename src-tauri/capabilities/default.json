@@ -15,6 +15,7 @@
     "core:window:allow-hide",
     "core:window:allow-show",
     "core:app:allow-version",
+    "core:webview:allow-print",
     "opener:default",
     "autostart:default",
     "dialog:default",

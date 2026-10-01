@@ -323,6 +323,7 @@ export const de = {
       moveTo: 'Verschieben nach',
       delete: 'Löschen',
       export: 'Exportieren',
+      print: 'Drucken',
       customize: 'Anpassen…',
       sortBy: 'Sortierung',
       newSubfolder: 'Neuer Unterordner',
@@ -390,6 +391,7 @@ export const de = {
     saveFailedReason: 'Nicht gespeichert: {{error}}',
     markdown: 'Markdown',
     openInWindow: 'In neuem Fenster öffnen',
+    print: 'Drucken',
     status: {
       md: 'Z {{ln}}, Sp {{col}} | Länge: {{length}} | Zeilen: {{lines}}',
       rich: 'Wörter: {{words}} | Zeichen: {{chars}}',

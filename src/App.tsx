@@ -34,6 +34,7 @@ import { releasesSince, isNewer } from './version';
 import { runSystemChecks, type SystemCheck } from './systemChecks';
 import { exportBase64, exportBundle } from './export';
 import { exportNote, type ExportFormat } from './export/exporters';
+import { printNote } from './print';
 import { resolveBindings, eventToCombo, OPEN_CONTEXTS_EVENT } from './shortcuts';
 import { nextContextId, type ContextInfo } from './contexts';
 import i18n from './i18n';
@@ -625,6 +626,7 @@ export default function App() {
         onPurge={purgeNote}
         onEmptyTrash={emptyTrash}
         onExportNote={(n) => setExportNoteState(n)}
+        onPrintNote={(n) => void printNote(n.id)}
         onProtectNote={(id, next) => requestProtect('note', id, next)}
         onLockFolder={(id, next) => requestProtect('folder', id, next)}
         onSetNoteMcpHidden={(id, next) => void setNoteMcpHidden(id, next)}

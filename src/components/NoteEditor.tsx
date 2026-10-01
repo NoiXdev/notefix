@@ -35,6 +35,8 @@ import { saveImageFile } from '../saveImage';
 import { toDateInputValue, fromDateInputValue } from '../dates';
 import { htmlToMarkdown, markdownToHtml } from '../markdown';
 import HistoryModal from './HistoryModal';
+import { printNoteHtml } from '../print';
+import { isMobilePlatform } from '../platform';
 import { mdCursor, richCounts } from '../editorStatus';
 
 async function insertImageFilesIntoView(view: EditorView, files: File[], noteId: string, pos?: number): Promise<void> {
@@ -447,6 +449,8 @@ export default function NoteEditor({ note, onChange, readOnly = false, rotationC
   };
 
   const openInWindow = () => api.openNoteWindow(note.id);
+  // Print what is on screen, including edits the autosave hasn't flushed yet.
+  const printCurrent = () => void printNoteHtml(mdMode ? markdownToHtml(mdText) : editor.getHTML());
 
   const togglePin = async () => {
     const next = await api.toggleAlwaysOnTop(pinned);
@@ -757,6 +761,19 @@ export default function NoteEditor({ note, onChange, readOnly = false, rotationC
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="3" y="3" width="10" height="10" rx="1.5" />
                 <rect x="11" y="11" width="10" height="10" rx="1.5" />
+              </svg>
+            </ToolbarBtn>
+          </>
+        )}
+
+        {!isMobilePlatform && (
+          <>
+            <div className="w-px h-5 bg-[var(--accent)] mx-1" />
+            <ToolbarBtn onClick={printCurrent} title={t('editor.print')}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="6 9 6 3 18 3 18 9" />
+                <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
+                <rect x="6" y="14" width="12" height="7" />
               </svg>
             </ToolbarBtn>
           </>

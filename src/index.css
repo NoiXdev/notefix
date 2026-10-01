@@ -390,3 +390,19 @@
   color: #9ca3af;
 }
 .whatsnew-body hr { border: none; border-top: 1px solid #374151; margin: 0.75em 0; }
+
+/* Printing a note (src/print.ts): only #print-root is printed, on white paper
+   regardless of theme. The app shell is fixed-height with overflow hidden, so
+   it is taken out entirely rather than just hidden, or long notes would clip
+   to one page. */
+#print-root { display: none; }
+@media print {
+  html, body { height: auto !important; overflow: visible !important; background: #ffffff !important; }
+  body > *:not(#print-root) { display: none !important; }
+  #print-root { display: block; }
+  #print-root .print-doc { height: auto; min-height: 0; color: #111827; font-size: 12pt; }
+  #print-root .print-doc img { max-width: 100%; height: auto; break-inside: avoid; }
+  #print-root .print-doc pre, #print-root .print-doc blockquote, #print-root .print-doc li { break-inside: avoid; }
+  #print-root .print-doc h1, #print-root .print-doc h2, #print-root .print-doc h3 { break-after: avoid; }
+  @page { margin: 18mm; }
+}
