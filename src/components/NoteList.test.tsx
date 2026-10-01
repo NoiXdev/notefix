@@ -6,6 +6,10 @@ import type { NoteMeta, Folder } from '../types';
 import { getPreview } from '../preview';
 
 vi.mock('../export', () => ({ exportSelected: vi.fn() }));
+const platformState = vi.hoisted(() => ({ isMobilePlatform: false }));
+vi.mock('../platform', () => ({
+  get isMobilePlatform() { return platformState.isMobilePlatform; },
+}));
 vi.mock('emoji-picker-react', () => ({ default: () => null, Theme: { DARK: 'dark' } }));
 
 // DndContext from @dnd-kit/core needs real pointer/geometry APIs jsdom doesn't
@@ -539,6 +543,38 @@ describe("NoteList — note context menu actions", () => {
     fireEvent.contextMenu(screen.getByText('Note'));
     fireEvent.click(screen.getByText('Exportieren'));
     expect(onExportNote).toHaveBeenCalledWith(n);
+  });
+
+  it("'Drucken' calls onPrintNote with the note", () => {
+    const onPrintNote = vi.fn();
+    const n = note('a', '<p>Note</p>');
+    render(<NoteList {...defaultProps} notes={[n]} onPrintNote={onPrintNote} />);
+    fireEvent.contextMenu(screen.getByText('Note'));
+    fireEvent.click(screen.getByText('Drucken'));
+    expect(onPrintNote).toHaveBeenCalledWith(n);
+  });
+
+  it("hides 'Drucken' for a protected note while the vault is locked", () => {
+    const n = note('a', '<p>x</p>', Date.now(), false, false, '', null, null, true, 'Secret');
+    const { unmount } = render(<NoteList {...defaultProps} notes={[n]} onPrintNote={vi.fn()} vaultUnlocked={false} />);
+    fireEvent.contextMenu(screen.getByText('Secret'));
+    expect(screen.queryByText('Drucken')).not.toBeInTheDocument();
+    unmount();
+    render(<NoteList {...defaultProps} notes={[n]} onPrintNote={vi.fn()} vaultUnlocked />);
+    fireEvent.contextMenu(screen.getByText('Secret'));
+    expect(screen.getByText('Drucken')).toBeInTheDocument();
+  });
+
+  it("hides 'Drucken' on mobile platforms", () => {
+    platformState.isMobilePlatform = true;
+    try {
+      render(<NoteList {...defaultProps} notes={[note('a', '<p>Note</p>')]} onPrintNote={vi.fn()} />);
+      fireEvent.contextMenu(screen.getByText('Note'));
+      expect(screen.getByText('Exportieren')).toBeInTheDocument();
+      expect(screen.queryByText('Drucken')).not.toBeInTheDocument();
+    } finally {
+      platformState.isMobilePlatform = false;
+    }
   });
 
   it("'Notiz darüber' creates a sibling note above via onCreate + onReorderNotes", async () => {

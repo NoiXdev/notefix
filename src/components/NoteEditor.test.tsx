@@ -8,6 +8,13 @@ import { markdownToHtml } from "../markdown";
 // real ProseMirror schema, the fake serializer below just echoes back whatever "content"
 // marker the fake view's `doc.slice()` produced, wrapped in a <p> — so the real
 // `selectionToCopy()` (untouched) still runs on genuine, if synthetic, HTML.
+const platformState = vi.hoisted(() => ({ isMobilePlatform: false }));
+vi.mock("../platform", () => ({
+  get isMobilePlatform() { return platformState.isMobilePlatform; },
+}));
+const mockPrintNoteHtml = vi.hoisted(() => vi.fn());
+vi.mock("../print", () => ({ printNoteHtml: mockPrintNoteHtml }));
+
 vi.mock("@tiptap/pm/model", () => ({
   DOMSerializer: {
     fromSchema: () => ({
@@ -327,6 +334,34 @@ describe("NoteEditor — toolbar actions dispatch the right editor commands", ()
     const clickSpy = vi.spyOn(input, "click");
     fireEvent.mouseDown(screen.getByTitle("Bild einfügen"));
     expect(clickSpy).toHaveBeenCalledOnce();
+  });
+
+  it("prints the current editor content from the toolbar", () => {
+    fakeEditor.getHTML.mockReturnValueOnce("<p>unsaved edit</p>");
+    render(<NoteEditor note={mockNote} onChange={onChange} />);
+    fireEvent.mouseDown(screen.getByTitle("Drucken"));
+    expect(mockPrintNoteHtml).toHaveBeenCalledWith("<p>unsaved edit</p>");
+  });
+
+  it("prints the markdown source as HTML in markdown mode", () => {
+    fakeEditor.getHTML.mockReturnValueOnce("<p>from markdown</p>");
+    render(<NoteEditor note={mockNote} onChange={onChange} />);
+    fireEvent.mouseDown(screen.getByTitle("Markdown"));
+    mockPrintNoteHtml.mockClear();
+    fakeEditor.getHTML.mockReturnValueOnce("<p>stale editor</p>");
+    fireEvent.mouseDown(screen.getByTitle("Drucken"));
+    expect(mockPrintNoteHtml).toHaveBeenCalledWith(markdownToHtml("from markdown"));
+  });
+
+  it("hides the print button on mobile platforms", () => {
+    platformState.isMobilePlatform = true;
+    try {
+      render(<NoteEditor note={mockNote} onChange={onChange} />);
+      expect(screen.getByTitle("Verlauf")).toBeInTheDocument();
+      expect(screen.queryByTitle("Drucken")).not.toBeInTheDocument();
+    } finally {
+      platformState.isMobilePlatform = false;
+    }
   });
 
   it("opens the history modal from the toolbar and closes it", async () => {
