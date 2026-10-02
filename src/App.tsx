@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faLock } from '@fortawesome/free-solid-svg-icons';
+import { faLock, faEllipsisVertical } from '@fortawesome/free-solid-svg-icons';
 import { api } from './api';
 import { useNotes } from './hooks/useNotes';
 import { useFolders } from './hooks/useFolders';
@@ -9,6 +9,8 @@ import { useSettings } from './hooks/useSettings';
 import { useIsMobile } from './hooks/useIsMobile';
 import { useVault } from './hooks/useVault';
 import NoteList from './components/NoteList';
+import NoteContextMenu, { DeleteNoteDialog } from './components/NoteContextMenu';
+import { computeDrop } from './dnd';
 import CombinedNoteList from './components/CombinedNoteList';
 import NoteEditor from './components/NoteEditor';
 import Logo from './components/Logo';
@@ -106,6 +108,10 @@ export default function App() {
   // Mobile: single-column. `mobileEditor` = showing the editor (vs. the list).
   const isMobile = useIsMobile();
   const [mobileEditor, setMobileEditor] = useState(false);
+  // The note context menu, opened from the mobile editor header's ⋯ button
+  // (the note list — and its right-click menu — is not on screen there).
+  const [editorMenu, setEditorMenu] = useState<{ x: number; y: number } | null>(null);
+  const [editorPendingDelete, setEditorPendingDelete] = useState<string | null>(null);
   const pendingSelectRef = useRef<string | null>(null);
   const initView = useRef(false);
   const selectNote = (id: string) => { setSelectedId(id); setView('editor'); setMobileEditor(true); };
@@ -490,6 +496,14 @@ export default function App() {
     }
   };
 
+  // "Neue Notiz darüber/darunter" from the editor-header menu — the same
+  // placement the note list does via drag-and-drop.
+  const createBesideNote = async (note: import('./types').NoteMeta, mode: 'before' | 'after') => {
+    const id = await handleCreate();
+    const res = computeDrop({ draggedKind: 'note', draggedId: id, targetKind: 'note', targetId: note.id, mode, notes, folders });
+    if (res?.kind === 'note') void reorderNotesGuarded(res.parentId, res.orderedIds);
+  };
+
   /** Whether this note's stored HTML embeds an image. */
   const noteHasImages = async (id: string) => {
     try {
@@ -639,14 +653,49 @@ export default function App() {
       {(!isMobile || mobileEditor) && (
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {isMobile && (
-          <button
-            onClick={() => setMobileEditor(false)}
-            className="shrink-0 flex items-center gap-1.5 px-4 pb-3 text-[15px] font-medium border-b"
-            style={{ background: 'var(--panel)', borderColor: 'var(--line)', color: 'var(--ink)', paddingTop: 'calc(0.75rem + env(safe-area-inset-top))' }}
+          <div
+            className="shrink-0 flex items-center justify-between border-b"
+            style={{ background: 'var(--panel)', borderColor: 'var(--line)', color: 'var(--ink)', paddingTop: 'env(safe-area-inset-top)' }}
           >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6" /></svg>
-            {t('common.notesBack')}
-          </button>
+            <button
+              onClick={() => setMobileEditor(false)}
+              className="flex items-center gap-1.5 px-4 pt-3 pb-3 text-[15px] font-medium"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6" /></svg>
+              {t('common.notesBack')}
+            </button>
+            {view === 'editor' && selectedNote && (
+              <button
+                onClick={e => { const r = e.currentTarget.getBoundingClientRect(); setEditorMenu({ x: r.right, y: r.bottom }); }}
+                className="w-11 h-11 mr-1 flex items-center justify-center text-[17px]"
+                title={t('editor.noteMenu')}
+                aria-label={t('editor.noteMenu')}
+              >
+                <FontAwesomeIcon icon={faEllipsisVertical} />
+              </button>
+            )}
+          </div>
+        )}
+        {editorMenu && selectedNote && (
+          <NoteContextMenu
+            x={editorMenu.x} y={editorMenu.y} note={selectedNote}
+            folders={folders} vaultUnlocked={vault.status.unlocked}
+            onCreateBeside={(n, mode) => void createBesideNote(n, mode)}
+            onTogglePin={setPinned} onArchive={setArchived} onSetColor={setColor} onMoveNote={moveNote}
+            onRequestDelete={setEditorPendingDelete}
+            onExportNote={(n) => setExportNoteState(n)}
+            onPrintNote={(n) => void printNote(n.id)}
+            onProtectNote={(id, next) => requestProtect('note', id, next)}
+            onSetNoteMcpHidden={(id, next) => void setNoteMcpHidden(id, next)}
+            onClose={() => setEditorMenu(null)}
+          />
+        )}
+        {editorPendingDelete && (
+          <DeleteNoteDialog
+            trashEnabled={settings.trashEnabled}
+            onConfirm={() => { handleDelete(editorPendingDelete); setEditorPendingDelete(null); }}
+            onCancel={() => setEditorPendingDelete(null)}
+          />
         )}
         <div className="flex-1 min-h-0 overflow-hidden">
         {view === 'dashboard' ? (

@@ -1138,4 +1138,40 @@ describe("App — mobile layout", () => {
     await waitFor(() => expect(screen.getByText("Mobile note")).toBeInTheDocument());
     expect(screen.queryByText("Notizen")).not.toBeInTheDocument();
   });
+
+  const mobileNote = {
+    id: "a", updatedAt: 1, pinned: false, archived: false, color: "", dueAt: null, folderId: null,
+    position: 0, deletedAt: null, preview: "Mobile note", tasksDone: 0, tasksTotal: 0, protected: false, title: "", mcpHidden: false,
+  };
+  const openEditorMenu = async () => {
+    setMobile(true);
+    mockLoad.mockResolvedValue([mobileNote]);
+    render(<App />);
+    fireEvent.click(await screen.findByText("Mobile note"));
+    fireEvent.click(await screen.findByTitle("Notiz-Menü"));
+  };
+
+  it("the editor header's menu offers the note context menu", async () => {
+    await openEditorMenu();
+    expect(screen.getByText("Exportieren")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Anpinnen"));
+    await waitFor(() => expect(mockSetPinned).toHaveBeenCalledWith("a", true));
+  });
+
+  it("deleting from the editor header's menu asks for confirmation first", async () => {
+    await openEditorMenu();
+    fireEvent.click(screen.getByText("Löschen"));
+    expect(screen.getByText("Notiz löschen")).toBeInTheDocument();
+    expect(mockDeleteFn).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText("In Papierkorb"));
+    await waitFor(() => expect(mockDeleteFn).toHaveBeenCalledWith("a"));
+  });
+
+  it("the editor header's menu cancels a delete", async () => {
+    await openEditorMenu();
+    fireEvent.click(screen.getByText("Löschen"));
+    fireEvent.click(screen.getByText("Abbrechen"));
+    expect(screen.queryByText("Notiz löschen")).not.toBeInTheDocument();
+    expect(mockDeleteFn).not.toHaveBeenCalled();
+  });
 });

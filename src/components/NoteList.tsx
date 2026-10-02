@@ -5,11 +5,11 @@ import type { NoteMeta, Folder } from '../types';
 import { computeDrop, type DragKind, type DropMode } from '../dnd';
 import { parseDragId, parseDropId } from '../dndkit';
 import type { PinnedScope, FolderColorStyle } from '../hooks/useSettings';
-import ContextMenu, { type ContextMenuItem } from './ContextMenu';
+import ContextMenu from './ContextMenu';
+import NoteContextMenu, { DeleteNoteDialog } from './NoteContextMenu';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import type { IconDefinition } from '@fortawesome/fontawesome-svg-core';
-import { faThumbtack, faBoxArchive, faRightLong, faTrash, faTrashCan, faFileExport, faPalette, faArrowDownAZ, faCheck, faFolderPlus, faPen, faTableColumns, faNoteSticky, faGear, faFolder, faMagnifyingGlass, faLock, faLockOpen, faEyeSlash, faEye, faPrint } from '@fortawesome/free-solid-svg-icons';
-import { isMobilePlatform } from '../platform';
+import { faBoxArchive, faTrash, faTrashCan, faPalette, faArrowDownAZ, faCheck, faFolderPlus, faPen, faTableColumns, faNoteSticky, faGear, faMagnifyingGlass, faLock, faLockOpen, faEyeSlash, faEye } from '@fortawesome/free-solid-svg-icons';
 import ConfirmDialog from './ConfirmDialog';
 import FolderCustomizer from './FolderCustomizer';
 import Logo from './Logo';
@@ -18,7 +18,6 @@ import TicTacToe from './TicTacToe';
 import NoteRow from './NoteRow';
 import FolderRow from './FolderRow';
 import RootDropZone from './RootDropZone';
-import { NOTE_COLORS } from '../colors';
 import { sortNotesBy } from '../sortNotes';
 import type { DateFormat } from '../dates';
 
@@ -56,7 +55,6 @@ interface Props {
   onPurge?: (id: string) => void;
   onEmptyTrash?: () => void;
   onExportNote: (note: NoteMeta) => void;
-  /** Print a note. Desktop only — hidden on mobile, where WebViews can't print. */
   onPrintNote?: (note: NoteMeta) => void;
   onOpenContexts?: () => void;
   onProtectNote?: (id: string, next: boolean) => void;
@@ -167,20 +165,6 @@ export default function NoteList(props: Props) {
     setActiveDrag(null);
   };
   const onDragCancel = () => { setDropHint(null); setActiveDrag(null); };
-
-  // Move-to submenu: all folders indented by depth + root.
-  const moveSubmenu = (note: NoteMeta): ContextMenuItem[] => {
-    const byParent = (pid: string | null): Folder[] => folders.filter(f => (f.parentId ?? null) === pid).sort((a, b) => a.position - b.position);
-    const items: ContextMenuItem[] = [{ label: t('noteList.moveRoot'), icon: fa(faFolder), onClick: () => onMoveNote?.(note.id, null) }];
-    const walk = (pid: string | null, depth: number) => {
-      for (const f of byParent(pid)) {
-        items.push({ label: `${'  '.repeat(depth)}${f.name}`, icon: fa(faFolder), onClick: () => onMoveNote?.(note.id, f.id) });
-        walk(f.id, depth + 1);
-      }
-    };
-    walk(null, 0);
-    return items;
-  };
 
   const renderRow = (note: NoteMeta, depth: number) => (
     <NoteRow
@@ -363,24 +347,14 @@ export default function NoteList(props: Props) {
       )}
 
       {menu && (
-        <ContextMenu
-          x={menu.x} y={menu.y}
-          swatches={onSetColor ? { colors: NOTE_COLORS, current: menu.note.color, onPick: c => onSetColor(menu.note.id, c) } : undefined}
-          items={[
-            ...(onReorderNotes ? [
-              { label: t('noteList.menu.newNoteAbove'), icon: fa(faNoteSticky), onClick: () => void createBesideNote(menu.note, 'before') },
-              { label: t('noteList.menu.newNoteBelow'), icon: fa(faNoteSticky), onClick: () => void createBesideNote(menu.note, 'after') },
-            ] : []),
-            ...(onTogglePin ? [{ label: menu.note.pinned ? t('noteList.menu.unpin') : t('noteList.menu.pin'), icon: fa(faThumbtack), onClick: () => onTogglePin(menu.note.id, !menu.note.pinned) }] : []),
-            ...(onArchive ? [{ label: menu.note.archived ? t('noteList.menu.restore') : t('noteList.menu.archive'), icon: fa(faBoxArchive), onClick: () => onArchive(menu.note.id, !menu.note.archived) }] : []),
-            ...(onMoveNote ? [{ label: t('noteList.menu.moveTo'), icon: fa(faRightLong), submenu: moveSubmenu(menu.note) }] : []),
-            { label: t('noteList.menu.delete'), icon: fa(faTrash), onClick: () => setPendingDelete(menu.note.id) },
-            { label: t('noteList.menu.export'), icon: fa(faFileExport), onClick: () => onExportNote(menu.note) },
-            // A protected note can't be opened while the vault is locked.
-            ...(onPrintNote && !isMobilePlatform && !(menu.note.protected && !vaultUnlocked) ? [{ label: t('noteList.menu.print'), icon: fa(faPrint), onClick: () => onPrintNote(menu.note) }] : []),
-            ...(onProtectNote ? [{ label: menu.note.protected ? t('vault.unlockNote') : t('vault.lockNote'), icon: fa(menu.note.protected ? faLockOpen : faLock), onClick: () => onProtectNote(menu.note.id, !menu.note.protected) }] : []),
-            ...(onSetNoteMcpHidden ? [{ label: menu.note.mcpHidden ? t('vault.showToMcp') : t('vault.hideFromMcp'), icon: fa(menu.note.mcpHidden ? faEye : faEyeSlash), onClick: () => onSetNoteMcpHidden(menu.note.id, !menu.note.mcpHidden) }] : []),
-          ]}
+        <NoteContextMenu
+          x={menu.x} y={menu.y} note={menu.note}
+          folders={folders} vaultUnlocked={vaultUnlocked}
+          onCreateBeside={onReorderNotes ? (n, mode) => void createBesideNote(n, mode) : undefined}
+          onTogglePin={onTogglePin} onArchive={onArchive} onSetColor={onSetColor} onMoveNote={onMoveNote}
+          onRequestDelete={setPendingDelete}
+          onExportNote={onExportNote} onPrintNote={onPrintNote}
+          onProtectNote={onProtectNote} onSetNoteMcpHidden={onSetNoteMcpHidden}
           onClose={() => setMenu(null)}
         />
       )}
@@ -435,11 +409,8 @@ export default function NoteList(props: Props) {
         ) : null;
       })()}
       {pendingDelete && (
-        <ConfirmDialog
-          title={t('noteList.confirm.deleteTitle')}
-          message={trashEnabled ? t('noteList.confirm.deleteTrashMessage') : t('noteList.confirm.deletePermanentMessage')}
-          confirmLabel={trashEnabled ? t('noteList.confirm.moveToTrash') : t('noteList.confirm.deletePermanent')}
-          danger={!trashEnabled}
+        <DeleteNoteDialog
+          trashEnabled={trashEnabled}
           onConfirm={() => { onDelete(pendingDelete); setPendingDelete(null); }}
           onCancel={() => setPendingDelete(null)}
         />
