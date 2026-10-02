@@ -391,6 +391,7 @@ export const fr = {
     saveFailedReason: 'Non enregistrée : {{error}}',
     markdown: 'Markdown',
     openInWindow: 'Ouvrir dans une nouvelle fenêtre',
+    noteMenu: 'Menu de la note',
     print: 'Imprimer',
     status: {
       md: 'Lgn {{ln}}, Col {{col}} | Longueur : {{length}} | Lignes : {{lines}}',
