@@ -1,4 +1,21 @@
-## [0.8.0](https://github.com/NoiXdev/notefix/compare/v0.7.0...v) (2026-10-20)
+## [0.9.0](https://github.com/NoiXdev/notefix/compare/v0.8.0...v) (2026-10-20)
+
+
+### Features
+
+* **contexts:** add export action and import card to the Contexts page ([aaa6946](https://github.com/NoiXdev/notefix/commit/aaa6946f45c7db1eb5ac3427ffc59b0f5f1819fe))
+* **contexts:** export a local context as a zip bundle and import it as a new one ([f9dc838](https://github.com/NoiXdev/notefix/commit/f9dc838375fb8568a2af81759c2722e47a01f5fa))
+
+
+### Bug Fixes
+
+* **contexts:** harden context export/import and import outside the registry lock ([9ab2732](https://github.com/NoiXdev/notefix/commit/9ab2732662aad2dcbdd9deca5a3ded83d2d30420))
+* **contexts:** keep the lone manage card full width on tablets ([36c8892](https://github.com/NoiXdev/notefix/commit/36c8892c48360558cb0426eacf41d8d5e13af7b9))
+* **contexts:** map more bundle errors and group the Contexts cards in a grid ([31796ad](https://github.com/NoiXdev/notefix/commit/31796adc9f7ca18d2bd4d6c95bd2cb1e90645605))
+* **contexts:** only refuse export targets that would damage a context ([6675f05](https://github.com/NoiXdev/notefix/commit/6675f052abba41aa9a1f23ce1d515b50f06d131c))
+* **contexts:** place the import card below the context list ([67e1766](https://github.com/NoiXdev/notefix/commit/67e1766a4058be1479a034b0bbf46b22bd999c2a))
+
+## [0.8.0](https://github.com/NoiXdev/notefix/compare/v0.7.0...v0.8.0) (2026-10-20)
 
 
 ### Features
