@@ -3195,6 +3195,54 @@ pub fn context_remove(
     Ok((removed, infos))
 }
 
+/// `context_export`: write a LOCAL context (database snapshot + images) to
+/// `out` as a zip bundle. A server context is a cache of the workspace, not
+/// something to carry between devices, so it is refused.
+pub fn context_export(
+    reg: &Registry,
+    id: &str,
+    out: &Path,
+    app_version: &str,
+) -> Result<(), String> {
+    let c = reg
+        .contexts
+        .iter()
+        .find(|c| c.id == id)
+        .ok_or("unknown context")?;
+    if c.kind != "local" {
+        return Err("context: only local contexts can be exported".into());
+    }
+    crate::context_bundle::export(Path::new(&c.path), &c.label, app_version, out)
+}
+
+/// `context_import`: unpack the bundle at `zip` into a NEW directory
+/// `<contexts_dir>/<new id>` and add it to the registry as a local context
+/// named from the bundle. Existing contexts are never touched and the active
+/// one does not change. A refused bundle — or a registry that cannot be
+/// saved — leaves neither a directory nor a registry entry behind.
+pub fn context_import(
+    reg: &mut Registry,
+    contexts_dir: &Path,
+    profiles_path: &Path,
+    zip: &Path,
+) -> Result<Vec<ContextInfo>, String> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let dest = contexts_dir.join(&id);
+    let manifest = crate::context_bundle::import(zip, &dest, crate::migrate::SCHEMA_VERSION)?;
+    let db = dest.join("notefix.db");
+    reg.add(
+        id.clone(),
+        manifest.label,
+        db.to_string_lossy().into_owned(),
+    );
+    if let Err(e) = crate::profiles::save(profiles_path, reg) {
+        reg.contexts.retain(|c| c.id != id);
+        let _ = std::fs::remove_dir_all(&dest);
+        return Err(e.to_string());
+    }
+    Ok(to_infos(reg))
+}
+
 /// `context_bind_workspace`: bind a server context to a workspace and
 /// optionally rename it in the same step.
 pub fn context_bind_workspace(
@@ -9367,6 +9415,197 @@ mod context_mutation_tests {
         assert_eq!(info.server_url, "https://notes.example");
         assert_eq!(info.workspace_id, "", "not bound to a workspace yet");
         assert_eq!(saved(&f).active_id, "srv-1");
+    }
+}
+
+#[cfg(test)]
+mod context_bundle_tests {
+    use super::*;
+
+    const SERVER_ERR: &str = "context: only local contexts can be exported";
+
+    struct Fixture {
+        dir: tempfile::TempDir,
+        contexts: PathBuf,
+        profiles: PathBuf,
+        reg: Registry,
+    }
+
+    /// A registry with one flat default context holding a note and an image.
+    fn fixture() -> Fixture {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("notefix.db");
+        let s = Store::open(&db).unwrap();
+        crate::migrate::run_migrations(&s.conn).unwrap();
+        s.save_note(&Note {
+            id: "n1".into(),
+            content: "<p>hello</p>".into(),
+            updated_at: 1,
+            ..Default::default()
+        })
+        .unwrap();
+        let img = dir.path().join("images/aa/bb/pic.png");
+        std::fs::create_dir_all(img.parent().unwrap()).unwrap();
+        std::fs::write(&img, [7u8, 7, 7]).unwrap();
+        let reg = Registry::default_for(&db.to_string_lossy());
+        Fixture {
+            contexts: dir.path().join("contexts"),
+            profiles: dir.path().join("profiles.json"),
+            dir,
+            reg,
+        }
+    }
+
+    fn saved(f: &Fixture) -> Registry {
+        serde_json::from_str(&std::fs::read_to_string(&f.profiles).unwrap()).unwrap()
+    }
+
+    fn export_active(f: &mut Fixture, label: &str) -> PathBuf {
+        let id = f.reg.active_id.clone();
+        f.reg.rename(&id, label.into()).unwrap();
+        let out = f.dir.path().join("bundle.notefix.zip");
+        context_export(&f.reg, &id, &out, "7.7.7").unwrap();
+        out
+    }
+
+    fn child_count(dir: &Path) -> usize {
+        std::fs::read_dir(dir).map(|d| d.count()).unwrap_or(0)
+    }
+
+    #[test]
+    fn export_writes_a_bundle_labelled_and_versioned_from_the_registry() {
+        let mut f = fixture();
+
+        let out = export_active(&mut f, "Work");
+
+        let dest = f.dir.path().join("check");
+        let manifest =
+            crate::context_bundle::import(&out, &dest, crate::migrate::SCHEMA_VERSION).unwrap();
+        assert_eq!(manifest.label, "Work");
+        assert_eq!(manifest.app_version, "7.7.7");
+        assert!(dest.join("images/aa/bb/pic.png").is_file());
+    }
+
+    #[test]
+    fn export_refuses_a_server_context() {
+        let mut f = fixture();
+        f.reg.add_server(
+            "srv".into(),
+            "srv".into(),
+            f.dir.path().join("srv.db").to_string_lossy().into_owned(),
+            "https://s".into(),
+        );
+        let out = f.dir.path().join("x.zip");
+
+        assert_eq!(
+            context_export(&f.reg, "srv", &out, "1.0.0").unwrap_err(),
+            SERVER_ERR
+        );
+
+        assert!(!out.exists());
+    }
+
+    #[test]
+    fn export_rejects_an_unknown_context() {
+        let f = fixture();
+
+        assert_eq!(
+            context_export(&f.reg, "nope", &f.dir.path().join("x.zip"), "1.0.0").unwrap_err(),
+            "unknown context"
+        );
+    }
+
+    #[test]
+    fn import_adds_a_new_inactive_local_context_and_persists_the_registry() {
+        let mut f = fixture();
+        let out = export_active(&mut f, "Work");
+        let before = f.reg.active_id.clone();
+
+        let infos = context_import(&mut f.reg, &f.contexts, &f.profiles, &out).unwrap();
+
+        assert_eq!(infos.len(), 2);
+        let added = infos.iter().find(|i| i.id != before).unwrap();
+        assert_eq!(added.kind, "local");
+        assert_eq!(added.label, "Work");
+        assert!(!added.active, "an imported context is not made active");
+        assert_eq!(f.reg.active_id, before);
+        let expected = f.contexts.join(&added.id).join("notefix.db");
+        assert_eq!(added.path, expected.to_string_lossy());
+        assert!(expected.is_file());
+        assert_eq!(
+            std::fs::read(f.contexts.join(&added.id).join("images/aa/bb/pic.png")).unwrap(),
+            vec![7, 7, 7],
+            "images land next to the new database"
+        );
+        let on_disk = saved(&f);
+        assert_eq!(on_disk.active_id, before);
+        assert_eq!(on_disk.contexts.len(), 2);
+        assert!(on_disk.contexts.iter().any(|c| c.id == added.id));
+    }
+
+    #[test]
+    fn importing_the_same_bundle_twice_makes_two_independent_contexts() {
+        let mut f = fixture();
+        let out = export_active(&mut f, "Work");
+
+        context_import(&mut f.reg, &f.contexts, &f.profiles, &out).unwrap();
+        let infos = context_import(&mut f.reg, &f.contexts, &f.profiles, &out).unwrap();
+
+        assert_eq!(infos.len(), 3);
+        assert_eq!(child_count(&f.contexts), 2);
+        let ids: std::collections::HashSet<_> = infos.iter().map(|i| &i.id).collect();
+        assert_eq!(ids.len(), 3);
+    }
+
+    #[test]
+    fn importing_a_bad_file_changes_nothing() {
+        let mut f = fixture();
+        let bad = f.dir.path().join("bad.zip");
+        std::fs::write(&bad, b"not a zip").unwrap();
+        let before = f.reg.clone();
+
+        let err = context_import(&mut f.reg, &f.contexts, &f.profiles, &bad).unwrap_err();
+
+        assert_eq!(err, "bundle: not a Notefix context export");
+        assert_eq!(f.reg, before);
+        assert!(!f.profiles.exists(), "the registry is not written");
+        assert_eq!(child_count(&f.contexts), 0, "no half-created directory");
+    }
+
+    #[test]
+    fn a_bundle_from_a_newer_schema_is_refused_without_a_trace() {
+        let mut f = fixture();
+        let db = PathBuf::from(&f.reg.active().unwrap().path);
+        let s = Store::open(&db).unwrap();
+        crate::migrate::set_meta(&s.conn, "schema_version", "16").unwrap();
+        drop(s);
+        let out = export_active(&mut f, "Future");
+        let before = f.reg.clone();
+
+        let err = context_import(&mut f.reg, &f.contexts, &f.profiles, &out).unwrap_err();
+
+        assert_eq!(
+            err,
+            "bundle: made by a newer Notefix — update this app first"
+        );
+        assert_eq!(f.reg, before);
+        assert_eq!(child_count(&f.contexts), 0);
+    }
+
+    #[test]
+    fn a_registry_that_cannot_be_saved_rolls_the_import_back() {
+        let mut f = fixture();
+        let out = export_active(&mut f, "Work");
+        // The profiles file's parent is a regular file: saving must fail.
+        let blocker = f.dir.path().join("blocker");
+        std::fs::write(&blocker, b"x").unwrap();
+        let profiles = blocker.join("profiles.json");
+        let before = f.reg.clone();
+
+        assert!(context_import(&mut f.reg, &f.contexts, &profiles, &out).is_err());
+
+        assert_eq!(f.reg, before, "no registry entry");
+        assert_eq!(child_count(&f.contexts), 0, "no extracted directory");
     }
 }
 

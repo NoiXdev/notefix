@@ -1,5 +1,10 @@
 use rusqlite::Connection;
 
+/// The schema version [`run_migrations`] brings a database to. Bump it
+/// together with the last migration step (a test pins the two together); a
+/// context bundle made by a newer app is refused against it.
+pub const SCHEMA_VERSION: i64 = 15;
+
 pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
@@ -266,6 +271,16 @@ mod tests {
         assert_eq!(
             get_meta(&s.conn, "schema_version").unwrap().as_deref(),
             Some("15")
+        );
+    }
+
+    #[test]
+    fn schema_version_constant_matches_what_a_fresh_database_reaches() {
+        let s = store();
+        assert_eq!(
+            get_meta(&s.conn, "schema_version").unwrap(),
+            Some(SCHEMA_VERSION.to_string()),
+            "bump SCHEMA_VERSION together with the last migration step"
         );
     }
 

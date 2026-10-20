@@ -2,6 +2,7 @@ mod aggregate;
 mod auth;
 mod commands;
 mod config;
+mod context_bundle;
 mod export;
 mod folders;
 mod images;
@@ -354,6 +355,8 @@ pub fn run() {
             commands::context_switch,
             commands::context_rename,
             commands::context_remove,
+            commands::context_export,
+            commands::context_import,
             commands::server_auth_begin,
             commands::server_auth_complete,
             commands::server_workspaces,

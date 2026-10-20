@@ -46,6 +46,7 @@ htmd = "0.5.5"
 argon2 = "0.6"
 chacha20poly1305 = "0.11"
 zeroize = { version = "1", features = ["derive"] }
+zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
 
 # Biometric vault unlock (Task 8) — desktop macOS Touch ID via LAContext.
 # macOS-only so non-macOS/mobile builds are unaffected.

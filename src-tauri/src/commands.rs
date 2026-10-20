@@ -660,6 +660,48 @@ pub fn context_remove(
     Ok(infos)
 }
 
+/// Writes a local context to `path` as a zip bundle. `async` only to get off
+/// the main thread: the body is synchronous (no `.await`, so no guard is held
+/// across one), but snapshotting the database and zipping every image would
+/// freeze the WebView if it ran on it.
+#[tauri::command(async)]
+pub fn context_export(
+    app: AppHandle,
+    reg: State<'_, Mutex<crate::profiles::Registry>>,
+    id: String,
+    path: String,
+) -> Result<(), String> {
+    // The registry lock covers the lookup only, not the (slow) export.
+    let snapshot = reg.lock().map_err(|e| e.to_string())?.clone();
+    ops::context_export(
+        &snapshot,
+        &id,
+        std::path::Path::new(&path),
+        &app.package_info().version.to_string(),
+    )
+}
+
+/// Adds the bundle at `path` as a new local context (not made active). Off
+/// the main thread for the same reason as `context_export`.
+#[tauri::command(async)]
+pub fn context_import(
+    app: AppHandle,
+    reg: State<'_, Mutex<crate::profiles::Registry>>,
+    path: String,
+) -> Result<Vec<ContextInfo>, String> {
+    let infos = {
+        let mut r = reg.lock().map_err(|e| e.to_string())?;
+        ops::context_import(
+            &mut r,
+            &crate::config::contexts_dir(&app),
+            &crate::config::profiles_path(&app),
+            std::path::Path::new(&path),
+        )?
+    };
+    broadcast_context_changed(&app);
+    Ok(infos)
+}
+
 /// Pending browser auth flows, keyed by the PKCE `state`. Lives only in memory:
 /// a flow that is never completed is simply forgotten when the app exits.
 pub struct PendingAuth {
