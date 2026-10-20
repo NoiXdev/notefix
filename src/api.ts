@@ -96,6 +96,10 @@ export const api = {
       invoke("context_rename", { id, label }),
     remove: (id: string, deleteFile: boolean): Promise<import("./contexts").ContextInfo[]> =>
       invoke("context_remove", { id, deleteFile }),
+    /** Write a local context to `path` as a zip bundle (database snapshot + images). */
+    exportBundle: (id: string, path: string): Promise<void> => invoke("context_export", { id, path }),
+    /** Add the bundle at `path` as a new local context (not made active). */
+    importBundle: (path: string): Promise<import("./contexts").ContextInfo[]> => invoke("context_import", { path }),
     /** Begin add-server: returns the browser authorize URL to open. */
     serverAuthBegin: (serverUrl: string): Promise<string> =>
       invoke("server_auth_begin", { serverUrl }),

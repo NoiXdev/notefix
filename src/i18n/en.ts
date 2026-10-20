@@ -502,6 +502,7 @@ export const en = {
   contexts: {
     sections: {
       manage: 'Management',
+      import: 'Import a context',
     },
     nav: 'Contexts',
     title: 'Contexts',
@@ -529,6 +530,18 @@ export const en = {
       rotationPending: 'Key change pending',
       invitesNeedCode_one: '1 invitation needs a new code',
       invitesNeedCode_other: '{{count}} invitations need a new code',
+    },
+    bundle: {
+      export: 'Export…',
+      import: 'Import context…',
+      fileType: 'Notefix context',
+      importHint: 'Add a context exported on another device as a new local context. Protected notes open with the same vault passphrase or recovery key; turn Touch ID on again on this device.',
+      exported: 'Context exported',
+      exportFailed: 'Export failed: {{error}}',
+      imported: 'Context “{{name}}” imported',
+      importFailed: 'Import failed: {{error}}',
+      tooNew: 'This file comes from a newer version of Notefix. Update the app first.',
+      notABundle: 'This file is not a Notefix context export.',
     },
   },
   sync: {

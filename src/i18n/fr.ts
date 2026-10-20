@@ -502,6 +502,7 @@ export const fr = {
   contexts: {
     sections: {
       manage: 'Gestion',
+      import: 'Importer un contexte',
     },
     nav: 'Contextes',
     title: 'Contextes',
@@ -529,6 +530,18 @@ export const fr = {
       rotationPending: 'Changement de clé en attente',
       invitesNeedCode_one: '{{count}} invitation a besoin d’un nouveau code',
       invitesNeedCode_other: '{{count}} invitations ont besoin d’un nouveau code',
+    },
+    bundle: {
+      export: 'Exporter…',
+      import: 'Importer un contexte…',
+      fileType: 'Contexte Notefix',
+      importHint: 'Ajoutez ici, comme nouveau contexte local, un contexte exporté sur un autre appareil. Les notes protégées s’ouvrent avec le même mot de passe du coffre ou la même clé de récupération ; réactivez Touch ID sur cet appareil.',
+      exported: 'Contexte exporté',
+      exportFailed: 'Échec de l’export : {{error}}',
+      imported: 'Contexte « {{name}} » importé',
+      importFailed: 'Échec de l’import : {{error}}',
+      tooNew: 'Ce fichier provient d’une version plus récente de Notefix. Mettez d’abord l’application à jour.',
+      notABundle: 'Ce fichier n’est pas un export de contexte Notefix.',
     },
   },
   sync: {

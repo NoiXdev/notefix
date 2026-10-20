@@ -23,8 +23,10 @@ on mobile.** Gate it with `isMobilePlatform` from `src/platform.ts`.
 Already gated (keep this list current): update check (About), autostart /
 start-minimized / close-behavior / storage-location (System), the autostart +
 window diagnostics checks, printing a note (note context menu + editor
-toolbar — Android/iOS WebViews have no `window.print`), and the MCP nav
-item (the MCP server targets local desktop AI clients, not phones).
+toolbar — Android/iOS WebViews have no `window.print`), the MCP nav
+item (the MCP server targets local desktop AI clients, not phones), and
+context export/import (Contexts page: the "Export…" action-menu item and the
+import card — a native save/open dialog moving a zip between desktops).
 
 The vault's biometric unlock (`vault_biometric_available` / `_enable` /
 `_disable`, `vault_unlock_biometric`) is macOS-desktop-only: it's backed by
@@ -46,6 +48,10 @@ the biometric UI on that check rather than on `isMobilePlatform` alone.
 None of the vault commands is desktop-only — setup, unlock, sharing, rotation
 and the passphrase change all exist on mobile. Touch ID remains the only gated
 part (see above).
+
+An exported local context (`context_bundle.rs`) carries its vault record
+inside the database snapshot, so the same passphrase / recovery key opens it
+elsewhere, while Touch ID is per device and context id and must be re-enabled.
 
 The biometric keychain item is **per context** (`vault-dek:<context id>`) —
 every context is its own vault with its own DEK, so an app-wide item would

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import type { IconDefinition } from "@fortawesome/fontawesome-svg-core";
 import { faGlobe, faCircleInfo, faPalette, faGear, faPlug, faChartColumn, faKeyboard, faStethoscope, faChevronRight, faDownload, faServer, faLock } from "@fortawesome/free-solid-svg-icons";
@@ -8,7 +9,7 @@ import { api, type AppInfo, type UpdateInfo, type ReleaseInfo } from "../api";
 import type { ContextInfo } from "../contexts";
 import { startServerAuth } from "../serverAuth";
 import type { Stats, RotationCode, RecodedInvite, RecoveryCreated } from "../types";
-import type { DateFormat } from "../dates";
+import { toDateInputValue, type DateFormat } from "../dates";
 import type { AppSettings } from "../hooks/useSettings";
 import { useVault } from "../hooks/useVault";
 import Logo from "./Logo";
@@ -1143,6 +1144,10 @@ function ContextsPage() {
   const [shareError, setShareError] = useState<string | null>(null);
   // One open actions menu at a time, anchored below the row's trigger.
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  // Outcome of the last export/import, shown beside the control that started
+  // it. `bundleBusy` covers the whole run (snapshot + zipping can take a while).
+  const [bundle, setBundle] = useState<{ scope: "export" | "import"; ok: boolean; text: string } | null>(null);
+  const [bundleBusy, setBundleBusy] = useState(false);
 
   // The invite commands act on the ACTIVE server context (they resolve their
   // workspace and tokens from it), so they are only offered on that row —
@@ -1258,6 +1263,66 @@ function ContextsPage() {
     c.label || (c.kind === "server" ? c.serverUrl : t("contexts.localDefault"));
   const close = () => { setDialog(null); setDeleteFile(false); };
 
+  const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e ?? ""));
+  const zipFilter = () => [{ name: t("contexts.bundle.fileType"), extensions: ["zip"] }];
+
+  /** Writes a local context to a zip the user picks (database snapshot + images). */
+  const exportContext = async (c: ContextInfo) => {
+    if (bundleBusy) return;
+    setBundle(null);
+    // The label is a user-typed name; keep only what every file system accepts.
+    const safeName = labelOf(c).replace(/[^\p{L}\p{N} ._-]/gu, "-");
+    try {
+      const path = await save({
+        defaultPath: `${safeName}-${toDateInputValue(Date.now())}.notefix.zip`,
+        filters: zipFilter(),
+      });
+      if (!path) return;
+      setBundleBusy(true);
+      await api.contexts.exportBundle(c.id, path);
+      setBundle({ scope: "export", ok: true, text: t("contexts.bundle.exported") });
+    } catch (e) {
+      setBundle({ scope: "export", ok: false, text: t("contexts.bundle.exportFailed", { error: errorText(e) }) });
+    } finally {
+      setBundleBusy(false);
+    }
+  };
+
+  /** The backend's refusal reasons (`context_bundle.rs`) get their own wording. */
+  const importErrorText = (e: unknown) => {
+    const msg = errorText(e);
+    return msg.includes("made by a newer Notefix") ? t("contexts.bundle.tooNew")
+      : msg.includes("not a Notefix context export") || msg.includes("has no database") ? t("contexts.bundle.notABundle")
+      : t("contexts.bundle.importFailed", { error: msg });
+  };
+
+  /** Adds an exported bundle as a new local context; the active one stays active. */
+  const importContext = async () => {
+    if (bundleBusy) return;
+    setBundle(null);
+    try {
+      const path = await open({ multiple: false, directory: false, filters: zipFilter() });
+      if (typeof path !== "string") return;
+      setBundleBusy(true);
+      const known = new Set(ctx.map(c => c.id));
+      const next = await api.contexts.importBundle(path);
+      setCtx(next);
+      const added = next.find(c => !known.has(c.id));
+      setBundle({ scope: "import", ok: true, text: t("contexts.bundle.imported", { name: added ? labelOf(added) : "" }) });
+    } catch (e) {
+      setBundle({ scope: "import", ok: false, text: importErrorText(e) });
+    } finally {
+      setBundleBusy(false);
+    }
+  };
+
+  const bundleLine = (scope: "export" | "import") =>
+    bundle?.scope === scope && (
+      bundle.ok
+        ? <span className="text-xs text-gray-500" role="status">{bundle.text}</span>
+        : <span className="text-xs text-red-600" role="alert">{bundle.text}</span>
+    );
+
   const submitServer = async (raw: string) => {
     close();
     const urlStr = raw.trim();
@@ -1341,6 +1406,9 @@ function ContextsPage() {
                   onClose={() => setMenu(m => (m?.id === c.id ? null : m))}
                   items={[
                     { label: t("contexts.rename"), onClick: () => setDialog({ mode: "rename", c }) },
+                    // Desktop only: the bundle is written through a native save
+                    // dialog, and a server context is a cache, not a portable copy.
+                    ...(c.kind === "local" && !isMobilePlatform ? [{ label: t("contexts.bundle.export"), disabled: bundleBusy, onClick: () => void exportContext(c) }] : []),
                     ...(c.vaultExists ? [{ label: t("contexts.vault.changePassphrase"), onClick: () => setDialog({ mode: "vault", c }) }] : []),
                     // Sharing and rotating both take the DEK out of the live ring,
                     // so both are hidden while the vault is locked, conflicted or
@@ -1361,13 +1429,25 @@ function ContextsPage() {
           </div>
           );
         })}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <button onClick={() => setDialog({ mode: "add" })} className="px-4 py-1.5 rounded text-sm font-medium" style={{ background: "var(--line)", color: "#1c1917" }}>{t("contexts.add")}</button>
           <button onClick={() => { setError(null); setDialog({ mode: "addServer" }); }} className="px-4 py-1.5 rounded text-sm font-medium border" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>{t("contexts.addServer")}</button>
           {connecting && <span className="text-xs text-gray-500">{t("contexts.connecting")}</span>}
           {error && <span className="text-xs text-red-600" role="alert">{error}</span>}
+          {bundleLine("export")}
         </div>
       </SettingsSection>
+      {!isMobilePlatform && (
+        <div className="mt-3">
+          <SettingsSection title={t("contexts.sections.import")}>
+            <p className="text-xs text-gray-500">{t("contexts.bundle.importHint")}</p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button onClick={() => void importContext()} disabled={bundleBusy} className="px-4 py-1.5 rounded text-sm font-medium border disabled:opacity-50" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>{t("contexts.bundle.import")}</button>
+              {bundleLine("import")}
+            </div>
+          </SettingsSection>
+        </div>
+      )}
 
       {dialog?.mode === "add" && (
         <PromptDialog

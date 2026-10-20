@@ -40,6 +40,10 @@ const {
   mockOnContextChanged,
   mockOpenExternal,
   mockUseIsMobile,
+  mockContextsExportBundle,
+  mockContextsImportBundle,
+  mockDialogSave,
+  mockDialogOpen,
 } = vi.hoisted(() => ({
   mockIsEnabled: vi.fn(() => Promise.resolve(false)),
   mockEnable: vi.fn(() => Promise.resolve()),
@@ -80,6 +84,10 @@ const {
   mockOnContextChanged: vi.fn(() => () => {}),
   mockOpenExternal: vi.fn(),
   mockUseIsMobile: vi.fn(() => false),
+  mockContextsExportBundle: vi.fn((_id: string, _path: string) => Promise.resolve()),
+  mockContextsImportBundle: vi.fn((_path: string) => Promise.resolve([] as unknown[])),
+  mockDialogSave: vi.fn((_opts?: unknown) => Promise.resolve(null as string | null)),
+  mockDialogOpen: vi.fn((_opts?: unknown) => Promise.resolve(null as string | null)),
 }));
 
 vi.mock("../api", () => ({
@@ -125,9 +133,12 @@ vi.mock("../api", () => ({
       vaultInviteAccept: mockInviteAccept,
       vaultInviteRecode: mockInviteRecode,
       serverAuthBegin: mockServerAuthBegin,
+      exportBundle: mockContextsExportBundle,
+      importBundle: mockContextsImportBundle,
     },
   },
 }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ save: mockDialogSave, open: mockDialogOpen }));
 vi.mock('react-select', () => ({
   default: ({ options, value, onChange }: { options: { value: string; label: string }[]; value: { value: string } | null; onChange: (o: { value: string }) => void }) => (
     <select aria-label="select" value={value?.value ?? ''} onChange={e => onChange(options.find(o => o.value === e.target.value)!)}>
@@ -1602,6 +1613,219 @@ describe("Settings — Contexts page", () => {
     await waitFor(() => expect(mockContextsVaultChangePassphrase).toHaveBeenCalledWith("c-server", "old", "new123"));
     expect(mockVaultChangePassphrase).not.toHaveBeenCalled();
     await waitFor(() => expect(screen.queryByPlaceholderText("Aktuelles Passwort")).not.toBeInTheDocument());
+  });
+});
+
+describe("Settings — Contexts bundle (export / import)", () => {
+  const openActions = (id: string) =>
+    fireEvent.click(within(screen.getByTestId(`context-row-${id}`)).getByRole("button", { name: "Aktionen ▾" }));
+
+  const local = { id: "c-local", label: "", kind: "local" as const, path: "/local.db", serverUrl: "", workspaceId: "", active: true, vaultExists: false, vaultBiometric: false };
+  const server = { id: "c-server", label: "Team", kind: "server" as const, path: "", serverUrl: "https://s.example.com", workspaceId: "w1", active: false, vaultExists: true, vaultBiometric: true };
+  const imported = { id: "c-imp", label: "Work", kind: "local" as const, path: "/ctx/c-imp/notefix.db", serverUrl: "", workspaceId: "", active: false, vaultExists: false, vaultBiometric: false };
+  const NEWER = "bundle: made by a newer Notefix — update this app first";
+
+  const renderContexts = async (list: unknown[] = [local, server]) => {
+    mockContextsList.mockResolvedValueOnce(list);
+    render(<Settings onClose={vi.fn()} settings={FULL_SETTINGS} onSetSetting={vi.fn()} onExport={vi.fn()} />);
+    fireEvent.click(screen.getByText("Kontexte"));
+    await waitFor(() => expect(screen.getByTestId(`context-row-${(list[0] as { id: string }).id}`)).toBeInTheDocument());
+  };
+
+  const clickImport = () => fireEvent.click(screen.getByRole("button", { name: "Kontext importieren…" }));
+
+  beforeEach(() => {
+    mockDialogSave.mockResolvedValue(null);
+    mockDialogOpen.mockResolvedValue(null);
+  });
+
+  describe("export", () => {
+    it("is offered in the actions menu of a local row only", async () => {
+      await renderContexts();
+
+      openActions("c-local");
+      expect(screen.getByRole("button", { name: "Exportieren…" })).toBeInTheDocument();
+
+      openActions("c-server");
+      expect(screen.queryByRole("button", { name: "Exportieren…" })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Umbenennen" })).toBeInTheDocument();
+    });
+
+    it("is hidden on a mobile platform", async () => {
+      platformState.isMobilePlatform = true;
+      await renderContexts();
+
+      openActions("c-local");
+
+      expect(screen.getByRole("button", { name: "Umbenennen" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Exportieren…" })).not.toBeInTheDocument();
+    });
+
+    it("asks where to save, writes the bundle and reports success", async () => {
+      await renderContexts();
+      mockDialogSave.mockResolvedValueOnce("/Users/me/Lokal.notefix.zip");
+
+      openActions("c-local");
+      fireEvent.click(screen.getByRole("button", { name: "Exportieren…" }));
+
+      await waitFor(() => expect(mockContextsExportBundle).toHaveBeenCalledExactlyOnceWith("c-local", "/Users/me/Lokal.notefix.zip"));
+      expect(mockDialogSave).toHaveBeenCalledExactlyOnceWith({
+        defaultPath: expect.stringMatching(/^Lokal-\d{4}-\d{2}-\d{2}\.notefix\.zip$/),
+        filters: [{ name: "Notefix-Kontext", extensions: ["zip"] }],
+      });
+      expect(await screen.findByText("Kontext exportiert")).toBeInTheDocument();
+    });
+
+    it("suggests today's date and a file-system-safe version of the context name", async () => {
+      vi.useFakeTimers({ toFake: ["Date"], now: new Date(2026, 9, 20, 12) });
+      try {
+        await renderContexts([{ ...local, label: "A/B: Büro" }]);
+        mockDialogSave.mockResolvedValueOnce(null);
+
+        openActions("c-local");
+        fireEvent.click(screen.getByRole("button", { name: "Exportieren…" }));
+
+        await waitFor(() => expect(mockDialogSave).toHaveBeenCalled());
+        expect(mockDialogSave).toHaveBeenCalledWith(expect.objectContaining({ defaultPath: "A-B- Büro-2026-10-20.notefix.zip" }));
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("does nothing when the save dialog is cancelled", async () => {
+      await renderContexts();
+      mockDialogSave.mockResolvedValueOnce(null);
+
+      openActions("c-local");
+      fireEvent.click(screen.getByRole("button", { name: "Exportieren…" }));
+
+      await waitFor(() => expect(mockDialogSave).toHaveBeenCalled());
+      expect(mockContextsExportBundle).not.toHaveBeenCalled();
+      expect(screen.queryByText("Kontext exportiert")).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
+    it("shows the backend's reason when the export fails", async () => {
+      await renderContexts();
+      mockDialogSave.mockResolvedValueOnce("/Users/me/x.notefix.zip");
+      mockContextsExportBundle.mockRejectedValueOnce("disk full");
+
+      openActions("c-local");
+      fireEvent.click(screen.getByRole("button", { name: "Exportieren…" }));
+
+      expect(await screen.findByRole("alert")).toHaveTextContent("Export fehlgeschlagen: disk full");
+      expect(screen.queryByText("Kontext exportiert")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("import", () => {
+    it("renders its own card with the hint on desktop", async () => {
+      await renderContexts();
+
+      expect(screen.getByRole("heading", { name: "Kontext importieren" })).toBeInTheDocument();
+      expect(screen.getByText(/Tresor-Passwort oder Wiederherstellungsschlüssel; Touch ID schaltest du auf diesem Gerät neu ein/)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Kontext importieren…" })).toBeEnabled();
+    });
+
+    it("is hidden on a mobile platform", async () => {
+      platformState.isMobilePlatform = true;
+      await renderContexts();
+
+      expect(screen.queryByRole("heading", { name: "Kontext importieren" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Kontext importieren…" })).not.toBeInTheDocument();
+    });
+
+    it("picks a zip, imports it, lists the new context and names it in the success line", async () => {
+      await renderContexts();
+      mockDialogOpen.mockResolvedValueOnce("/Users/me/Work.notefix.zip");
+      mockContextsImportBundle.mockResolvedValueOnce([local, server, imported]);
+
+      clickImport();
+
+      await waitFor(() => expect(mockContextsImportBundle).toHaveBeenCalledExactlyOnceWith("/Users/me/Work.notefix.zip"));
+      expect(mockDialogOpen).toHaveBeenCalledExactlyOnceWith({
+        multiple: false,
+        directory: false,
+        filters: [{ name: "Notefix-Kontext", extensions: ["zip"] }],
+      });
+      expect(await screen.findByText("Kontext „Work“ importiert")).toBeInTheDocument();
+      expect(screen.getByTestId("context-row-c-imp")).toBeInTheDocument();
+      expect(screen.getByText("/ctx/c-imp/notefix.db")).toBeInTheDocument();
+    });
+
+    it("names a context without a label by the default label", async () => {
+      await renderContexts();
+      mockDialogOpen.mockResolvedValueOnce("/x.zip");
+      mockContextsImportBundle.mockResolvedValueOnce([local, server, { ...imported, label: "" }]);
+
+      clickImport();
+
+      expect(await screen.findByText("Kontext „Lokal“ importiert")).toBeInTheDocument();
+    });
+
+    it("does nothing when the file dialog is cancelled", async () => {
+      await renderContexts();
+      mockDialogOpen.mockResolvedValueOnce(null);
+
+      clickImport();
+
+      await waitFor(() => expect(mockDialogOpen).toHaveBeenCalled());
+      expect(mockContextsImportBundle).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: "Kontext importieren…" })).toBeEnabled();
+    });
+
+    it("disables the button while the import runs", async () => {
+      await renderContexts();
+      mockDialogOpen.mockResolvedValueOnce("/x.zip");
+      let finish!: (list: unknown[]) => void;
+      mockContextsImportBundle.mockReturnValueOnce(new Promise(res => { finish = res; }));
+
+      clickImport();
+
+      await waitFor(() => expect(screen.getByRole("button", { name: "Kontext importieren…" })).toBeDisabled());
+      finish([local, server, imported]);
+      await waitFor(() => expect(screen.getByRole("button", { name: "Kontext importieren…" })).toBeEnabled());
+    });
+
+    it.each([
+      [NEWER, "Diese Datei stammt aus einer neueren Notefix-Version. Aktualisiere zuerst die App."],
+      ["bundle: not a Notefix context export", "Diese Datei ist kein Notefix-Kontext-Export."],
+      ["bundle: the archive has no database", "Diese Datei ist kein Notefix-Kontext-Export."],
+      ["No space left on device", "Import fehlgeschlagen: No space left on device"],
+    ])("maps the backend error %j to a readable message", async (backend, shown) => {
+      await renderContexts();
+      mockDialogOpen.mockResolvedValueOnce("/x.zip");
+      mockContextsImportBundle.mockRejectedValueOnce(backend);
+
+      clickImport();
+
+      expect(await screen.findByRole("alert")).toHaveTextContent(shown);
+      expect(screen.getByRole("button", { name: "Kontext importieren…" })).toBeEnabled();
+    });
+
+    it("maps an Error object the same way", async () => {
+      await renderContexts();
+      mockDialogOpen.mockResolvedValueOnce("/x.zip");
+      mockContextsImportBundle.mockRejectedValueOnce(new Error(NEWER));
+
+      clickImport();
+
+      expect(await screen.findByRole("alert")).toHaveTextContent("neueren Notefix-Version");
+    });
+
+    it("clears an earlier error when the next import succeeds", async () => {
+      await renderContexts();
+      mockDialogOpen.mockResolvedValue("/x.zip");
+      mockContextsImportBundle.mockRejectedValueOnce(NEWER);
+      clickImport();
+      await screen.findByRole("alert");
+      mockContextsImportBundle.mockResolvedValueOnce([local, server, imported]);
+
+      clickImport();
+
+      expect(await screen.findByText("Kontext „Work“ importiert")).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
   });
 });
 

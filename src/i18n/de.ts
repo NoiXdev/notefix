@@ -502,6 +502,7 @@ export const de = {
   contexts: {
     sections: {
       manage: 'Verwaltung',
+      import: 'Kontext importieren',
     },
     nav: 'Kontexte',
     title: 'Kontexte',
@@ -529,6 +530,18 @@ export const de = {
       rotationPending: 'Schlüsselwechsel offen',
       invitesNeedCode_one: '1 Einladung braucht einen neuen Code',
       invitesNeedCode_other: '{{count}} Einladungen brauchen einen neuen Code',
+    },
+    bundle: {
+      export: 'Exportieren…',
+      import: 'Kontext importieren…',
+      fileType: 'Notefix-Kontext',
+      importHint: 'Lege einen auf einem anderen Gerät exportierten Kontext hier als neuen lokalen Kontext an. Geschützte Notizen öffnest du mit demselben Tresor-Passwort oder Wiederherstellungsschlüssel; Touch ID schaltest du auf diesem Gerät neu ein.',
+      exported: 'Kontext exportiert',
+      exportFailed: 'Export fehlgeschlagen: {{error}}',
+      imported: 'Kontext „{{name}}“ importiert',
+      importFailed: 'Import fehlgeschlagen: {{error}}',
+      tooNew: 'Diese Datei stammt aus einer neueren Notefix-Version. Aktualisiere zuerst die App.',
+      notABundle: 'Diese Datei ist kein Notefix-Kontext-Export.',
     },
   },
   sync: {

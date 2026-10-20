@@ -428,6 +428,24 @@ describe('api.contexts', () => {
     );
   });
 
+  it('exportBundle(id, path) calls context_export with { id, path }', async () => {
+    await expectInvoke(
+      () => api.contexts.exportBundle('c1', '/tmp/Work.notefix.zip'),
+      'context_export',
+      { id: 'c1', path: '/tmp/Work.notefix.zip' },
+      undefined,
+    );
+  });
+
+  it('importBundle(path) calls context_import with { path } and resolves the new list', async () => {
+    await expectInvoke(
+      () => api.contexts.importBundle('/tmp/Work.notefix.zip'),
+      'context_import',
+      { path: '/tmp/Work.notefix.zip' },
+      [ctx],
+    );
+  });
+
   it('serverAuthBegin(serverUrl) calls server_auth_begin with { serverUrl }', async () => {
     await expectInvoke(
       () => api.contexts.serverAuthBegin('https://example.com'),
