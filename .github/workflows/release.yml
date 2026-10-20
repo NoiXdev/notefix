@@ -61,3 +61,61 @@ jobs:
       package_name: dev.noix.notefix
       track: production
       release_tag: ${{ needs.release.outputs.tag }}
+
+  # Point the Homebrew tap at this release. Final releases only: Homebrew has
+  # no concept of a prerelease, so anything that lands in the tap is what
+  # `brew upgrade` hands every user. bump.yml in the tap downloads the DMG
+  # and checks the checksum before it commits anything, so a wrong or missing
+  # asset leaves the tap on the previous, working version.
+  # Needs TAP_TOKEN — a PAT that may dispatch workflows in NoiXdev/homebrew-tap
+  # (see SETUP.md there).
+  tap:
+    name: Bump the Homebrew cask
+    needs: release
+    if: ${{ inputs.dry_run == false && needs.release.outputs.is-prerelease == 'false' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch the bump
+        env:
+          GH_TOKEN: ${{ secrets.TAP_TOKEN }}
+          TAG: ${{ needs.release.outputs.tag }}
+          SHA: ${{ needs.release.outputs.dmg-sha256 }}
+        run: |
+          set -uo pipefail
+          if [ -z "$SHA" ]; then
+            echo "::error::The release reported no DMG checksum, so there is nothing safe to bump."
+            exit 1
+          fi
+          for attempt in 1 2 3; do
+            if gh workflow run bump.yml --repo NoiXdev/homebrew-tap \
+              -f kind=cask \
+              -f name=notefix \
+              -f version="${TAG#v}" \
+              -f sha256="$SHA"; then
+              echo "Dispatched on attempt $attempt."
+              exit 0
+            fi
+            echo "Dispatch attempt $attempt failed."
+            sleep 10
+          done
+          exit 1
+
+      # This job runs after the release is already public. A silent failure
+      # here leaves the tap pointing at the previous version while the
+      # release page advertises this one, so say exactly what to run by hand.
+      - name: Explain how to finish the bump by hand
+        if: failure()
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+          SHA: ${{ needs.release.outputs.dmg-sha256 }}
+        run: |
+          echo "::error::The Homebrew cask was NOT bumped, but ${TAG} is already published."
+          echo "::error::Until this is run, 'brew install --cask notefix' installs the previous version."
+          echo "Run it by hand with a token that may dispatch workflows in the tap:"
+          echo ""
+          echo "  gh workflow run bump.yml --repo NoiXdev/homebrew-tap \\"
+          echo "    -f kind=cask -f name=notefix \\"
+          echo "    -f version=${TAG#v} -f sha256=${SHA}"
+          echo ""
+          echo "A 403 here means TAP_TOKEN cannot dispatch in NoiXdev/homebrew-tap."
+          echo "See SETUP.md in that repository for what the token needs."
