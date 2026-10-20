@@ -538,6 +538,7 @@ export const fr = {
       importHint: 'Ajoutez ici, comme nouveau contexte local, un contexte exporté sur un autre appareil. Les notes protégées s’ouvrent avec le même mot de passe du coffre ou la même clé de récupération ; réactivez Touch ID sur cet appareil.',
       exported: 'Contexte exporté',
       exportFailed: 'Échec de l’export : {{error}}',
+      exportInsideData: 'Choisissez un emplacement en dehors du dossier de données de l’application.',
       imported: 'Contexte « {{name}} » importé',
       importFailed: 'Échec de l’import : {{error}}',
       tooNew: 'Ce fichier provient d’une version plus récente de Notefix. Mettez d’abord l’application à jour.',

@@ -538,6 +538,7 @@ export const de = {
       importHint: 'Lege einen auf einem anderen Gerät exportierten Kontext hier als neuen lokalen Kontext an. Geschützte Notizen öffnest du mit demselben Tresor-Passwort oder Wiederherstellungsschlüssel; Touch ID schaltest du auf diesem Gerät neu ein.',
       exported: 'Kontext exportiert',
       exportFailed: 'Export fehlgeschlagen: {{error}}',
+      exportInsideData: 'Wähle einen Speicherort außerhalb des App-Datenordners.',
       imported: 'Kontext „{{name}}“ importiert',
       importFailed: 'Import fehlgeschlagen: {{error}}',
       tooNew: 'Diese Datei stammt aus einer neueren Notefix-Version. Aktualisiere zuerst die App.',

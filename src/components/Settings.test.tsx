@@ -1705,6 +1705,18 @@ describe("Settings — Contexts bundle (export / import)", () => {
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     });
 
+    it("explains an export target inside the app's data folder instead of echoing the raw error", async () => {
+      await renderContexts();
+      mockDialogSave.mockResolvedValueOnce("/data/images/x.notefix.zip");
+      mockContextsExportBundle.mockRejectedValueOnce("bundle: choose a location outside the app's data folder");
+
+      openActions("c-local");
+      fireEvent.click(screen.getByRole("button", { name: "Exportieren…" }));
+
+      expect(await screen.findByRole("alert")).toHaveTextContent("Wähle einen Speicherort außerhalb des App-Datenordners.");
+      expect(screen.getByRole("alert")).not.toHaveTextContent("Export fehlgeschlagen");
+    });
+
     it("shows the backend's reason when the export fails", async () => {
       await renderContexts();
       mockDialogSave.mockResolvedValueOnce("/Users/me/x.notefix.zip");
@@ -1791,6 +1803,8 @@ describe("Settings — Contexts bundle (export / import)", () => {
       [NEWER, "Diese Datei stammt aus einer neueren Notefix-Version. Aktualisiere zuerst die App."],
       ["bundle: not a Notefix context export", "Diese Datei ist kein Notefix-Kontext-Export."],
       ["bundle: the archive has no database", "Diese Datei ist kein Notefix-Kontext-Export."],
+      ["bundle: the database in the archive is not valid", "Diese Datei ist kein Notefix-Kontext-Export."],
+      ["bundle: unsafe path in archive", "Diese Datei ist kein Notefix-Kontext-Export."],
       ["No space left on device", "Import fehlgeschlagen: No space left on device"],
     ])("maps the backend error %j to a readable message", async (backend, shown) => {
       await renderContexts();

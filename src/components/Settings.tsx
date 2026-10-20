@@ -1282,17 +1282,23 @@ function ContextsPage() {
       await api.contexts.exportBundle(c.id, path);
       setBundle({ scope: "export", ok: true, text: t("contexts.bundle.exported") });
     } catch (e) {
-      setBundle({ scope: "export", ok: false, text: t("contexts.bundle.exportFailed", { error: errorText(e) }) });
+      setBundle({ scope: "export", ok: false, text: exportErrorText(e) });
     } finally {
       setBundleBusy(false);
     }
   };
 
   /** The backend's refusal reasons (`context_bundle.rs`) get their own wording. */
+  const exportErrorText = (e: unknown) => {
+    const msg = errorText(e);
+    return msg.includes("choose a location outside") ? t("contexts.bundle.exportInsideData")
+      : t("contexts.bundle.exportFailed", { error: msg });
+  };
   const importErrorText = (e: unknown) => {
     const msg = errorText(e);
     return msg.includes("made by a newer Notefix") ? t("contexts.bundle.tooNew")
-      : msg.includes("not a Notefix context export") || msg.includes("has no database") ? t("contexts.bundle.notABundle")
+      : ["not a Notefix context export", "has no database", "database in the archive is not valid", "unsafe path in archive"].some(m => msg.includes(m))
+        ? t("contexts.bundle.notABundle")
       : t("contexts.bundle.importFailed", { error: msg });
   };
 
@@ -1341,104 +1347,104 @@ function ContextsPage() {
     <div>
       <h1 className="text-2xl font-bold text-gray-900 mb-1">{t("contexts.title")}</h1>
       <p className="text-sm text-gray-500 mb-6">{t("contexts.subtitle")}</p>
-      <SettingsSection title={t("contexts.sections.manage")}>
-        {ctx.map(c => {
-          const hint = shareBlockedHint(c);
-          return (
-          <div key={c.id} data-testid={`context-row-${c.id}`} className="flex items-start justify-between gap-3 rounded border px-3 py-2" style={{ borderColor: "var(--line-muted)", background: "var(--paper-raised)" }}>
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 text-sm font-medium text-gray-800">
-                {c.kind === "server" && <FontAwesomeIcon icon={faGlobe} className="text-[11px] text-gray-500 shrink-0" />}
-                <span className="truncate">{labelOf(c)}</span>
-                {c.active && (
-                  <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide" style={{ background: "var(--line)", color: "#1c1917" }}>{t("contexts.active")}</span>
-                )}
+      <SettingsGrid>
+        <SettingsSection title={t("contexts.sections.manage")}>
+          {ctx.map(c => {
+            const hint = shareBlockedHint(c);
+            return (
+            <div key={c.id} data-testid={`context-row-${c.id}`} className="flex items-start justify-between gap-3 rounded border px-3 py-2" style={{ borderColor: "var(--line-muted)", background: "var(--paper-raised)" }}>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 text-sm font-medium text-gray-800">
+                  {c.kind === "server" && <FontAwesomeIcon icon={faGlobe} className="text-[11px] text-gray-500 shrink-0" />}
+                  <span className="truncate">{labelOf(c)}</span>
+                  {c.active && (
+                    <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide" style={{ background: "var(--line)", color: "#1c1917" }}>{t("contexts.active")}</span>
+                  )}
+                </div>
+                <div className="text-xs text-gray-500 break-all font-mono">{c.kind === "server" ? c.serverUrl : c.path}</div>
+                <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                  <span className="rounded px-1.5 py-0.5 text-[10px] font-medium" style={{ background: "var(--line-muted)", color: "#1c1917" }}>
+                    {c.vaultExists ? t("contexts.vault.set") : t("contexts.vault.none")}
+                  </span>
+                  {c.vaultExists && c.vaultBiometric && (
+                    <span className="rounded px-1.5 py-0.5 text-[10px] font-medium" style={{ background: "var(--line-muted)", color: "#1c1917" }}>
+                      {t("contexts.vault.touchId")}
+                    </span>
+                  )}
+                  {c.vaultGeneration > 1 && (
+                    <span className="rounded px-1.5 py-0.5 text-[10px] font-medium" style={{ background: "var(--line-muted)", color: "#1c1917" }}>
+                      {t("contexts.vault.generation", { n: c.vaultGeneration })}
+                    </span>
+                  )}
+                  {c.vaultRotationPending && (
+                    <span className="rounded px-1.5 py-0.5 text-[10px] font-medium" style={{ background: "#fef3c7", color: "#7c2d12" }}>
+                      {t("contexts.vault.rotationPending")}
+                    </span>
+                  )}
+                  {c.invitesNeedingCode > 0 && (
+                    <span className="rounded px-1.5 py-0.5 text-[10px] font-medium" style={{ background: "#fef3c7", color: "#7c2d12" }}>
+                      {t("contexts.vault.invitesNeedCode", { count: c.invitesNeedingCode })}
+                    </span>
+                  )}
+                </div>
               </div>
-              <div className="text-xs text-gray-500 break-all font-mono">{c.kind === "server" ? c.serverUrl : c.path}</div>
-              <div className="mt-1 flex items-center gap-1.5 flex-wrap">
-                <span className="rounded px-1.5 py-0.5 text-[10px] font-medium" style={{ background: "var(--line-muted)", color: "#1c1917" }}>
-                  {c.vaultExists ? t("contexts.vault.set") : t("contexts.vault.none")}
-                </span>
-                {c.vaultExists && c.vaultBiometric && (
-                  <span className="rounded px-1.5 py-0.5 text-[10px] font-medium" style={{ background: "var(--line-muted)", color: "#1c1917" }}>
-                    {t("contexts.vault.touchId")}
-                  </span>
+              {/* Every row action lives in one menu: six buttons never fit a
+                  phone-width row, and the menu only lists what applies here. */}
+              <div className="flex shrink-0 flex-col items-end gap-1">
+                <button
+                  onClick={e => {
+                    // Keep the click away from the open menu's dismiss listener,
+                    // so switching rows opens the new menu instead of closing it.
+                    e.stopPropagation();
+                    const r = e.currentTarget.getBoundingClientRect();
+                    setMenu(m => (m?.id === c.id ? null : { id: c.id, x: r.left, y: r.bottom + 4 }));
+                  }}
+                  aria-haspopup="menu"
+                  aria-expanded={menu?.id === c.id}
+                  className="px-3 py-1 rounded text-xs font-medium border"
+                  style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}
+                >
+                  {t("contexts.actions")} ▾
+                </button>
+                {menu?.id === c.id && (
+                  <ContextMenu
+                    x={menu.x}
+                    y={menu.y}
+                    onClose={() => setMenu(m => (m?.id === c.id ? null : m))}
+                    items={[
+                      { label: t("contexts.rename"), onClick: () => setDialog({ mode: "rename", c }) },
+                      // Desktop only: the bundle is written through a native save
+                      // dialog, and a server context is a cache, not a portable copy.
+                      ...(c.kind === "local" && !isMobilePlatform ? [{ label: t("contexts.bundle.export"), disabled: bundleBusy, onClick: () => void exportContext(c) }] : []),
+                      ...(c.vaultExists ? [{ label: t("contexts.vault.changePassphrase"), onClick: () => setDialog({ mode: "vault", c }) }] : []),
+                      // Sharing and rotating both take the DEK out of the live ring,
+                      // so both are hidden while the vault is locked, conflicted or
+                      // outdated — with the hint below saying why, rather than an
+                      // item the backend refuses.
+                      ...(canShare(c) ? [{ label: t("vault.invite.share"), onClick: () => { setShareError(null); setDialog({ mode: "inviteShare", c }); } }] : []),
+                      ...(canShare(c) && c.invitesNeedingCode > 0 ? [{ label: t("vault.invite.recode"), onClick: () => void recode() }] : []),
+                      ...(canRotate(c) ? [{ label: t("vault.rotation.run"), onClick: () => { setError(null); setDialog({ mode: "rotate", c }); } }] : []),
+                      ...(canInvite(c) ? [{ label: t("vault.invite.enter"), onClick: () => { setError(null); setDialog({ mode: "inviteAccept", c }); } }] : []),
+                      { label: t("contexts.remove"), disabled: c.active, onClick: () => setDialog({ mode: "remove", c }) },
+                    ]}
+                  />
                 )}
-                {c.vaultGeneration > 1 && (
-                  <span className="rounded px-1.5 py-0.5 text-[10px] font-medium" style={{ background: "var(--line-muted)", color: "#1c1917" }}>
-                    {t("contexts.vault.generation", { n: c.vaultGeneration })}
-                  </span>
-                )}
-                {c.vaultRotationPending && (
-                  <span className="rounded px-1.5 py-0.5 text-[10px] font-medium" style={{ background: "#fef3c7", color: "#7c2d12" }}>
-                    {t("contexts.vault.rotationPending")}
-                  </span>
-                )}
-                {c.invitesNeedingCode > 0 && (
-                  <span className="rounded px-1.5 py-0.5 text-[10px] font-medium" style={{ background: "#fef3c7", color: "#7c2d12" }}>
-                    {t("contexts.vault.invitesNeedCode", { count: c.invitesNeedingCode })}
-                  </span>
-                )}
+                {hint && <span className="text-xs text-gray-500 text-right">{hint}</span>}
+                {sharing && c.active && <span className="text-xs text-gray-500">{t("contexts.connecting")}</span>}
+                {shareError && c.active && <span className="text-xs text-red-600 text-right" role="alert">{shareError}</span>}
               </div>
             </div>
-            {/* Every row action lives in one menu: six buttons never fit a
-                phone-width row, and the menu only lists what applies here. */}
-            <div className="flex shrink-0 flex-col items-end gap-1">
-              <button
-                onClick={e => {
-                  // Keep the click away from the open menu's dismiss listener,
-                  // so switching rows opens the new menu instead of closing it.
-                  e.stopPropagation();
-                  const r = e.currentTarget.getBoundingClientRect();
-                  setMenu(m => (m?.id === c.id ? null : { id: c.id, x: r.left, y: r.bottom + 4 }));
-                }}
-                aria-haspopup="menu"
-                aria-expanded={menu?.id === c.id}
-                className="px-3 py-1 rounded text-xs font-medium border"
-                style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}
-              >
-                {t("contexts.actions")} ▾
-              </button>
-              {menu?.id === c.id && (
-                <ContextMenu
-                  x={menu.x}
-                  y={menu.y}
-                  onClose={() => setMenu(m => (m?.id === c.id ? null : m))}
-                  items={[
-                    { label: t("contexts.rename"), onClick: () => setDialog({ mode: "rename", c }) },
-                    // Desktop only: the bundle is written through a native save
-                    // dialog, and a server context is a cache, not a portable copy.
-                    ...(c.kind === "local" && !isMobilePlatform ? [{ label: t("contexts.bundle.export"), disabled: bundleBusy, onClick: () => void exportContext(c) }] : []),
-                    ...(c.vaultExists ? [{ label: t("contexts.vault.changePassphrase"), onClick: () => setDialog({ mode: "vault", c }) }] : []),
-                    // Sharing and rotating both take the DEK out of the live ring,
-                    // so both are hidden while the vault is locked, conflicted or
-                    // outdated — with the hint below saying why, rather than an
-                    // item the backend refuses.
-                    ...(canShare(c) ? [{ label: t("vault.invite.share"), onClick: () => { setShareError(null); setDialog({ mode: "inviteShare", c }); } }] : []),
-                    ...(canShare(c) && c.invitesNeedingCode > 0 ? [{ label: t("vault.invite.recode"), onClick: () => void recode() }] : []),
-                    ...(canRotate(c) ? [{ label: t("vault.rotation.run"), onClick: () => { setError(null); setDialog({ mode: "rotate", c }); } }] : []),
-                    ...(canInvite(c) ? [{ label: t("vault.invite.enter"), onClick: () => { setError(null); setDialog({ mode: "inviteAccept", c }); } }] : []),
-                    { label: t("contexts.remove"), disabled: c.active, onClick: () => setDialog({ mode: "remove", c }) },
-                  ]}
-                />
-              )}
-              {hint && <span className="text-xs text-gray-500 text-right">{hint}</span>}
-              {sharing && c.active && <span className="text-xs text-gray-500">{t("contexts.connecting")}</span>}
-              {shareError && c.active && <span className="text-xs text-red-600 text-right" role="alert">{shareError}</span>}
-            </div>
+            );
+          })}
+          <div className="flex items-center gap-2 flex-wrap">
+            <button onClick={() => setDialog({ mode: "add" })} className="px-4 py-1.5 rounded text-sm font-medium" style={{ background: "var(--line)", color: "#1c1917" }}>{t("contexts.add")}</button>
+            <button onClick={() => { setError(null); setDialog({ mode: "addServer" }); }} className="px-4 py-1.5 rounded text-sm font-medium border" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>{t("contexts.addServer")}</button>
+            {connecting && <span className="text-xs text-gray-500">{t("contexts.connecting")}</span>}
+            {error && <span className="text-xs text-red-600" role="alert">{error}</span>}
+            {bundleLine("export")}
           </div>
-          );
-        })}
-        <div className="flex items-center gap-2 flex-wrap">
-          <button onClick={() => setDialog({ mode: "add" })} className="px-4 py-1.5 rounded text-sm font-medium" style={{ background: "var(--line)", color: "#1c1917" }}>{t("contexts.add")}</button>
-          <button onClick={() => { setError(null); setDialog({ mode: "addServer" }); }} className="px-4 py-1.5 rounded text-sm font-medium border" style={{ borderColor: "var(--line-muted)", color: "#1c1917" }}>{t("contexts.addServer")}</button>
-          {connecting && <span className="text-xs text-gray-500">{t("contexts.connecting")}</span>}
-          {error && <span className="text-xs text-red-600" role="alert">{error}</span>}
-          {bundleLine("export")}
-        </div>
-      </SettingsSection>
-      {!isMobilePlatform && (
-        <div className="mt-3">
+        </SettingsSection>
+        {!isMobilePlatform && (
           <SettingsSection title={t("contexts.sections.import")}>
             <p className="text-xs text-gray-500">{t("contexts.bundle.importHint")}</p>
             <div className="flex items-center gap-2 flex-wrap">
@@ -1446,8 +1452,8 @@ function ContextsPage() {
               {bundleLine("import")}
             </div>
           </SettingsSection>
-        </div>
-      )}
+        )}
+      </SettingsGrid>
 
       {dialog?.mode === "add" && (
         <PromptDialog
