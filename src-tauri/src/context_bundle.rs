@@ -5,7 +5,8 @@
 //! to the live file) and the context's `images/` tree. Protected notes travel
 //! as the ciphertext they already are in the database, with the vault record
 //! next to them; no key material is ever written here and nothing in this
-//! module logs note content.
+//! module logs note content. The one thing that is deliberately left out is
+//! the MCP server configuration (see [`MCP_SETTINGS_PATTERN`]).
 
 use std::fmt::Display;
 use std::fs::{self, File};
@@ -32,6 +33,14 @@ const ERR_NOT_A_BUNDLE: &str = "bundle: not a Notefix context export";
 const ERR_TOO_NEW: &str = "bundle: made by a newer Notefix — update this app first";
 const ERR_UNSAFE_PATH: &str = "bundle: unsafe path in archive";
 const ERR_NO_DB: &str = "bundle: the archive has no database";
+const ERR_INSIDE_DATA: &str = "bundle: choose a location outside the app's data folder";
+
+/// The MCP server's configuration lives in the per-context `settings` table
+/// under `mcp*` keys (`mcpEnabled`, `mcpBind`, `mcpPort`, `mcpToken`,
+/// `mcpAuthRequired`, `mcpAllowWrite`, `mcpProtectedAccess`). It is a device's
+/// own: it holds the bearer token and the bind address, so it never travels in
+/// a bundle — stripped on export, and again on import for hand-made bundles.
+const MCP_SETTINGS_PATTERN: &str = "mcp%";
 
 /// A manifest is a few hundred bytes; never read an unbounded one.
 const MANIFEST_MAX_BYTES: u64 = 64 * 1024;
@@ -71,6 +80,14 @@ fn invalid_db<E>(_: E) -> String {
     "bundle: the database in the archive is not valid".to_string()
 }
 
+/// The directory a path lives in; `.` for a bare file name.
+fn dir_of(path: &Path) -> &Path {
+    match path.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() => dir,
+        _ => Path::new("."),
+    }
+}
+
 /// `<out><suffix>`, next to `out`.
 fn sibling(out: &Path, suffix: &str) -> Result<PathBuf, String> {
     let mut name = out
@@ -92,10 +109,13 @@ pub fn export(db: &Path, label: &str, app_version: &str, out: &Path) -> Result<(
     if !db.is_file() {
         return Err("bundle: the context has no database file".into());
     }
+    ensure_outside_data_folder(db, out)?;
     let partial = sibling(out, ".partial")?;
-    // Next to `out`: the snapshot holds the same plaintext the finished
-    // archive does, so it is exactly as exposed as the user's chosen target.
-    let snapshot = sibling(out, &format!(".{}.snapshot", uuid::Uuid::new_v4()))?;
+    // In the context's own folder, where the plaintext database already
+    // lives: a crash leftover must never land in the user's (possibly
+    // cloud-synced) target folder. `add_dir` only walks `images/`, so it can
+    // not pick the snapshot up.
+    let snapshot = dir_of(db).join(format!(".notefix-export-{}.snapshot", uuid::Uuid::new_v4()));
 
     let result = write_bundle(db, label, app_version, &snapshot, &partial)
         .and_then(|()| fs::rename(&partial, out).map_err(msg));
@@ -106,6 +126,18 @@ pub fn export(db: &Path, label: &str, app_version: &str, out: &Path) -> Result<(
     result
 }
 
+/// Refuse a target inside the context's own folder: saving into its `images/`
+/// tree would make the archive walk read the growing `.partial` file, and
+/// saving over `notefix.db` would replace the live database with the zip. The
+/// parent directory is canonicalised (the target itself may not exist yet);
+/// if it can not be, the write fails on its own with the real reason.
+fn ensure_outside_data_folder(db: &Path, out: &Path) -> Result<(), String> {
+    match (fs::canonicalize(dir_of(db)), fs::canonicalize(dir_of(out))) {
+        (Ok(data), Ok(target)) if target.starts_with(&data) => Err(ERR_INSIDE_DATA.into()),
+        _ => Ok(()),
+    }
+}
+
 fn write_bundle(
     db: &Path,
     label: &str,
@@ -114,6 +146,7 @@ fn write_bundle(
     partial: &Path,
 ) -> Result<(), String> {
     snapshot_db(db, snapshot)?;
+    scrub_snapshot(snapshot)?;
     let manifest = Manifest {
         format: FORMAT.into(),
         format_version: FORMAT_VERSION,
@@ -156,6 +189,23 @@ fn snapshot_db(db: &Path, snapshot: &Path) -> Result<(), String> {
         .ok_or_else(|| "bundle: the target path is not valid UTF-8".to_string())?;
     let conn = Connection::open_with_flags(db, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(msg)?;
     conn.execute("VACUUM INTO ?1", [target]).map_err(msg)?;
+    Ok(())
+}
+
+/// Drop the device-local MCP configuration from the private snapshot. A plain
+/// `DELETE` would leave the token's bytes in the file's free pages, so the
+/// snapshot is rebuilt with `VACUUM` afterwards.
+fn scrub_snapshot(snapshot: &Path) -> Result<(), String> {
+    let conn = Connection::open(snapshot).map_err(msg)?;
+    strip_mcp_settings(&conn).map_err(msg)?;
+    conn.execute_batch("VACUUM").map_err(msg)
+}
+
+fn strip_mcp_settings(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute(
+        "DELETE FROM settings WHERE key LIKE ?1",
+        [MCP_SETTINGS_PATTERN],
+    )?;
     Ok(())
 }
 
@@ -319,11 +369,27 @@ fn extract(archive: &mut ZipArchive<File>, dest: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// The extracted file must be a Notefix database of a schema this app knows;
-/// older ones are migrated in place. The database's own `schema_version` is
-/// what counts — the manifest is only a courtesy copy.
+/// `PRAGMA quick_check` must answer exactly `ok`.
+fn quick_check(conn: &Connection) -> Result<(), String> {
+    let mut stmt = conn.prepare("PRAGMA quick_check").map_err(invalid_db)?;
+    let verdict: Vec<String> = stmt
+        .query_map([], |r| r.get(0))
+        .map_err(invalid_db)?
+        .collect::<Result<_, _>>()
+        .map_err(invalid_db)?;
+    if verdict == ["ok"] {
+        Ok(())
+    } else {
+        Err(invalid_db(()))
+    }
+}
+
+/// The extracted file must be an intact Notefix database of a schema this app
+/// knows; older ones are migrated in place. The database's own
+/// `schema_version` is what counts — the manifest is only a courtesy copy.
 fn open_and_migrate(db: &Path, max_schema: i64) -> Result<(), String> {
     let store = Store::open(db).map_err(invalid_db)?;
+    quick_check(&store.conn)?;
     let has_notes = store
         .conn
         .query_row(
@@ -342,7 +408,18 @@ fn open_and_migrate(db: &Path, max_schema: i64) -> Result<(), String> {
     if version > max_schema {
         return Err(ERR_TOO_NEW.into());
     }
-    crate::migrate::run_migrations(&store.conn).map_err(msg)
+    crate::migrate::run_migrations(&store.conn)
+        .map_err(|e| format!("bundle: could not migrate the database: {e}"))?;
+    // A crafted `notes` table can carry the right version and still lack
+    // columns the app reads everywhere: prepare the real column list now.
+    store
+        .conn
+        .prepare(&format!(
+            "SELECT {} FROM notes LIMIT 0",
+            crate::storage::COLS
+        ))
+        .map_err(invalid_db)?;
+    strip_mcp_settings(&store.conn).map_err(invalid_db)
 }
 
 #[cfg(test)]
@@ -352,6 +429,7 @@ mod tests {
     use crate::storage::{Note, Store};
     use std::fs::{self, File};
     use std::io::Write;
+    use std::path::PathBuf;
     use zip::write::SimpleFileOptions;
     use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
@@ -360,6 +438,7 @@ mod tests {
     const UNSAFE: &str = "bundle: unsafe path in archive";
     const NO_DB: &str = "bundle: the archive has no database";
     const INVALID_DB: &str = "bundle: the database in the archive is not valid";
+    const INSIDE_DATA: &str = "bundle: choose a location outside the app's data folder";
 
     fn migrated(path: &Path) -> Store {
         let s = Store::open(path).unwrap();
@@ -374,6 +453,52 @@ mod tests {
             updated_at: 1_000,
             folder_id: folder.map(String::from),
             ..Default::default()
+        }
+    }
+
+    /// A migrated database in `<tmp>/data/notefix.db` — the context's own
+    /// folder, so exports have to go somewhere else (`<tmp>` itself).
+    fn new_db(tmp: &Path) -> PathBuf {
+        let dir = tmp.join("data");
+        fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("notefix.db");
+        drop(migrated(&db));
+        db
+    }
+
+    /// Pull `notefix.db` out of a bundle without going through `import`.
+    fn db_from_zip(zip: &Path, to: &Path) {
+        let mut a = ZipArchive::new(File::open(zip).unwrap()).unwrap();
+        let mut entry = a.by_name("notefix.db").unwrap();
+        std::io::copy(&mut entry, &mut File::create(to).unwrap()).unwrap();
+    }
+
+    fn mcp_keys(db: &Path) -> Vec<String> {
+        let conn = rusqlite::Connection::open(db).unwrap();
+        let mut stmt = conn
+            .prepare("SELECT key FROM settings WHERE key LIKE 'mcp%' ORDER BY key")
+            .unwrap();
+        let keys = stmt
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        keys
+    }
+
+    fn put_mcp_settings(db: &Path) {
+        let conn = rusqlite::Connection::open(db).unwrap();
+        for (k, v) in [
+            ("mcpEnabled", "true"),
+            ("mcpBind", "all"),
+            ("mcpPort", "4357"),
+            ("mcpToken", "tok-SECRET-1234567890abcdef"),
+            ("mcpAuthRequired", "false"),
+            ("mcpAllowWrite", "true"),
+            ("mcpProtectedAccess", "read"),
+            ("theme", "dark"),
+        ] {
+            crate::settings::set_setting(&conn, k, v).unwrap();
         }
     }
 
@@ -460,7 +585,12 @@ mod tests {
         assert_eq!(
             leftovers(tmp.path()),
             vec!["src", "work.notefix.zip"],
-            "no .partial or snapshot file stays behind"
+            "no .partial file stays behind"
+        );
+        assert_eq!(
+            leftovers(&src),
+            vec!["images", "notefix.db"],
+            "the plaintext snapshot is gone from the context folder too"
         );
         let dest = tmp.path().join("dest");
         let manifest = import(&out, &dest, SCHEMA_VERSION).unwrap();
@@ -516,9 +646,8 @@ mod tests {
     #[test]
     fn the_archive_stores_images_and_deflates_the_database() {
         let tmp = tempfile::tempdir().unwrap();
-        let db = tmp.path().join("notefix.db");
-        drop(migrated(&db));
-        put_image(tmp.path(), "a/b/pic.png", &[1; 64]);
+        let db = new_db(tmp.path());
+        put_image(db.parent().unwrap(), "a/b/pic.png", &[1; 64]);
         let out = tmp.path().join("x.zip");
 
         export(&db, "", "1.0.0", &out).unwrap();
@@ -534,8 +663,7 @@ mod tests {
     #[test]
     fn an_empty_label_is_kept_as_is_in_the_manifest() {
         let tmp = tempfile::tempdir().unwrap();
-        let db = tmp.path().join("notefix.db");
-        drop(migrated(&db));
+        let db = new_db(tmp.path());
         let out = tmp.path().join("x.zip");
 
         export(&db, "", "1.0.0", &out).unwrap();
@@ -547,8 +675,8 @@ mod tests {
     #[test]
     fn export_snapshots_while_another_connection_is_open_with_a_pending_write() {
         let tmp = tempfile::tempdir().unwrap();
-        let db = tmp.path().join("notefix.db");
-        let live = migrated(&db);
+        let db = new_db(tmp.path());
+        let live = Store::open(&db).unwrap();
         live.save_note(&note("committed", "<p>kept</p>", None))
             .unwrap();
         let other = Store::open(&db).unwrap();
@@ -588,34 +716,37 @@ mod tests {
     #[test]
     fn export_to_a_missing_directory_fails_without_leftovers() {
         let tmp = tempfile::tempdir().unwrap();
-        let db = tmp.path().join("notefix.db");
-        drop(migrated(&db));
+        let db = new_db(tmp.path());
         let out = tmp.path().join("no-such-dir").join("x.zip");
 
         assert!(export(&db, "", "1.0.0", &out).is_err());
 
-        assert_eq!(leftovers(tmp.path()), vec!["notefix.db"]);
+        assert_eq!(leftovers(tmp.path()), vec!["data"]);
+        assert_eq!(
+            leftovers(db.parent().unwrap()),
+            vec!["notefix.db"],
+            "no snapshot left in the context folder"
+        );
     }
 
     #[test]
     fn export_onto_a_directory_fails_and_removes_the_partial_file() {
         let tmp = tempfile::tempdir().unwrap();
-        let db = tmp.path().join("notefix.db");
-        drop(migrated(&db));
+        let db = new_db(tmp.path());
         let out = tmp.path().join("target.zip");
         fs::create_dir(&out).unwrap();
 
         assert!(export(&db, "", "1.0.0", &out).is_err());
 
-        assert_eq!(leftovers(tmp.path()), vec!["notefix.db", "target.zip"]);
+        assert_eq!(leftovers(tmp.path()), vec!["data", "target.zip"]);
+        assert_eq!(leftovers(db.parent().unwrap()), vec!["notefix.db"]);
         assert!(out.is_dir(), "the existing directory is untouched");
     }
 
     #[test]
     fn export_replaces_an_existing_file() {
         let tmp = tempfile::tempdir().unwrap();
-        let db = tmp.path().join("notefix.db");
-        drop(migrated(&db));
+        let db = new_db(tmp.path());
         let out = tmp.path().join("x.zip");
         fs::write(&out, b"old").unwrap();
 
@@ -950,10 +1081,161 @@ mod tests {
     }
 
     #[test]
+    fn export_refuses_a_target_inside_the_contexts_own_folder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = new_db(tmp.path());
+        let data = db.parent().unwrap().to_path_buf();
+        put_image(&data, "aa/bb/pic.png", &[1, 2, 3]);
+        let targets = [
+            data.join("x.zip"),
+            data.join("images").join("x.zip"),
+            data.join("images/aa/bb").join("x.zip"),
+            data.join("..").join("data").join("x.zip"),
+            db.clone(),
+        ];
+        for out in targets {
+            assert_eq!(
+                export(&db, "", "1.0.0", &out).unwrap_err(),
+                INSIDE_DATA,
+                "{}",
+                out.display()
+            );
+        }
+
+        assert_eq!(leftovers(&data), vec!["images", "notefix.db"]);
+        assert_eq!(leftovers(&data.join("images/aa/bb")), vec!["pic.png"]);
+        let still_a_db = Store::open(&db).unwrap();
+        assert!(still_a_db.load_notes().unwrap().is_empty());
+    }
+
+    #[test]
+    fn export_strips_the_mcp_settings_from_the_bundle_but_not_from_the_source() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = new_db(tmp.path());
+        put_mcp_settings(&db);
+        let out = tmp.path().join("x.zip");
+
+        export(&db, "", "1.0.0", &out).unwrap();
+
+        let in_zip = tmp.path().join("from-zip.db");
+        db_from_zip(&out, &in_zip);
+        assert!(mcp_keys(&in_zip).is_empty());
+        let conn = rusqlite::Connection::open(&in_zip).unwrap();
+        let theme: String = conn
+            .query_row("SELECT value FROM settings WHERE key = 'theme'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(theme, "dark", "other settings travel");
+        assert!(
+            !fs::read(&in_zip)
+                .unwrap()
+                .windows(b"tok-SECRET".len())
+                .any(|w| w == b"tok-SECRET"),
+            "the token must not linger in free pages of the exported file"
+        );
+        assert_eq!(mcp_keys(&db).len(), 7, "the live database keeps its config");
+    }
+
+    #[test]
+    fn import_strips_the_mcp_settings_of_a_hand_made_bundle() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = new_db(tmp.path());
+        put_mcp_settings(&db);
+        let zip = tmp.path().join("b.zip");
+        build_zip(
+            &zip,
+            &[
+                ("manifest.json", manifest_bytes(SCHEMA_VERSION)),
+                ("notefix.db", fs::read(&db).unwrap()),
+            ],
+        );
+        let dest = tmp.path().join("dest");
+
+        import(&zip, &dest, SCHEMA_VERSION).unwrap();
+
+        assert!(mcp_keys(&dest.join("notefix.db")).is_empty());
+        let conn = rusqlite::Connection::open(dest.join("notefix.db")).unwrap();
+        let kept: i64 = conn
+            .query_row("SELECT count(*) FROM settings", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(kept, 1, "only the theme is left");
+    }
+
+    #[test]
+    fn a_structurally_damaged_database_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let damaged = tmp.path().join("damaged.db");
+        let s = migrated(&damaged);
+        for i in 0..300 {
+            s.save_note(&note(&format!("n{i}"), &"x".repeat(400), None))
+                .unwrap();
+        }
+        drop(s);
+        let mut bytes = fs::read(&damaged).unwrap();
+        let last_page = bytes.len() / 4096 - 1;
+        bytes[last_page * 4096] = 0xff; // not a valid b-tree page type
+        fs::write(&damaged, &bytes).unwrap();
+        // Precondition: the schema and meta still read fine, only the deeper
+        // structure is broken — so only `quick_check` can catch it.
+        {
+            let conn = rusqlite::Connection::open(&damaged).unwrap();
+            assert!(crate::migrate::get_meta(&conn, "schema_version")
+                .unwrap()
+                .is_some());
+            let verdict: String = conn
+                .query_row("PRAGMA quick_check", [], |r| r.get(0))
+                .unwrap();
+            assert_ne!(verdict, "ok");
+        }
+        let zip = tmp.path().join("b.zip");
+        build_zip(
+            &zip,
+            &[
+                ("manifest.json", manifest_bytes(SCHEMA_VERSION)),
+                ("notefix.db", bytes),
+            ],
+        );
+        let dest = tmp.path().join("dest");
+
+        assert_eq!(import(&zip, &dest, SCHEMA_VERSION).unwrap_err(), INVALID_DB);
+
+        assert!(!dest.exists());
+    }
+
+    #[test]
+    fn a_notes_table_missing_columns_the_app_reads_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let crafted = tmp.path().join("crafted.db");
+        {
+            let conn = rusqlite::Connection::open(&crafted).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                 CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                 CREATE TABLE notes (id TEXT PRIMARY KEY, content TEXT NOT NULL, updated_at INTEGER NOT NULL);
+                 INSERT INTO meta VALUES ('schema_version', '15');",
+            )
+            .unwrap();
+        }
+        let zip = tmp.path().join("b.zip");
+        build_zip(
+            &zip,
+            &[
+                ("manifest.json", manifest_bytes(SCHEMA_VERSION)),
+                ("notefix.db", fs::read(&crafted).unwrap()),
+            ],
+        );
+        let dest = tmp.path().join("dest");
+
+        assert_eq!(import(&zip, &dest, SCHEMA_VERSION).unwrap_err(), INVALID_DB);
+
+        assert!(!dest.exists());
+    }
+
+    #[test]
     fn a_truncated_archive_is_refused_without_leftovers() {
         let tmp = tempfile::tempdir().unwrap();
-        let db = tmp.path().join("notefix.db");
-        drop(migrated(&db));
+        let db = new_db(tmp.path());
         let good = tmp.path().join("good.zip");
         export(&db, "", "1.0.0", &good).unwrap();
         let bytes = fs::read(&good).unwrap();

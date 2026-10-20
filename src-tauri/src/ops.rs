@@ -3215,32 +3215,72 @@ pub fn context_export(
     crate::context_bundle::export(Path::new(&c.path), &c.label, app_version, out)
 }
 
-/// `context_import`: unpack the bundle at `zip` into a NEW directory
-/// `<contexts_dir>/<new id>` and add it to the registry as a local context
-/// named from the bundle. Existing contexts are never touched and the active
-/// one does not change. A refused bundle — or a registry that cannot be
-/// saved — leaves neither a directory nor a registry entry behind.
+/// A bundle unpacked into its own directory but not yet registered.
+#[derive(Debug)]
+pub struct StagedImport {
+    pub id: String,
+    pub dest: PathBuf,
+    pub label: String,
+}
+
+impl StagedImport {
+    /// Throw the unpacked directory away (the import is not going ahead).
+    pub fn discard(self) {
+        let _ = std::fs::remove_dir_all(&self.dest);
+    }
+}
+
+/// `context_import`, step 1: validate the bundle at `zip` and unpack it into a
+/// NEW directory `<contexts_dir>/<new id>` (database migrated, images in
+/// place). Takes no lock — extraction and migration can take a while, and the
+/// Registry mutex is needed by the main thread and the image protocol. A
+/// refused bundle leaves nothing behind.
+pub fn context_import_stage(contexts_dir: &Path, zip: &Path) -> Result<StagedImport, String> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let dest = contexts_dir.join(&id);
+    let manifest = crate::context_bundle::import(zip, &dest, crate::migrate::SCHEMA_VERSION)?;
+    Ok(StagedImport {
+        id,
+        dest,
+        label: manifest.label,
+    })
+}
+
+/// `context_import`, step 2: add the staged directory to the registry as a
+/// local context named from the bundle and persist the registry. Existing
+/// contexts are never touched and the active one does not change. If the
+/// registry cannot be saved, the entry is taken back out and the staged
+/// directory is removed.
+pub fn context_import_commit(
+    reg: &mut Registry,
+    profiles_path: &Path,
+    staged: StagedImport,
+) -> Result<Vec<ContextInfo>, String> {
+    let db = staged.dest.join("notefix.db");
+    reg.add(
+        staged.id.clone(),
+        staged.label.clone(),
+        db.to_string_lossy().into_owned(),
+    );
+    if let Err(e) = crate::profiles::save(profiles_path, reg) {
+        reg.contexts.retain(|c| c.id != staged.id);
+        staged.discard();
+        return Err(e.to_string());
+    }
+    Ok(to_infos(reg))
+}
+
+/// Both steps in one call. The command runs them apart, so the Registry lock
+/// is only held for the second; this composition is what the tests drive.
+#[cfg(test)]
 pub fn context_import(
     reg: &mut Registry,
     contexts_dir: &Path,
     profiles_path: &Path,
     zip: &Path,
 ) -> Result<Vec<ContextInfo>, String> {
-    let id = uuid::Uuid::new_v4().to_string();
-    let dest = contexts_dir.join(&id);
-    let manifest = crate::context_bundle::import(zip, &dest, crate::migrate::SCHEMA_VERSION)?;
-    let db = dest.join("notefix.db");
-    reg.add(
-        id.clone(),
-        manifest.label,
-        db.to_string_lossy().into_owned(),
-    );
-    if let Err(e) = crate::profiles::save(profiles_path, reg) {
-        reg.contexts.retain(|c| c.id != id);
-        let _ = std::fs::remove_dir_all(&dest);
-        return Err(e.to_string());
-    }
-    Ok(to_infos(reg))
+    let staged = context_import_stage(contexts_dir, zip)?;
+    context_import_commit(reg, profiles_path, staged)
 }
 
 /// `context_bind_workspace`: bind a server context to a workspace and
@@ -9434,7 +9474,10 @@ mod context_bundle_tests {
     /// A registry with one flat default context holding a note and an image.
     fn fixture() -> Fixture {
         let dir = tempfile::tempdir().unwrap();
-        let db = dir.path().join("notefix.db");
+        // The context's own folder; bundles are written beside it, never in it.
+        let data = dir.path().join("data");
+        std::fs::create_dir_all(&data).unwrap();
+        let db = data.join("notefix.db");
         let s = Store::open(&db).unwrap();
         crate::migrate::run_migrations(&s.conn).unwrap();
         s.save_note(&Note {
@@ -9444,7 +9487,7 @@ mod context_bundle_tests {
             ..Default::default()
         })
         .unwrap();
-        let img = dir.path().join("images/aa/bb/pic.png");
+        let img = data.join("images/aa/bb/pic.png");
         std::fs::create_dir_all(img.parent().unwrap()).unwrap();
         std::fs::write(&img, [7u8, 7, 7]).unwrap();
         let reg = Registry::default_for(&db.to_string_lossy());
@@ -9590,6 +9633,79 @@ mod context_bundle_tests {
         );
         assert_eq!(f.reg, before);
         assert_eq!(child_count(&f.contexts), 0);
+    }
+
+    #[test]
+    fn staging_creates_the_directory_but_no_registry_entry() {
+        let mut f = fixture();
+        let out = export_active(&mut f, "Work");
+        let before = f.reg.clone();
+
+        let staged = context_import_stage(&f.contexts, &out).unwrap();
+
+        assert_eq!(staged.label, "Work");
+        assert_eq!(staged.dest, f.contexts.join(&staged.id));
+        assert!(staged.dest.join("notefix.db").is_file());
+        assert!(staged.dest.join("images/aa/bb/pic.png").is_file());
+        assert_eq!(f.reg, before, "nothing registered yet");
+        assert!(!f.profiles.exists(), "nothing persisted yet");
+    }
+
+    #[test]
+    fn staging_a_bad_file_leaves_nothing_behind() {
+        let f = fixture();
+        let bad = f.dir.path().join("bad.zip");
+        std::fs::write(&bad, b"not a zip").unwrap();
+
+        assert!(context_import_stage(&f.contexts, &bad).is_err());
+
+        assert_eq!(child_count(&f.contexts), 0);
+    }
+
+    #[test]
+    fn committing_a_staged_import_registers_it_without_activating_it() {
+        let mut f = fixture();
+        let out = export_active(&mut f, "Work");
+        let staged = context_import_stage(&f.contexts, &out).unwrap();
+        let id = staged.id.clone();
+        let before = f.reg.active_id.clone();
+
+        let infos = context_import_commit(&mut f.reg, &f.profiles, staged).unwrap();
+
+        let added = infos.iter().find(|i| i.id == id).unwrap();
+        assert_eq!(added.label, "Work");
+        assert!(!added.active);
+        assert_eq!(f.reg.active_id, before);
+        assert!(saved(&f).contexts.iter().any(|c| c.id == id));
+    }
+
+    #[test]
+    fn a_failed_commit_removes_the_staged_directory() {
+        let mut f = fixture();
+        let out = export_active(&mut f, "Work");
+        let staged = context_import_stage(&f.contexts, &out).unwrap();
+        let dest = staged.dest.clone();
+        let blocker = f.dir.path().join("blocker");
+        std::fs::write(&blocker, b"x").unwrap();
+        let before = f.reg.clone();
+
+        let res = context_import_commit(&mut f.reg, &blocker.join("profiles.json"), staged);
+
+        assert!(res.is_err());
+        assert_eq!(f.reg, before, "no registry entry");
+        assert!(!dest.exists(), "no orphaned directory");
+    }
+
+    #[test]
+    fn discarding_a_staged_import_removes_its_directory() {
+        let mut f = fixture();
+        let out = export_active(&mut f, "Work");
+        let staged = context_import_stage(&f.contexts, &out).unwrap();
+        let dest = staged.dest.clone();
+
+        staged.discard();
+
+        assert!(!dest.exists());
     }
 
     #[test]

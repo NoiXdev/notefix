@@ -73,7 +73,7 @@ pub struct Store {
 // all three — including `search_notes`, which also calls `row_to_meta`.
 // `key_gen` is appended at index 14 (schema v15) — read by `row_to_note`
 // only; `row_to_meta` doesn't need it and stops at index 13.
-const COLS: &str = "id, content, updated_at, pinned, archived, color, due_at, folder_id, position, deleted_at, dirty, protected, title, mcp_hidden, key_gen";
+pub(crate) const COLS: &str = "id, content, updated_at, pinned, archived, color, due_at, folder_id, position, deleted_at, dirty, protected, title, mcp_hidden, key_gen";
 
 fn now_ms() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};

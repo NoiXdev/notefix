@@ -52,6 +52,8 @@ part (see above).
 An exported local context (`context_bundle.rs`) carries its vault record
 inside the database snapshot, so the same passphrase / recovery key opens it
 elsewhere, while Touch ID is per device and context id and must be re-enabled.
+The device-local `mcp*` settings (bearer token, bind address) never travel:
+export and import both strip them.
 
 The biometric keychain item is **per context** (`vault-dek:<context id>`) —
 every context is its own vault with its own DEK, so an app-wide item would

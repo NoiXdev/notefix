@@ -682,21 +682,28 @@ pub fn context_export(
 }
 
 /// Adds the bundle at `path` as a new local context (not made active). Off
-/// the main thread for the same reason as `context_export`.
+/// the main thread for the same reason as `context_export`. The slow part —
+/// validating, extracting and migrating — runs WITHOUT the Registry lock (the
+/// main thread's commands and the image protocol all take it); the lock is
+/// held only to register the finished directory.
 #[tauri::command(async)]
 pub fn context_import(
     app: AppHandle,
     reg: State<'_, Mutex<crate::profiles::Registry>>,
     path: String,
 ) -> Result<Vec<ContextInfo>, String> {
-    let infos = {
-        let mut r = reg.lock().map_err(|e| e.to_string())?;
-        ops::context_import(
-            &mut r,
-            &crate::config::contexts_dir(&app),
-            &crate::config::profiles_path(&app),
-            std::path::Path::new(&path),
-        )?
+    let staged = ops::context_import_stage(
+        &crate::config::contexts_dir(&app),
+        std::path::Path::new(&path),
+    )?;
+    let infos = match reg.lock() {
+        Ok(mut r) => {
+            ops::context_import_commit(&mut r, &crate::config::profiles_path(&app), staged)?
+        }
+        Err(e) => {
+            staged.discard();
+            return Err(e.to_string());
+        }
     };
     broadcast_context_changed(&app);
     Ok(infos)
