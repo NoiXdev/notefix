@@ -1,5 +1,5 @@
-name: Android → Play (test upload)
-run-name: Play test upload → ${{ inputs.track }} (${{ inputs.status }})
+name: Android → Play (on demand)
+run-name: Play upload → ${{ inputs.track }} (${{ inputs.status }})${{ inputs.release_tag && format(' for {0}', inputs.release_tag) || '' }}
 
 # Manual, isolated test of the Google Play publish pipeline. Builds the signed
 # AAB from the current commit and uploads it to the chosen track (default:
@@ -25,9 +25,18 @@ on:
         type: choice
         default: draft
         options: [draft, completed, inProgress, halted]
+      release_tag:
+        description: >
+          Build this existing release tag instead of the branch head and
+          attach the signed APK to its GitHub release (optional). The way to
+          finish a release whose Play job failed, without bumping again.
+        type: string
+        default: ""
 
+# `write`, not `read`: attaching the APK to an existing release needs it, and
+# the called workflow caps its token at what the caller grants.
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   publish:
@@ -37,3 +46,4 @@ jobs:
       package_name: dev.noix.notefix
       track: ${{ inputs.track }}
       status: ${{ inputs.status }}
+      release_tag: ${{ inputs.release_tag }}
