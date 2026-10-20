@@ -1347,7 +1347,11 @@ function ContextsPage() {
     <div>
       <h1 className="text-2xl font-bold text-gray-900 mb-1">{t("contexts.title")}</h1>
       <p className="text-sm text-gray-500 mb-6">{t("contexts.subtitle")}</p>
+      {/* Two cards side by side on desktop. On a phone or tablet the import
+          card does not exist, and a lone card in the two-column grid would sit
+          at half width on a tablet — so it spans both columns there. */}
       <SettingsGrid>
+        <div className={isMobilePlatform ? "md:col-span-2" : undefined}>
         <SettingsSection title={t("contexts.sections.manage")}>
           {ctx.map(c => {
             const hint = shareBlockedHint(c);
@@ -1444,6 +1448,7 @@ function ContextsPage() {
             {bundleLine("export")}
           </div>
         </SettingsSection>
+        </div>
         {!isMobilePlatform && (
           <SettingsSection title={t("contexts.sections.import")}>
             <p className="text-xs text-gray-500">{t("contexts.bundle.importHint")}</p>
