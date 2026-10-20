@@ -1705,15 +1705,15 @@ describe("Settings — Contexts bundle (export / import)", () => {
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     });
 
-    it("explains an export target inside the app's data folder instead of echoing the raw error", async () => {
+    it("explains an export target that would damage the context instead of echoing the raw error", async () => {
       await renderContexts();
       mockDialogSave.mockResolvedValueOnce("/data/images/x.notefix.zip");
-      mockContextsExportBundle.mockRejectedValueOnce("bundle: choose a location outside the app's data folder");
+      mockContextsExportBundle.mockRejectedValueOnce("bundle: choose another location — that one would damage the notes or their images");
 
       openActions("c-local");
       fireEvent.click(screen.getByRole("button", { name: "Exportieren…" }));
 
-      expect(await screen.findByRole("alert")).toHaveTextContent("Wähle einen Speicherort außerhalb des App-Datenordners.");
+      expect(await screen.findByRole("alert")).toHaveTextContent("Wähle einen anderen Speicherort – dieser würde die Notizen oder ihre Bilder beschädigen.");
       expect(screen.getByRole("alert")).not.toHaveTextContent("Export fehlgeschlagen");
     });
 

@@ -33,7 +33,8 @@ const ERR_NOT_A_BUNDLE: &str = "bundle: not a Notefix context export";
 const ERR_TOO_NEW: &str = "bundle: made by a newer Notefix — update this app first";
 const ERR_UNSAFE_PATH: &str = "bundle: unsafe path in archive";
 const ERR_NO_DB: &str = "bundle: the archive has no database";
-const ERR_INSIDE_DATA: &str = "bundle: choose a location outside the app's data folder";
+const ERR_UNSAFE_TARGET: &str =
+    "bundle: choose another location — that one would damage the notes or their images";
 
 /// The MCP server's configuration lives in the per-context `settings` table
 /// under `mcp*` keys (`mcpEnabled`, `mcpBind`, `mcpPort`, `mcpToken`,
@@ -109,7 +110,7 @@ pub fn export(db: &Path, label: &str, app_version: &str, out: &Path) -> Result<(
     if !db.is_file() {
         return Err("bundle: the context has no database file".into());
     }
-    ensure_outside_data_folder(db, out)?;
+    ensure_safe_target(db, out)?;
     let partial = sibling(out, ".partial")?;
     // In the context's own folder, where the plaintext database already
     // lives: a crash leftover must never land in the user's (possibly
@@ -126,15 +127,43 @@ pub fn export(db: &Path, label: &str, app_version: &str, out: &Path) -> Result<(
     result
 }
 
-/// Refuse a target inside the context's own folder: saving into its `images/`
-/// tree would make the archive walk read the growing `.partial` file, and
-/// saving over `notefix.db` would replace the live database with the zip. The
-/// parent directory is canonicalised (the target itself may not exist yet);
-/// if it can not be, the write fails on its own with the real reason.
-fn ensure_outside_data_folder(db: &Path, out: &Path) -> Result<(), String> {
-    match (fs::canonicalize(dir_of(db)), fs::canonicalize(dir_of(out))) {
-        (Ok(data), Ok(target)) if target.starts_with(&data) => Err(ERR_INSIDE_DATA.into()),
-        _ => Ok(()),
+/// The database file names the zip must never replace: the live database and
+/// the rollback journal (or WAL files, should a future build switch modes).
+const DB_FILE_NAMES: [&str; 4] = [
+    "notefix.db",
+    "notefix.db-journal",
+    "notefix.db-wal",
+    "notefix.db-shm",
+];
+
+/// Refuse a target that would damage a context: anywhere in the exported
+/// context's `images/` tree (the archive walk would read the growing
+/// `.partial` file) or onto a database file — this context's or any other's —
+/// which the zip would replace. Everything else is allowed, including the
+/// folder that holds `notefix.db` itself: after a storage-location change
+/// that is an ordinary user folder such as Documents. Paths are canonicalised
+/// (the target itself may not exist yet); where that is impossible, the write
+/// fails on its own with the real reason.
+fn ensure_safe_target(db: &Path, out: &Path) -> Result<(), String> {
+    let onto_a_database = out
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| DB_FILE_NAMES.contains(&n))
+        || matches!(
+            (fs::canonicalize(db), fs::canonicalize(out)),
+            (Ok(live), Ok(target)) if live == target
+        );
+    let into_the_images = matches!(
+        (
+            fs::canonicalize(dir_of(db).join("images")),
+            fs::canonicalize(dir_of(out)),
+        ),
+        (Ok(images), Ok(target)) if target.starts_with(&images)
+    );
+    if onto_a_database || into_the_images {
+        Err(ERR_UNSAFE_TARGET.into())
+    } else {
+        Ok(())
     }
 }
 
@@ -438,7 +467,8 @@ mod tests {
     const UNSAFE: &str = "bundle: unsafe path in archive";
     const NO_DB: &str = "bundle: the archive has no database";
     const INVALID_DB: &str = "bundle: the database in the archive is not valid";
-    const INSIDE_DATA: &str = "bundle: choose a location outside the app's data folder";
+    const UNSAFE_TARGET: &str =
+        "bundle: choose another location — that one would damage the notes or their images";
 
     fn migrated(path: &Path) -> Store {
         let s = Store::open(path).unwrap();
@@ -1081,22 +1111,29 @@ mod tests {
     }
 
     #[test]
-    fn export_refuses_a_target_inside_the_contexts_own_folder() {
+    fn export_refuses_targets_that_would_damage_the_context() {
         let tmp = tempfile::tempdir().unwrap();
         let db = new_db(tmp.path());
         let data = db.parent().unwrap().to_path_buf();
         put_image(&data, "aa/bb/pic.png", &[1, 2, 3]);
+        let elsewhere = tmp.path().join("other-context");
+        fs::create_dir_all(&elsewhere).unwrap();
         let targets = [
-            data.join("x.zip"),
+            // Inside the images tree: the archive walk would read the
+            // growing .partial file.
             data.join("images").join("x.zip"),
             data.join("images/aa/bb").join("x.zip"),
-            data.join("..").join("data").join("x.zip"),
+            data.join("..").join("data").join("images").join("x.zip"),
+            // Onto a database file — this context's or any other's — which
+            // the zip would replace.
             db.clone(),
+            data.join("notefix.db-journal"),
+            elsewhere.join("notefix.db"),
         ];
         for out in targets {
             assert_eq!(
                 export(&db, "", "1.0.0", &out).unwrap_err(),
-                INSIDE_DATA,
+                UNSAFE_TARGET,
                 "{}",
                 out.display()
             );
@@ -1104,8 +1141,34 @@ mod tests {
 
         assert_eq!(leftovers(&data), vec!["images", "notefix.db"]);
         assert_eq!(leftovers(&data.join("images/aa/bb")), vec!["pic.png"]);
+        assert!(leftovers(&elsewhere).is_empty());
         let still_a_db = Store::open(&db).unwrap();
         assert!(still_a_db.load_notes().unwrap().is_empty());
+    }
+
+    #[test]
+    fn export_may_write_next_to_the_database() {
+        // After a storage-location change the folder holding notefix.db is an
+        // ordinary user folder (Documents, a synced folder) — exporting there
+        // must work.
+        let tmp = tempfile::tempdir().unwrap();
+        let db = new_db(tmp.path());
+        let data = db.parent().unwrap().to_path_buf();
+        put_image(&data, "aa/bb/pic.png", &[1, 2, 3]);
+        let out = data.join("Lokal-2026-10-20.notefix.zip");
+
+        export(&db, "", "1.0.0", &out).unwrap();
+
+        assert_eq!(
+            leftovers(&data),
+            vec!["Lokal-2026-10-20.notefix.zip", "images", "notefix.db"]
+        );
+        let dest = tmp.path().join("imported");
+        import(&out, &dest, crate::migrate::SCHEMA_VERSION).unwrap();
+        assert_eq!(
+            fs::read(dest.join("images/aa/bb/pic.png")).unwrap(),
+            vec![1, 2, 3]
+        );
     }
 
     #[test]

@@ -1291,7 +1291,7 @@ function ContextsPage() {
   /** The backend's refusal reasons (`context_bundle.rs`) get their own wording. */
   const exportErrorText = (e: unknown) => {
     const msg = errorText(e);
-    return msg.includes("choose a location outside") ? t("contexts.bundle.exportInsideData")
+    return msg.includes("choose another location") ? t("contexts.bundle.exportInsideData")
       : t("contexts.bundle.exportFailed", { error: msg });
   };
   const importErrorText = (e: unknown) => {
@@ -1351,7 +1351,7 @@ function ContextsPage() {
           card does not exist, and a lone card in the two-column grid would sit
           at half width on a tablet — so it spans both columns there. */}
       <SettingsGrid>
-        <div className={isMobilePlatform ? "md:col-span-2" : undefined}>
+        <div className={isMobilePlatform ? "grid md:col-span-2" : "grid"}>
         <SettingsSection title={t("contexts.sections.manage")}>
           {ctx.map(c => {
             const hint = shareBlockedHint(c);

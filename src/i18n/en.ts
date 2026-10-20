@@ -538,7 +538,7 @@ export const en = {
       importHint: 'Add a context exported on another device as a new local context. Protected notes open with the same vault passphrase or recovery key; turn Touch ID on again on this device.',
       exported: 'Context exported',
       exportFailed: 'Export failed: {{error}}',
-      exportInsideData: 'Choose a location outside the app’s data folder.',
+      exportInsideData: 'Choose another location — this one would damage the notes or their images.',
       imported: 'Context “{{name}}” imported',
       importFailed: 'Import failed: {{error}}',
       tooNew: 'This file comes from a newer version of Notefix. Update the app first.',
