@@ -25,6 +25,7 @@ import { CodeBlock } from '../codeBlock';
 import { LinkPreview, LinkPreviewCtx, type LinkDisplay } from './LinkPreviewNode';
 import { SearchHighlight } from '../editor/searchHighlight';
 import { ShowInvisibles } from '../editor/showInvisibles';
+import { UndoGrouping, clearUndoHistory } from '../editor/undoGrouping';
 import type { CountPos, EditorToolbarPos } from '../hooks/useSettings';
 import FindBar from './FindBar';
 import { matchesCombo } from '../shortcuts';
@@ -221,6 +222,7 @@ export default function NoteEditor({ note, onChange, readOnly = false, rotationC
       LinkPreview,
       SearchHighlight,
       ShowInvisibles,
+      UndoGrouping,
     ],
     content: '<p></p>', // real content is fetched per note in the effect below
     editable: !readOnly,
@@ -314,6 +316,9 @@ export default function NoteEditor({ note, onChange, readOnly = false, rotationC
       if (cancelled || editor.isDestroyed) return;
       skipNextUpdate.current = true;
       editor.commands.setContent(content);
+      // The editor is reused across notes: without this, Ctrl+Z right after
+      // opening a note would undo back into the previously open one.
+      clearUndoHistory(editor);
       setProgress(countTasks(content));
       editor.commands.focus('end');
       if (isWindow) api.setWindowTitle(getTitleFromHtml(content));
@@ -366,6 +371,7 @@ export default function NoteEditor({ note, onChange, readOnly = false, rotationC
         if (editor.getHTML() === incoming) return;
         skipNextUpdate.current = true;
         editor.commands.setContent(incoming);
+        clearUndoHistory(editor);
       // A failed refresh leaves what is already on screen alone — same rule
       // as the initial load: never replace a note with an empty document.
       }).catch(() => {});
