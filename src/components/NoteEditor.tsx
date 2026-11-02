@@ -26,6 +26,7 @@ import { LinkPreview, LinkPreviewCtx, type LinkDisplay } from './LinkPreviewNode
 import { SearchHighlight } from '../editor/searchHighlight';
 import { ShowInvisibles } from '../editor/showInvisibles';
 import { UndoGrouping, clearUndoHistory } from '../editor/undoGrouping';
+import { rememberCopy, pasteRemembered } from '../editor/clipboardMemory';
 import type { CountPos, EditorToolbarPos } from '../hooks/useSettings';
 import FindBar from './FindBar';
 import { matchesCombo } from '../shortcuts';
@@ -250,6 +251,10 @@ export default function NoteEditor({ note, onChange, readOnly = false, rotationC
       },
       handlePaste: (view, event) => {
         const text = event.clipboardData?.getData('text/plain') ?? '';
+        if (text && pasteRemembered(view, text)) {
+          event.preventDefault();
+          return true;
+        }
         if (lpRef.current.enabled && isBareUrl(text)) {
           event.preventDefault();
           view.dispatch(view.state.tr.replaceSelectionWith(
@@ -409,9 +414,12 @@ export default function NoteEditor({ note, onChange, readOnly = false, rotationC
     if (copyRef.current === 'richtext') return false;
     const sel = view.state.selection;
     if (sel.empty) return false;
+    const slice = view.state.doc.slice(sel.from, sel.to);
     const div = document.createElement('div');
-    div.appendChild(DOMSerializer.fromSchema(view.state.schema).serializeFragment(view.state.doc.slice(sel.from, sel.to).content));
-    event.clipboardData?.setData('text/plain', selectionToCopy(div.innerHTML, copyRef.current));
+    div.appendChild(DOMSerializer.fromSchema(view.state.schema).serializeFragment(slice.content));
+    const text = selectionToCopy(div.innerHTML, copyRef.current);
+    event.clipboardData?.setData('text/plain', text);
+    rememberCopy(text, slice);
     event.preventDefault();
     if (cut) view.dispatch(view.state.tr.deleteSelection());
     return true;
