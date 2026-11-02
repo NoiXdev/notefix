@@ -1,4 +1,12 @@
-## [0.9.0](https://github.com/NoiXdev/notefix/compare/v0.8.0...v) (2026-10-20)
+## [0.10.0](https://github.com/NoiXdev/notefix/compare/v0.9.0...v) (2026-11-02)
+
+
+### Bug Fixes
+
+* **editor:** paste a cut/copied selection back without losing its structure ([f7ee43f](https://github.com/NoiXdev/notefix/commit/f7ee43f2258fdde8a1f32c426e215f15c7afd5e2))
+* **editor:** undo fast typing word by word and never into another note ([2c7298f](https://github.com/NoiXdev/notefix/commit/2c7298fc2426dfbbbcc5ffbe779115b836b5bba1))
+
+## [0.9.0](https://github.com/NoiXdev/notefix/compare/v0.8.0...v0.9.0) (2026-10-20)
 
 
 ### Features
