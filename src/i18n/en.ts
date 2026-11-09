@@ -549,6 +549,7 @@ export const en = {
     pickWorkspace: 'Choose workspace',
     loading: 'Loading…',
     loadError: 'Could not load workspaces',
+    noWorkspaces: 'This account has no workspaces on this server.',
     syncing: 'Syncing…',
     synced: 'Synced',
     offline: 'Offline',

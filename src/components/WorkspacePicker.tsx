@@ -23,6 +23,7 @@ export default function WorkspacePicker({ contextId, onClose }: { contextId: str
         <h2 className="text-gray-100 text-base font-semibold mb-3">{t('sync.pickWorkspace')}</h2>
         {error && <p className="text-red-400 text-sm" role="alert">{error}</p>}
         {!list && !error && <p className="text-gray-400 text-sm">{t('sync.loading')}</p>}
+        {list?.length === 0 && <p className="text-gray-400 text-sm">{t('sync.noWorkspaces')}</p>}
         <div className="flex flex-col gap-1">
           {(list ?? []).map(w => (
             <button key={w.id} onClick={() => pick(w)} className="text-left px-3 py-2 rounded text-sm text-gray-100 hover:bg-gray-800">

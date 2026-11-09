@@ -50,6 +50,13 @@ describe('WorkspacePicker', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Workspaces konnten nicht geladen werden');
   });
 
+  it('says so when the account has no workspaces', async () => {
+    mockServerWorkspaces.mockResolvedValue([]);
+    render(<WorkspacePicker contextId="ctx-1" onClose={vi.fn()} />);
+    expect(await screen.findByText('Dieses Konto hat auf diesem Server keine Workspaces.')).toBeInTheDocument();
+    expect(screen.queryByText('Lade…')).not.toBeInTheDocument();
+  });
+
   it('calls onClose when the backdrop is clicked', async () => {
     mockServerWorkspaces.mockResolvedValue([]);
     const onClose = vi.fn();

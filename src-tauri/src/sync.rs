@@ -225,17 +225,26 @@ fn workspaces_url(server_url: &str) -> String {
 
 /// Map the `/api/workspaces` JSON body to `WorkspaceInfo`s. Pulled out of
 /// [`fetch_workspaces`] so the response-parsing logic is testable without a
-/// network call.
+/// network call. The server's workspace key is an auto-increment integer, so
+/// the id may arrive as a JSON number; an entry without a usable id is
+/// dropped, since binding it would leave the context unbound.
 fn parse_workspaces(body: &Value) -> Vec<WorkspaceInfo> {
     body["data"]
         .as_array()
         .cloned()
         .unwrap_or_default()
         .iter()
-        .map(|w| WorkspaceInfo {
-            id: w["id"].as_str().unwrap_or_default().to_string(),
-            name: w["name"].as_str().unwrap_or_default().to_string(),
-            role: w["role"].as_str().unwrap_or_default().to_string(),
+        .filter_map(|w| {
+            let id = match &w["id"] {
+                Value::String(s) if !s.is_empty() => s.clone(),
+                Value::Number(n) => n.to_string(),
+                _ => return None,
+            };
+            Some(WorkspaceInfo {
+                id,
+                name: w["name"].as_str().unwrap_or_default().to_string(),
+                role: w["role"].as_str().unwrap_or_default().to_string(),
+            })
         })
         .collect()
 }
@@ -1116,6 +1125,22 @@ mod tests {
         assert_eq!(ws[0].name, "Team");
         assert_eq!(ws[0].role, "owner");
         assert_eq!(ws[1].id, "w2");
+    }
+
+    #[test]
+    fn parse_workspaces_accepts_numeric_ids() {
+        // Laravel's auto-increment key serialises as a JSON number.
+        let body = json!({"data": [{"id": 1, "name": "Mine", "role": "owner"}]});
+        let ws = parse_workspaces(&body);
+        assert_eq!(ws[0].id, "1");
+    }
+
+    #[test]
+    fn parse_workspaces_drops_entries_without_an_id() {
+        let body = json!({"data": [{"name": "Broken"}, {"id": "w1", "name": "Ok"}]});
+        let ws = parse_workspaces(&body);
+        assert_eq!(ws.len(), 1);
+        assert_eq!(ws[0].id, "w1");
     }
 
     #[test]

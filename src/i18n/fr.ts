@@ -549,6 +549,7 @@ export const fr = {
     pickWorkspace: 'Choisir un espace',
     loading: 'Chargement…',
     loadError: 'Impossible de charger les espaces',
+    noWorkspaces: 'Ce compte n’a aucun espace sur ce serveur.',
     syncing: 'Synchronisation…',
     synced: 'Synchronisé',
     offline: 'Hors ligne',

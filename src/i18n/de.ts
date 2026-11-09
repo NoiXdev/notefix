@@ -549,6 +549,7 @@ export const de = {
     pickWorkspace: 'Workspace wählen',
     loading: 'Lade…',
     loadError: 'Workspaces konnten nicht geladen werden',
+    noWorkspaces: 'Dieses Konto hat auf diesem Server keine Workspaces.',
     syncing: 'Synchronisiere…',
     synced: 'Synchronisiert',
     offline: 'Offline',
