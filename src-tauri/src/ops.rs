@@ -3464,24 +3464,26 @@ pub fn collect_sync_push(store: &Store) -> Result<SyncPush, String> {
 /// rows that were pushed and are still unchanged, merge the pulled rows,
 /// cache/flag the workspace vault-key state the server sent along, and
 /// advance both sync markers. `note_ids` / `folder_ids` are the snapshots
-/// from the matching [`SyncPush`].
+/// from the matching [`SyncPush`]. Returns the ids of the notes the pull
+/// changed (see [`crate::sync::apply_pulled`]).
 pub fn commit_sync_result(
     store: &Store,
     note_ids: &[(String, i64)],
     folder_ids: &[(String, i64)],
     pull: &crate::sync::PullBody,
     now: i64,
-) -> Result<(), String> {
+) -> Result<Vec<String>, String> {
     store
         .clear_note_dirty(note_ids)
         .map_err(|e| e.to_string())?;
     crate::folders::clear_folder_dirty(&store.conn, folder_ids).map_err(|e| e.to_string())?;
-    crate::sync::apply_pulled(store, &pull.folders, &pull.notes).map_err(|e| e.to_string())?;
+    let changed = crate::sync::apply_pulled(store, &pull.folders, &pull.notes)
+        .map_err(|e| e.to_string())?;
     apply_vault_keys(store, pull)?;
     crate::migrate::set_meta_i64(&store.conn, "sync_cursor", pull.cursor)
         .map_err(|e| e.to_string())?;
     crate::migrate::set_meta_i64(&store.conn, "sync_last_at", now).map_err(|e| e.to_string())?;
-    Ok(())
+    Ok(changed)
 }
 
 /// Cache the caller's own wrapped vault-key entries the server sent back on

@@ -157,6 +157,12 @@ export default function NoteEditor({ note, onChange, readOnly = false, rotationC
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [mdMode, setMdMode] = useState(false);
+  const mdModeRef = useRef(mdMode);
+  mdModeRef.current = mdMode;
+  /** Commits handed to `onChange` that have not settled yet. */
+  const savesInFlight = useRef(0);
+  /** Bumped on every user edit, so a reload can tell it was overtaken. */
+  const editGen = useRef(0);
   const [mdText, setMdText] = useState('');
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'failed'>('saved');
   /** Why the last save was refused, already translated. Sticky until the next
@@ -181,7 +187,10 @@ export default function NoteEditor({ note, onChange, readOnly = false, rotationC
    */
   const commit = (html: string): Promise<void> => {
     setSaveState('saving');
-    return Promise.resolve(onChange(note.id, html)).then(
+    savesInFlight.current += 1;
+    return Promise.resolve(onChange(note.id, html)).finally(() => {
+      savesInFlight.current -= 1;
+    }).then(
       () => {
         setSaveState('saved');
         setSaveError(null);
@@ -232,6 +241,7 @@ export default function NoteEditor({ note, onChange, readOnly = false, rotationC
         skipNextUpdate.current = false;
         return;
       }
+      editGen.current += 1;
       const html = e.getHTML();
         setProgress(countTasks(html));
       if (isWindow) api.setWindowTitle(getTitleFromHtml(html));
@@ -363,15 +373,21 @@ export default function NoteEditor({ note, onChange, readOnly = false, rotationC
     return () => { cancelled = true; clearTimeout(spinnerTimer); };
   }, [note.id, editor]);
 
-  // Apply external edits (from another note window / sync). notes-changed fires
-  // only for edits made elsewhere (the sender is excluded), so we won't clobber
-  // our own in-progress edit; still skip while the user is actively typing.
+  // Apply external edits: `notes-changed` (another window — the sender is
+  // excluded) and `notes-synced` (the ids a sync pull changed). The store is
+  // only read back while this editor is idle: no autosave pending, no commit
+  // in flight (its write may not have landed yet, so the read would return
+  // the pre-save copy), not in markdown mode, and no edit while the read
+  // was under way. Anything else would put stale content on screen, and the
+  // next keystroke would save it over the user's own text.
   useEffect(() => {
     if (!editor) return;
-    const off = api.onNotesChanged(() => {
-      if (pendingSave.current) return;
+    const busy = () => !!pendingSave.current || savesInFlight.current > 0 || mdModeRef.current;
+    const refresh = () => {
+      if (busy()) return;
+      const gen = editGen.current;
       void api.notes.loadOne(note.id).then((html) => {
-        if (editor.isDestroyed || pendingSave.current) return;
+        if (editor.isDestroyed || busy() || editGen.current !== gen) return;
         const incoming = html || '<p></p>';
         if (editor.getHTML() === incoming) return;
         skipNextUpdate.current = true;
@@ -380,8 +396,10 @@ export default function NoteEditor({ note, onChange, readOnly = false, rotationC
       // A failed refresh leaves what is already on screen alone — same rule
       // as the initial load: never replace a note with an empty document.
       }).catch(() => {});
-    });
-    return off;
+    };
+    const offChanged = api.onNotesChanged(refresh);
+    const offSynced = api.onNotesSynced((ids) => { if (ids.includes(note.id)) refresh(); });
+    return () => { offChanged(); offSynced(); };
   }, [note.id, editor]);
 
   // `editable` is baked into the useEditor config at mount, so a vault that
@@ -453,6 +471,7 @@ export default function NoteEditor({ note, onChange, readOnly = false, rotationC
   };
 
   const onMdChange = (value: string) => {
+    editGen.current += 1;
     setMdText(value);
     if (pendingSave.current) clearTimeout(pendingSave.current);
     setSaveState('saving');

@@ -1229,7 +1229,7 @@ pub async fn run_sync_cycle(app: &AppHandle) -> Result<(), String> {
 
     match result {
         Ok(pull) => {
-            {
+            let changed = {
                 let s = store_state.lock().map_err(|e| e.to_string())?;
                 // Inside the lock, so the check and the write cannot be
                 // separated by a swap: `swap_store_to` bumps the epoch before
@@ -1237,9 +1237,14 @@ pub async fn run_sync_cycle(app: &AppHandle) -> Result<(), String> {
                 if app.state::<ops::SyncEpoch>().changed_since(epoch) {
                     return Ok(());
                 }
-                ops::commit_sync_result(&s, &note_ids, &folder_ids, &pull, now_ms())?;
-            }
+                ops::commit_sync_result(&s, &note_ids, &folder_ids, &pull, now_ms())?
+            };
             broadcast_context_changed(app); // refresh the UI from the updated cache
+            // Open editors reload only the notes the pull actually changed
+            // (`notes-changed` would make every editor re-read on every cycle).
+            if !changed.is_empty() {
+                let _ = app.emit("notes-synced", changed);
+            }
 
             // A vault set up while this context was local (or offline) joins
             // the workspace here. Non-fatal — a network failure is retried on

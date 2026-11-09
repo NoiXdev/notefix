@@ -212,6 +212,14 @@ export const api = {
     };
   },
 
+  /** Subscribe to the ids of notes a sync pull just changed. Returns an unsubscribe fn. */
+  onNotesSynced(callback: (ids: string[]) => void): () => void {
+    const unlisten = listen<string[]>("notes-synced", (e) => callback(e.payload));
+    return () => {
+      void unlisten.then((un) => un());
+    };
+  },
+
   /** Subscribe to active-context switches. Returns an unsubscribe fn. */
   onContextChanged(callback: () => void): () => void {
     const unlisten = listen("context-changed", () => callback());

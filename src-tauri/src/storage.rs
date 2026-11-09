@@ -948,8 +948,9 @@ impl Store {
 /// server version is newer-or-equal (`updated_at`), so a local edit made during
 /// the sync window (which has a strictly greater `updated_at`) is preserved and
 /// pushed on the next cycle.
-pub fn upsert_note_from_server_conn(conn: &rusqlite::Connection, n: &Note) -> rusqlite::Result<()> {
-    conn.execute(
+/// Returns whether the row changed — `false` when the local copy is newer.
+pub fn upsert_note_from_server_conn(conn: &rusqlite::Connection, n: &Note) -> rusqlite::Result<bool> {
+    let changed = conn.execute(
         "INSERT INTO notes (id, content, updated_at, pinned, archived, color, due_at, folder_id, position, deleted_at, dirty, protected, title, key_gen)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, ?11, ?12, ?14)
          ON CONFLICT(id) DO UPDATE SET
@@ -979,7 +980,7 @@ pub fn upsert_note_from_server_conn(conn: &rusqlite::Connection, n: &Note) -> ru
             n.key_gen,
         ),
     )?;
-    Ok(())
+    Ok(changed > 0)
 }
 
 #[cfg(test)]

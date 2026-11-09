@@ -134,15 +134,22 @@ pub fn folder_from_wire(v: &Value) -> Folder {
 }
 
 /// Apply a pulled batch to the local cache (server rows win) in one transaction.
-pub fn apply_pulled(store: &Store, folders: &[Value], notes: &[Value]) -> rusqlite::Result<()> {
+/// Returns the ids of the notes it actually changed, so an open editor can
+/// reload exactly those (a row the local copy beats is left alone).
+pub fn apply_pulled(store: &Store, folders: &[Value], notes: &[Value]) -> rusqlite::Result<Vec<String>> {
     let tx = store.conn.unchecked_transaction()?;
     for fv in folders {
         folders::upsert_folder_from_server(&tx, &folder_from_wire(fv))?;
     }
+    let mut changed = Vec::new();
     for nv in notes {
-        storage::upsert_note_from_server_conn(&tx, &note_from_wire(nv))?;
+        let n = note_from_wire(nv);
+        if storage::upsert_note_from_server_conn(&tx, &n)? {
+            changed.push(n.id);
+        }
     }
-    tx.commit()
+    tx.commit()?;
+    Ok(changed)
 }
 
 use serde::Serialize;
@@ -966,6 +973,24 @@ mod tests {
         });
         apply_pulled(&s, &[], &[server_note]).unwrap();
         assert_eq!(s.load_all_notes().unwrap()[0].content, "server");
+    }
+
+    #[test]
+    fn apply_pulled_reports_only_the_notes_it_changed() {
+        let s = Store::open_in_memory().unwrap();
+        crate::migrate::run_migrations(&s.conn).unwrap();
+        for (id, at) in [("newer", 1), ("older", 1_800_000_000_000)] {
+            s.save_note(&Note { id: id.into(), content: "local".into(), updated_at: at, ..Default::default() })
+                .unwrap();
+        }
+        let wire = |id: &str| {
+            note_to_wire(&Note { id: id.into(), content: "server".into(), updated_at: 1_700_000_000_000, ..Default::default() })
+        };
+
+        // "older" is newer locally (LWW keeps it), "fresh" is new to this device.
+        let changed = apply_pulled(&s, &[], &[wire("newer"), wire("older"), wire("fresh")]).unwrap();
+
+        assert_eq!(changed, vec!["newer".to_string(), "fresh".to_string()]);
     }
 
     #[test]

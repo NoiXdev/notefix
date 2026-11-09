@@ -124,11 +124,12 @@ vi.mock("@tiptap/extension-task-list", () => ({ default: {} }));
 vi.mock("@tiptap/extension-task-item", () => ({ default: { configure: () => ({}) } }));
 vi.mock("./ResizableImage", () => ({ ResizableImage: { configure: () => ({}) } }));
 
-const { mockToggleAlwaysOnTop, mockCloseWindow, mockSaveImageFile, notesChangedRef } = vi.hoisted(() => ({
+const { mockToggleAlwaysOnTop, mockCloseWindow, mockSaveImageFile, notesChangedRef, notesSyncedRef } = vi.hoisted(() => ({
   mockToggleAlwaysOnTop: vi.fn<(current: boolean) => Promise<boolean>>(),
   mockCloseWindow: vi.fn<() => Promise<void>>(),
   mockSaveImageFile: vi.fn<(noteId: string, file: File) => Promise<string>>(),
   notesChangedRef: { current: null as null | (() => void) },
+  notesSyncedRef: { current: null as null | ((ids: string[]) => void) },
 }));
 
 vi.mock("../saveImage", () => ({ saveImageFile: mockSaveImageFile }));
@@ -144,6 +145,7 @@ vi.mock("../api", () => ({
       revisionContent: vi.fn().mockResolvedValue(""),
     },
     onNotesChanged: (cb: () => void) => { notesChangedRef.current = cb; return () => { notesChangedRef.current = null; }; },
+    onNotesSynced: (cb: (ids: string[]) => void) => { notesSyncedRef.current = cb; return () => { notesSyncedRef.current = null; }; },
     openNoteWindow: vi.fn(),
     setWindowTitle: vi.fn(),
     toggleAlwaysOnTop: mockToggleAlwaysOnTop,
@@ -809,6 +811,67 @@ describe("NoteEditor — external edits from another window", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
+    expect(fakeEditor.commands.setContent).not.toHaveBeenCalled();
+  });
+});
+
+describe("NoteEditor — notes changed by a sync pull", () => {
+  const loadOne = () => api.notes.loadOne as ReturnType<typeof vi.fn>;
+  const settle = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
+
+  it("reloads the open note when the pull changed it", async () => {
+    loadOne().mockResolvedValueOnce("<p>Hello</p>").mockResolvedValueOnce("<p>From another device</p>");
+    render(<NoteEditor note={mockNote} onChange={onChange} />);
+    await flushNoteLoad();
+    fakeEditor.getHTML.mockImplementation(() => "<p>Hello</p>");
+    await act(async () => { notesSyncedRef.current?.([mockNote.id]); await settle(); });
+    expect(fakeEditor.commands.setContent).toHaveBeenLastCalledWith("<p>From another device</p>");
+  });
+
+  it("ignores a pull that changed other notes only", async () => {
+    loadOne().mockResolvedValueOnce("<p>Hello</p>");
+    render(<NoteEditor note={mockNote} onChange={onChange} />);
+    await flushNoteLoad();
+    loadOne().mockClear();
+    await act(async () => { notesSyncedRef.current?.(["someone-else"]); await settle(); });
+    expect(loadOne()).not.toHaveBeenCalled();
+  });
+
+  it("leaves the editor alone while its own save is still in flight", async () => {
+    let finishSave!: () => void;
+    const slowSave = vi.fn(() => new Promise<void>(r => { finishSave = r; }));
+    loadOne().mockResolvedValueOnce("<p>Hello</p>").mockResolvedValue("<p>stale pre-save copy</p>");
+    render(<NoteEditor note={mockNote} onChange={slowSave} autosaveDelay={10} />);
+    await flushNoteLoad();
+    act(() => { getConfig().onUpdate({ editor: fakeEditor }); }); // swallowed post-load update
+
+    vi.useFakeTimers();
+    fakeEditor.getHTML.mockImplementation(() => "<p>typed</p>");
+    act(() => { getConfig().onUpdate({ editor: fakeEditor }); });
+    act(() => { vi.advanceTimersByTime(10); }); // autosave fires, commit now in flight
+    vi.useRealTimers();
+    expect(slowSave).toHaveBeenCalled();
+
+    fakeEditor.commands.setContent.mockClear();
+    await act(async () => { notesSyncedRef.current?.([mockNote.id]); await settle(); });
+    expect(fakeEditor.commands.setContent).not.toHaveBeenCalled();
+    await act(async () => { finishSave(); await settle(); });
+  });
+
+  it("drops the reload when the user typed while it was loading", async () => {
+    let resolveLoad!: (html: string) => void;
+    loadOne().mockResolvedValueOnce("<p>Hello</p>");
+    render(<NoteEditor note={mockNote} onChange={onChange} autosaveDelay={10_000} />);
+    await flushNoteLoad();
+    act(() => { getConfig().onUpdate({ editor: fakeEditor }); }); // swallowed post-load update
+    loadOne().mockImplementationOnce(() => new Promise<string>(r => { resolveLoad = r; }));
+
+    await act(async () => { notesSyncedRef.current?.([mockNote.id]); await settle(); });
+    fakeEditor.getHTML.mockImplementation(() => "<p>typed meanwhile</p>");
+    act(() => { getConfig().onUpdate({ editor: fakeEditor }); });
+    // The keystroke armed an autosave; a save that already ran would count too.
+    fakeEditor.commands.setContent.mockClear();
+    await act(async () => { resolveLoad("<p>remote</p>"); await settle(); });
     expect(fakeEditor.commands.setContent).not.toHaveBeenCalled();
   });
 });
