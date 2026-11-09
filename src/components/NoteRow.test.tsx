@@ -26,3 +26,18 @@ describe('NoteRow compact & progress', () => {
     expect(container.querySelector('[style*="width: 50%"]')).toBeTruthy();
   });
 });
+
+describe('NoteRow sync indicator', () => {
+  it('flags a note with changes not yet pushed', () => {
+    wrap(<NoteRow {...props} note={note({ dirty: true })} syncIndicator />);
+    expect(screen.getByRole('img', { name: 'Noch nicht synchronisiert' })).toBeInTheDocument();
+  });
+  it('marks a pushed note as up to date', () => {
+    wrap(<NoteRow {...props} note={note({ dirty: false })} syncIndicator />);
+    expect(screen.getByRole('img', { name: 'Synchronisiert' })).toBeInTheDocument();
+  });
+  it('shows nothing outside a syncing context', () => {
+    wrap(<NoteRow {...props} note={note({ dirty: true })} />);
+    expect(screen.queryByRole('img', { name: /synchronisiert/i })).not.toBeInTheDocument();
+  });
+});

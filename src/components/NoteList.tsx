@@ -60,6 +60,8 @@ interface Props {
   onProtectNote?: (id: string, next: boolean) => void;
   onLockFolder?: (id: string, next: boolean) => void;
   onSetNoteMcpHidden?: (id: string, next: boolean) => void;
+  /** Show each note's pushed / not-yet-pushed state (server contexts). */
+  syncIndicator?: boolean;
   onSetFolderMcpHidden?: (id: string, next: boolean) => void;
   vaultExists?: boolean;
   vaultUnlocked?: boolean;
@@ -89,7 +91,7 @@ export default function NoteList(props: Props) {
     compactTree = false, treeProgress = true,
     trashed = [], trashEnabled = true, onRestore, onPurge, onEmptyTrash, onExportNote, onPrintNote,
     onOpenContexts, onProtectNote, onLockFolder, onSetNoteMcpHidden, onSetFolderMcpHidden,
-    vaultExists, vaultUnlocked, onLockVault,
+    vaultExists, vaultUnlocked, onLockVault, syncIndicator = false,
   } = props;
 
   const [showGame, setShowGame] = useState(false);
@@ -176,6 +178,7 @@ export default function NoteList(props: Props) {
       dateFormat={dateFormat}
       compact={compactTree}
       showProgress={treeProgress}
+      syncIndicator={syncIndicator}
       onSelect={onSelect}
       onDelete={(id) => setPendingDelete(id)}
       onContextMenu={(e, n) => setMenu({ x: e.clientX, y: e.clientY, note: n })}

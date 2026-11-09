@@ -67,6 +67,7 @@ vi.mock("./api", () => ({
     windowProbe: vi.fn(() => Promise.resolve(true)),
     onTrayEvent: (h: typeof cbs.tray) => { cbs.tray = h; return () => {}; },
     onNotesChanged: () => () => {},
+    onNotesSynced: () => () => {},
     onCloseRequested: (cb: () => void) => { cbs.closeRequested = cb; return () => {}; },
     onContextChanged: (cb: () => void) => { cbs.contextChanged.push(cb); return () => {}; },
     onAuthCallback: (cb: (url: string) => void) => { cbs.authCallback = cb; return () => {}; },
@@ -585,6 +586,8 @@ describe("App — context switching", () => {
 });
 
 describe("App — refresh events keep the open note", () => {
+  // `clearAllMocks` keeps a `mockResolvedValue`; don't leak a server context.
+  beforeEach(() => { vi.mocked(api.contexts.list).mockResolvedValue([]); });
   const meta = (id: string, preview: string) => ({
     id, updatedAt: 1, pinned: false, archived: false, color: "", dueAt: null, folderId: null,
     position: id === "a" ? 0 : 1, deletedAt: null, preview, tasksDone: 0, tasksTotal: 0, protected: false, title: "", mcpHidden: false,
@@ -613,6 +616,21 @@ describe("App — refresh events keep the open note", () => {
     // Deselecting would remount the editor (dropping the pending autosave) and
     // auto-select the first note again.
     expect(api.notes.loadOne).not.toHaveBeenCalled();
+  });
+
+  it("marks unpushed notes in a server context bound to a workspace", async () => {
+    vi.mocked(api.contexts.list).mockResolvedValue([ctx("srv")] as never);
+    mockLoad.mockResolvedValue([{ ...meta("a", "First note"), dirty: true }, meta("b", "Second note")]);
+    render(<App />);
+    expect(await screen.findByRole("img", { name: "Noch nicht synchronisiert" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Synchronisiert" })).toBeInTheDocument();
+  });
+
+  it("shows no sync indicator in a local context", async () => {
+    mockLoad.mockResolvedValue([{ ...meta("a", "First note"), dirty: true }]);
+    render(<App />);
+    await screen.findByText("First note");
+    expect(screen.queryByRole("img", { name: /synchronisiert/i })).not.toBeInTheDocument();
   });
 
   it("an actual context switch still clears the selection", async () => {

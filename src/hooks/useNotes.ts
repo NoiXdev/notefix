@@ -27,7 +27,7 @@ export function useNotes() {
     const updatedAt = Date.now();
     const position = -updatedAt;
     await api.notes.save({ id, content: '', updatedAt, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position, deletedAt: null });
-    const meta: NoteMeta = { id, updatedAt, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position, deletedAt: null, preview: '', tasksDone: 0, tasksTotal: 0, protected: false, title: '', mcpHidden: false };
+    const meta: NoteMeta = { id, updatedAt, dirty: true, pinned: false, archived: false, color: '', dueAt: null, folderId: null, position, deletedAt: null, preview: '', tasksDone: 0, tasksTotal: 0, protected: false, title: '', mcpHidden: false };
     setNotes(prev => [meta, ...prev]);
     return id;
   }, []);
@@ -39,7 +39,7 @@ export function useNotes() {
     const tasks = countTasks(content);
     setNotes(prev =>
       prev
-        .map(n => (n.id === id ? { ...n, updatedAt, preview: getPreview(content), title: getPreview(content), tasksDone: tasks.done, tasksTotal: tasks.total } : n))
+        .map(n => (n.id === id ? { ...n, updatedAt, dirty: true, preview: getPreview(content), title: getPreview(content), tasksDone: tasks.done, tasksTotal: tasks.total } : n))
         .sort(sortNotes),
     );
     // backend's save_note preserves pinned/archived/color on conflict.
@@ -61,27 +61,27 @@ export function useNotes() {
   }, [reload]);
 
   const setPinned = useCallback(async (id: string, pinned: boolean) => {
-    setNotes(prev => prev.map(n => (n.id === id ? { ...n, pinned } : n)).sort(sortNotes));
+    setNotes(prev => prev.map(n => (n.id === id ? { ...n, pinned, dirty: true } : n)).sort(sortNotes));
     await api.notes.setPinned(id, pinned);
   }, []);
 
   const setArchived = useCallback(async (id: string, archived: boolean) => {
-    setNotes(prev => prev.map(n => (n.id === id ? { ...n, archived } : n)));
+    setNotes(prev => prev.map(n => (n.id === id ? { ...n, archived, dirty: true } : n)));
     await api.notes.setArchived(id, archived);
   }, []);
 
   const setColor = useCallback(async (id: string, color: string) => {
-    setNotes(prev => prev.map(n => (n.id === id ? { ...n, color } : n)));
+    setNotes(prev => prev.map(n => (n.id === id ? { ...n, color, dirty: true } : n)));
     await api.notes.setColor(id, color);
   }, []);
 
   const setDue = useCallback(async (id: string, dueAt: number | null) => {
-    setNotes(prev => prev.map(n => (n.id === id ? { ...n, dueAt } : n)));
+    setNotes(prev => prev.map(n => (n.id === id ? { ...n, dueAt, dirty: true } : n)));
     await api.notes.setDue(id, dueAt);
   }, []);
 
   const setFolder = useCallback(async (id: string, folderId: string | null) => {
-    setNotes(prev => prev.map(n => (n.id === id ? { ...n, folderId } : n)));
+    setNotes(prev => prev.map(n => (n.id === id ? { ...n, folderId, dirty: true } : n)));
     await api.notes.setFolder(id, folderId);
   }, []);
 

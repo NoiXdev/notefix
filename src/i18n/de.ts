@@ -306,6 +306,8 @@ export const de = {
     pinned: 'Angepinnt',
     due: 'Fällig',
     deleteNote: 'Notiz löschen',
+    syncPending: 'Noch nicht synchronisiert',
+    syncDone: 'Synchronisiert',
     noArchivedNotes: 'Keine archivierten Notizen.',
     emptyTitle: 'Noch keine Notizen.',
     emptyHint: 'Klicke +, um eine zu erstellen.',

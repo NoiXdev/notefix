@@ -2,7 +2,7 @@ import type { MouseEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useDraggable, useDroppable } from '@dnd-kit/core';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faLock } from '@fortawesome/free-solid-svg-icons';
+import { faLock, faCloud, faCloudArrowUp } from '@fortawesome/free-solid-svg-icons';
 import type { NoteMeta } from '../types';
 import type { DropMode } from '../dnd';
 import { formatDate, type DateFormat } from '../dates';
@@ -20,6 +20,8 @@ interface Props {
   onContextMenu: (e: MouseEvent, note: NoteMeta) => void;
   compact?: boolean;
   showProgress?: boolean;
+  /** The context syncs to a server: show whether this note's changes are pushed. */
+  syncIndicator?: boolean;
 }
 
 function PinIcon({ color }: { color: string }) {
@@ -30,7 +32,7 @@ function PinIcon({ color }: { color: string }) {
   );
 }
 
-export default function NoteRow({ note, depth, selected, dropMode, dateFormat, onSelect, onDelete, onContextMenu, compact = false, showProgress = false }: Props) {
+export default function NoteRow({ note, depth, selected, dropMode, dateFormat, onSelect, onDelete, onContextMenu, compact = false, showProgress = false, syncIndicator = false }: Props) {
   const { t } = useTranslation();
   const { setNodeRef, listeners, attributes, isDragging } = useDraggable({ id: `note:${note.id}` });
   const before = useDroppable({ id: `note:${note.id}:before` });
@@ -80,6 +82,17 @@ export default function NoteRow({ note, depth, selected, dropMode, dateFormat, o
             )}
           </div>
         </div>
+        {syncIndicator && (
+          // Same spot as the delete button, which takes over on hover.
+          <span
+            role="img"
+            aria-label={note.dirty ? t('noteList.syncPending') : t('noteList.syncDone')}
+            title={note.dirty ? t('noteList.syncPending') : t('noteList.syncDone')}
+            className={`absolute right-3 top-1/2 -translate-y-1/2 text-[10px] group-hover:opacity-0 transition-opacity ${note.dirty ? 'text-amber-400' : 'text-gray-600'}`}
+          >
+            <FontAwesomeIcon icon={note.dirty ? faCloudArrowUp : faCloud} />
+          </span>
+        )}
         <span onClick={e => { e.stopPropagation(); onDelete(note.id); }} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity" title={t('noteList.deleteNote')}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14H6L5 6" /></svg>
         </span>

@@ -306,6 +306,8 @@ export const en = {
     pinned: 'Pinned',
     due: 'Due',
     deleteNote: 'Delete note',
+    syncPending: 'Not synced yet',
+    syncDone: 'Synced',
     noArchivedNotes: 'No archived notes.',
     emptyTitle: 'No notes yet.',
     emptyHint: 'Click + to create one.',

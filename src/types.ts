@@ -32,6 +32,9 @@ export interface NoteMeta {
   title: string;
   /** "Hide from MCP" opt-out — local only, independent of `protected`. */
   mcpHidden: boolean;
+  /** Changed locally and not pushed yet. Only ever set in a syncing (server)
+   *  context. Optional so hand-built metas (tests, optimistic rows) may omit it. */
+  dirty?: boolean;
 }
 
 export interface Folder {

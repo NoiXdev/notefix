@@ -295,6 +295,8 @@ export default function App() {
   }, [createNote]);
 
   const selectedNote = notes.find(n => n.id === selectedId) ?? null;
+  const activeContext = contexts.find(c => c.id === activeContextId);
+  const syncsToServer = activeContext?.kind === 'server' && !!activeContext.workspaceId;
 
   const handleCreate = async (): Promise<string> => {
     const id = await createNote();
@@ -656,6 +658,7 @@ export default function App() {
         onProtectNote={(id, next) => requestProtect('note', id, next)}
         onLockFolder={(id, next) => requestProtect('folder', id, next)}
         onSetNoteMcpHidden={(id, next) => void setNoteMcpHidden(id, next)}
+        syncIndicator={syncsToServer}
         onSetFolderMcpHidden={(id, next) => void setFolderMcpHidden(id, next)}
         vaultExists={vault.status.exists}
         vaultUnlocked={vault.status.unlocked}
