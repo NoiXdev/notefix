@@ -805,6 +805,15 @@ mod tests {
     }
 
     #[test]
+    fn parses_the_servers_millisecond_timestamps() {
+        // notefix-server emits toRfc3339String(true): milliseconds, +00:00.
+        assert_eq!(
+            iso8601_to_ms("2023-11-14T22:13:20.282+00:00"),
+            1_700_000_000_282
+        );
+    }
+
+    #[test]
     fn note_wire_roundtrip() {
         let n = Note {
             id: "n1".into(),
