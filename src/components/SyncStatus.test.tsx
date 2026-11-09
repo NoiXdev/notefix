@@ -12,6 +12,12 @@ const { mockSyncStatus, mockSyncNow, mockOnSyncStatus, mockOnContextChanged, moc
   mockList: vi.fn<() => Promise<ContextInfo[]>>(),
 }));
 
+vi.mock('./WorkspacePicker', () => ({
+  default: ({ contextId, onClose }: { contextId: string; onClose: () => void }) => (
+    <div data-testid="workspace-picker" data-context={contextId} onClick={onClose} />
+  ),
+}));
+
 vi.mock('../api', () => ({
   api: {
     contexts: { syncStatus: mockSyncStatus, syncNow: mockSyncNow, list: mockList },
@@ -80,6 +86,18 @@ describe('SyncStatus', () => {
     mockSyncStatus.mockResolvedValue(status({ state: 'synced', pending: 3 }));
     render(<SyncStatus />);
     expect(await screen.findByText('Synchronisiert · 3')).toBeInTheDocument();
+  });
+
+  it('opens the workspace picker for the active context instead of syncing when unbound', async () => {
+    mockSyncStatus.mockResolvedValue(status({ state: 'unbound' }));
+    mockList.mockResolvedValue([context({ id: 'other', active: false }), context({ workspaceId: '' })]);
+    render(<SyncStatus />);
+    fireEvent.click(await screen.findByTitle('Workspace wählen'));
+    const picker = await screen.findByTestId('workspace-picker');
+    expect(picker).toHaveAttribute('data-context', 'srv');
+    expect(mockSyncNow).not.toHaveBeenCalled();
+    fireEvent.click(picker);
+    expect(screen.queryByTestId('workspace-picker')).not.toBeInTheDocument();
   });
 
   it('calls syncNow when clicked', async () => {
