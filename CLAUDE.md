@@ -115,7 +115,12 @@ Two rules the whole feature rests on:
   profiles or databases. Mobile debug builds keep the normal path.
   On macOS, debug builds also skip `tauri-plugin-single-instance` (its lock
   is keyed on the bundle id, so the installed app would swallow the dev
-  instance); deep links still arrive via `on_open_url`. Windows/Linux keep it.
+  instance). They also can't receive `notefix://` links at all — the bare dev
+  binary is no app bundle, so macOS hands them to the installed app — so
+  their server sign-in uses an RFC 8252 loopback redirect instead
+  (`loopback.rs`, `http://127.0.0.1:<free port>/auth`; notefix-server's
+  desktop client registers `http://127.0.0.1/auth`, ports are ignored for
+  loopback). Windows/Linux keep the plugin and the deep link.
 - `npx tsc --noEmit` and `npx vitest run` must stay green (i18n de/en/fr key
   parity is enforced by a test).
 - Coverage: `npm run test:coverage` (frontend, v8; all `src/` files are

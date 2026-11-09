@@ -715,6 +715,9 @@ pub struct PendingAuth {
     pub verifier: String,
     pub server_url: String,
     pub config: crate::auth::OAuthConfig,
+    /// The redirect sent with the authorize request; the token exchange must
+    /// repeat it exactly.
+    pub redirect_uri: String,
 }
 pub type PendingAuthMap = Mutex<std::collections::HashMap<String, PendingAuth>>;
 
@@ -722,13 +725,31 @@ pub type PendingAuthMap = Mutex<std::collections::HashMap<String, PendingAuth>>;
 /// stash it under its `state`, and return the browser authorize URL to open.
 #[tauri::command]
 pub async fn server_auth_begin(
+    app: AppHandle,
     pending: State<'_, PendingAuthMap>,
     server_url: String,
 ) -> Result<String, String> {
     let server_url = crate::auth::normalize_server_url(&server_url);
     let config = crate::auth::fetch_oauth_config(&server_url).await?;
     let p = crate::auth::pkce();
-    let authorize = ops::build_authorize_url(&config, &p.challenge, &p.state)?;
+
+    // Debug macOS builds can't receive `notefix://` links (see `loopback`):
+    // catch the redirect on a local port and hand it to the frontend as the
+    // same `auth-callback` event a deep link would produce.
+    let redirect_uri = if crate::loopback::ENABLED {
+        let (redirect, wait) = crate::loopback::listen().await?;
+        tauri::async_runtime::spawn(async move {
+            if let Some(url) = wait.await {
+                crate::tray::show_main(&app);
+                let _ = app.emit("auth-callback", url);
+            }
+        });
+        redirect
+    } else {
+        let _ = app;
+        crate::auth::REDIRECT_URI.to_string()
+    };
+    let authorize = ops::build_authorize_url(&config, &p.challenge, &p.state, &redirect_uri)?;
 
     pending.lock().map_err(|e| e.to_string())?.insert(
         p.state,
@@ -736,6 +757,7 @@ pub async fn server_auth_begin(
             verifier: p.verifier,
             server_url,
             config,
+            redirect_uri,
         },
     );
     Ok(authorize)
@@ -766,6 +788,7 @@ pub async fn server_auth_complete(
         &pa.config.client_id,
         &code,
         &pa.verifier,
+        &pa.redirect_uri,
     )
     .await?;
 

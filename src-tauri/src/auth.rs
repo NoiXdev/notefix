@@ -12,7 +12,8 @@ use sha2::{Digest, Sha256};
 const KEYCHAIN_SERVICE: &str = "dev.noix.notefix";
 
 /// The native redirect URI registered with the deep-link scheme. The server's
-/// public desktop client is created with exactly this redirect.
+/// public desktop client is created with this redirect (plus the loopback one
+/// debug macOS builds use, see `loopback`).
 pub const REDIRECT_URI: &str = "notefix://auth";
 
 /// PKCE material for one authorization-code flow.
@@ -103,11 +104,12 @@ pub async fn exchange_code(
     client_id: &str,
     code: &str,
     verifier: &str,
+    redirect_uri: &str,
 ) -> Result<Tokens, String> {
     let body = url::form_urlencoded::Serializer::new(String::new())
         .append_pair("grant_type", "authorization_code")
         .append_pair("client_id", client_id)
-        .append_pair("redirect_uri", REDIRECT_URI)
+        .append_pair("redirect_uri", redirect_uri)
         .append_pair("code", code)
         .append_pair("code_verifier", verifier)
         .finish();

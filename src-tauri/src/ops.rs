@@ -3340,13 +3340,14 @@ pub fn build_authorize_url(
     config: &crate::auth::OAuthConfig,
     challenge: &str,
     state: &str,
+    redirect_uri: &str,
 ) -> Result<String, String> {
     let mut authorize = url::Url::parse(&config.authorize_url).map_err(|e| e.to_string())?;
     {
         let mut q = authorize.query_pairs_mut();
         q.append_pair("response_type", "code");
         q.append_pair("client_id", &config.client_id);
-        q.append_pair("redirect_uri", crate::auth::REDIRECT_URI);
+        q.append_pair("redirect_uri", redirect_uri);
         q.append_pair("code_challenge", challenge);
         q.append_pair("code_challenge_method", "S256");
         q.append_pair("state", state);
@@ -9752,7 +9753,7 @@ mod auth_flow_tests {
 
     #[test]
     fn authorize_url_carries_every_pkce_parameter() {
-        let url = build_authorize_url(&config(), "CHAL", "STATE").unwrap();
+        let url = build_authorize_url(&config(), "CHAL", "STATE", crate::auth::REDIRECT_URI).unwrap();
         let parsed = url::Url::parse(&url).unwrap();
         let q: std::collections::HashMap<String, String> =
             parsed.query_pairs().into_owned().collect();
@@ -9772,7 +9773,7 @@ mod auth_flow_tests {
         let mut c = config();
         c.scopes.clear();
 
-        let url = build_authorize_url(&c, "CHAL", "STATE").unwrap();
+        let url = build_authorize_url(&c, "CHAL", "STATE", crate::auth::REDIRECT_URI).unwrap();
 
         assert!(!url.contains("scope="));
     }
@@ -9781,7 +9782,7 @@ mod auth_flow_tests {
     fn an_unparsable_authorize_url_is_rejected() {
         let mut c = config();
         c.authorize_url = "/relative/only".into();
-        assert!(build_authorize_url(&c, "CHAL", "STATE").is_err());
+        assert!(build_authorize_url(&c, "CHAL", "STATE", crate::auth::REDIRECT_URI).is_err());
     }
 
     #[test]
@@ -9789,7 +9790,7 @@ mod auth_flow_tests {
         let mut c = config();
         c.authorize_url = "https://notes.example/authorize?tenant=acme".into();
 
-        let url = build_authorize_url(&c, "CHAL", "STATE").unwrap();
+        let url = build_authorize_url(&c, "CHAL", "STATE", crate::auth::REDIRECT_URI).unwrap();
 
         let parsed = url::Url::parse(&url).unwrap();
         let q: std::collections::HashMap<String, String> =

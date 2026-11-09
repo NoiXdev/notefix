@@ -8,6 +8,7 @@ mod folders;
 mod images;
 mod imagesync;
 mod linkmeta;
+mod loopback;
 mod mcp;
 mod mdconv;
 mod migrate;
@@ -100,8 +101,10 @@ pub fn run() {
     //
     // Skipped for `tauri dev` on macOS: the lock is keyed on the bundle
     // identifier, so a running installed app would swallow the dev instance.
-    // macOS delivers deep links as Apple events (`on_open_url`), not argv, so
-    // nothing is lost there; Windows/Linux dev builds need it for sign-in.
+    // The dev binary can't receive `notefix://` links on macOS anyway (it is no
+    // app bundle; LaunchServices routes them to the installed app), so its
+    // sign-in uses the loopback redirect (`loopback.rs`) instead. Windows/Linux
+    // dev builds need the plugin for sign-in.
     #[cfg(all(desktop, not(all(debug_assertions, target_os = "macos"))))]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
         tray::show_main(app);
