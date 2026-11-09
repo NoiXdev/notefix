@@ -584,6 +584,48 @@ describe("App — context switching", () => {
   });
 });
 
+describe("App — refresh events keep the open note", () => {
+  const meta = (id: string, preview: string) => ({
+    id, updatedAt: 1, pinned: false, archived: false, color: "", dueAt: null, folderId: null,
+    position: id === "a" ? 0 : 1, deletedAt: null, preview, tasksDone: 0, tasksTotal: 0, protected: false, title: "", mcpHidden: false,
+  });
+  const ctx = (id: string) => ({
+    id, label: id, kind: "server", path: "", serverUrl: "https://s", workspaceId: "1", active: true,
+    vaultExists: false, vaultBiometric: false, vaultGeneration: 0, vaultRotationPending: false,
+  });
+
+  /** Open note "b" (auto-select picks "a" first), then forget the loads so far. */
+  const openSecondNote = async () => {
+    mockLoad.mockResolvedValue([meta("a", "First note"), meta("b", "Second note")]);
+    render(<App />);
+    fireEvent.click(await screen.findByText("Second note"));
+    await waitFor(() => expect(api.notes.loadOne).toHaveBeenCalledWith("b"));
+    vi.mocked(api.notes.loadOne).mockClear();
+  };
+
+  it("a context-changed for the SAME context (e.g. after a sync) leaves the open note alone", async () => {
+    vi.mocked(api.contexts.list).mockResolvedValue([ctx("srv")] as never);
+    await openSecondNote();
+
+    await act(async () => { cbs.contextChanged.forEach(fn => fn()); });
+    await waitFor(() => expect(mockLoad.mock.calls.length).toBeGreaterThan(1));
+
+    // Deselecting would remount the editor (dropping the pending autosave) and
+    // auto-select the first note again.
+    expect(api.notes.loadOne).not.toHaveBeenCalled();
+  });
+
+  it("an actual context switch still clears the selection", async () => {
+    vi.mocked(api.contexts.list).mockResolvedValue([ctx("srv")] as never);
+    await openSecondNote();
+
+    vi.mocked(api.contexts.list).mockResolvedValue([ctx("other")] as never);
+    await act(async () => { cbs.contextChanged.forEach(fn => fn()); });
+
+    await waitFor(() => expect(api.notes.loadOne).toHaveBeenCalledWith("a"));
+  });
+});
+
 describe("App — auth callback", () => {
   it("completes a server auth callback via contexts.serverAuthComplete", async () => {
     render(<App />);

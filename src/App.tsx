@@ -154,13 +154,9 @@ export default function App() {
 
   useEffect(() => {
     return api.onContextChanged(() => {
-      if (pendingSelectRef.current) {
-        setSelectedId(pendingSelectRef.current);
-        pendingSelectRef.current = null;
-      } else {
-        setSelectedId(null);
-      }
-      setView('editor');
+      // Selection is handled with the active-context check below: this event
+      // also fires after every sync cycle and vault change, where the open
+      // note must stay put.
       void reloadNotes();
       void reloadFolders();
       void reloadSettings();
@@ -171,11 +167,27 @@ export default function App() {
   }, [reloadNotes, reloadFolders, reloadSettings]);
 
   // Prompt to bind a workspace when the active context is an unbound server context.
+  // Also the one place that notices an actual context switch: `context-changed`
+  // is a general "reload" signal (sync cycles, vault changes), and deselecting
+  // on every one remounted the editor — dropping the pending autosave — and
+  // reopened the first note with its stale stored content.
+  const activeCtxRef = useRef<string | null>(null);
   useEffect(() => {
     const check = () => void api.contexts.list().then(cs => {
       setContexts(cs);
       const active = cs.find(c => c.active);
-      setActiveContextId(active?.id ?? '');
+      const id = active?.id ?? '';
+      const switched = activeCtxRef.current !== null && activeCtxRef.current !== id;
+      activeCtxRef.current = id;
+      setActiveContextId(id);
+      if (pendingSelectRef.current) {
+        setSelectedId(pendingSelectRef.current);
+        pendingSelectRef.current = null;
+        setView('editor');
+      } else if (switched) {
+        setSelectedId(null);
+        setView('editor');
+      }
       if (active?.kind === 'server' && !active.workspaceId) setBindCtx(active.id);
     });
     check(); // initial (e.g. app starts on an unbound server context)
