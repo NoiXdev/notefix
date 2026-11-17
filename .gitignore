@@ -11,3 +11,4 @@ test-results/
 
 # vitest / llvm-cov reports
 coverage/
+.agents
