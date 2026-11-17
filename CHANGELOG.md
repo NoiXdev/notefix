@@ -1,4 +1,22 @@
-## [0.10.0](https://github.com/NoiXdev/notefix/compare/v0.9.0...v) (2026-11-02)
+## [0.10.1](https://github.com/NoiXdev/notefix/compare/v0.10.0...v) (2026-11-17)
+
+
+### Features
+
+* adding .agetns to gitignore ([e093812](https://github.com/NoiXdev/notefix/commit/e0938128d2bf1c55baa96779b624210bec637253))
+* **notes:** per-note sync indicator in server contexts ([93eeeaf](https://github.com/NoiXdev/notefix/commit/93eeeaf5929e3e10e90b622bf1a28191e88b1ed6))
+* **sync:** the open note picks up changes pulled from other devices ([fd5220c](https://github.com/NoiXdev/notefix/commit/fd5220ce18f47fdc723a3a3b69b7be20d56fb311))
+
+
+### Bug Fixes
+
+* **auth:** sign in through a loopback redirect in macOS debug builds ([1201ea6](https://github.com/NoiXdev/notefix/commit/1201ea6a0525154d193437892dd9e79e58146f5e))
+* **editor:** a freshly mounted editor no longer saves an empty note over the real one ([2dc3f3c](https://github.com/NoiXdev/notefix/commit/2dc3f3cf7e43da04cf2e0c804b17ea603626ac1a))
+* **editor:** a sync no longer clears the note being typed in ([caeb1ca](https://github.com/NoiXdev/notefix/commit/caeb1ca1e19174e7a37bb121bb92dd25a0c1261a))
+* **sync:** accept numeric workspace ids in the workspace picker ([1749ad6](https://github.com/NoiXdev/notefix/commit/1749ad654ab0c498fbf19b62439f6d503585bafe))
+* **sync:** clicking the "no workspace" badge opens the workspace picker ([e4a7c02](https://github.com/NoiXdev/notefix/commit/e4a7c02ea28f0afde28fdae8135a27b98039fa6e))
+
+## [0.10.0](https://github.com/NoiXdev/notefix/compare/v0.9.0...v0.10.0) (2026-11-02)
 
 
 ### Bug Fixes
