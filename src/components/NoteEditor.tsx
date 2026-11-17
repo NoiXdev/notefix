@@ -329,6 +329,13 @@ export default function NoteEditor({ note, onChange, readOnly = false, rotationC
 
     const apply = (content: string) => {
       if (cancelled || editor.isDestroyed) return;
+      // Anything scheduled before the note was on screen saves what the
+      // editor held before it — never this note's content.
+      if (pendingSave.current) {
+        clearTimeout(pendingSave.current);
+        pendingSave.current = null;
+        setSaveState('saved');
+      }
       skipNextUpdate.current = true;
       editor.commands.setContent(content);
       // The editor is reused across notes: without this, Ctrl+Z right after
@@ -404,8 +411,11 @@ export default function NoteEditor({ note, onChange, readOnly = false, rotationC
 
   // `editable` is baked into the useEditor config at mount, so a vault that
   // rotates (or catches up) while a note is open has to be applied here.
+  // `false` = no update event: Tiptap emits one by default, and on a fresh
+  // mount `onUpdate` would schedule an autosave of the still-empty editor
+  // that then lands over the note once it has loaded.
   useEffect(() => {
-    editor?.setEditable?.(!readOnly);
+    editor?.setEditable?.(!readOnly, false);
   }, [editor, readOnly]);
 
   // Track Tiptap selection/content to drive the rich-mode status bar.

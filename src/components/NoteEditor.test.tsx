@@ -1067,7 +1067,7 @@ describe("NoteEditor — read-only behind an outdated key generation", () => {
     expect(banner).toHaveTextContent("Schreibgeschützt");
     expect(screen.queryByTitle("Fett")).not.toBeInTheDocument();
     expect(getConfig().editable).toBe(false);
-    expect(fakeEditor.setEditable).toHaveBeenCalledWith(false);
+    expect(fakeEditor.setEditable).toHaveBeenCalledWith(false, false);
   });
 
   // Round 3 / minor 3: naming a rotation code the workspace has not handed
@@ -1121,6 +1121,6 @@ describe("NoteEditor — read-only behind an outdated key generation", () => {
     rerender(<NoteEditor note={mockNote} onChange={onChange} readOnly={false} />);
     expect(screen.getByTitle("Fett")).toBeInTheDocument();
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
-    expect(fakeEditor.setEditable).toHaveBeenLastCalledWith(true);
+    expect(fakeEditor.setEditable).toHaveBeenLastCalledWith(true, false);
   });
 });
